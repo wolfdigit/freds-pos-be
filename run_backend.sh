@@ -9,12 +9,14 @@ if [ -d ".venv" ]; then
     source .venv/bin/activate
 fi
 
-# 預設連線參數（可透過環境變數覆寫）
+# 預設連線與環境參數（可透過環境變數覆寫，例如 APP_ENV=staging ./run_backend.sh）
+APP_ENV=${APP_ENV:-${ENVIRONMENT:-local}}
 HOST=${HOST:-0.0.0.0}
 PORT=${PORT:-8000}
 
 echo "=================================================="
-echo "  FastAPI 本地開發服務啟動中..."
+echo "  FastAPI 開發服務啟動中..."
+echo "  - 執行環境 (APP_ENV): ${APP_ENV}"
 echo "  - 伺服器網址: http://${HOST}:${PORT}"
 echo "  - API 文件 (Swagger): http://localhost:${PORT}/docs"
 echo "=================================================="

@@ -1,6 +1,9 @@
 from typing import Generator, Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+from sqlalchemy.orm import Session
+
+from src.db.session import SessionFactory
 
 # 依賴注入 (Dependencies) 模組
 
@@ -8,15 +11,17 @@ from fastapi.security import OAuth2PasswordBearer
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
 
-def get_db() -> Generator:
+def get_db() -> Generator[Session, None, None]:
     """
-    資料庫 Session 依賴注入範例 (預留 - 稍後提醒建立 DB 時啟用)
+    資料庫 Session 依賴注入。
+    確保每個 HTTP 請求開啟獨立 Session，並在請求結束後自動關閉釋放資源。
     """
+    db = SessionFactory()
     try:
-        db = None
         yield db
     finally:
-        pass
+        db.close()
+
 
 
 def get_current_user_optional(token: Optional[str] = Depends(oauth2_scheme)) -> Optional[dict]:

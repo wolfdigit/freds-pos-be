@@ -15,5 +15,5 @@ def check_health() -> Dict[str, Any]:
         "status": "ok",
         "project": settings.PROJECT_NAME,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "environment": "development" if settings.DEBUG else "production",
+        "environment": settings.ENVIRONMENT,
     }

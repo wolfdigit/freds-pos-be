@@ -5,9 +5,9 @@ from src.api.v1.api import api_router
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    openapi_url=f"{settings.API_V1_STR}/openapi.json" if settings.DEBUG else None,
+    docs_url="/docs" if settings.DEBUG else None,
+    redoc_url="/redoc" if settings.DEBUG else None,
 )
 
 # 設定 CORS 中間件 (支援本地 5173/3000 以及 Vercel 部署網域 *.vercel.app)
@@ -31,8 +31,13 @@ def root_welcome():
     """
     後端服務根目錄歡迎訊息
     """
-    return {
+    response = {
         "message": f"Welcome to {settings.PROJECT_NAME} API Service",
-        "docs": "/docs",
         "health": f"{settings.API_V1_STR}/health",
+        "environment": settings.ENVIRONMENT,
     }
+    if settings.DEBUG:
+        response["docs"] = "/docs"
+        response["redoc"] = "/redoc"
+        response["openapi"] = f"{settings.API_V1_STR}/openapi.json"
+    return response

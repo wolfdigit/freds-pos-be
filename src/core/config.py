@@ -1,12 +1,27 @@
+import os
 from typing import List, Union
-from pydantic import AnyHttpUrl, field_validator
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# 支援環境切換：可透過 APP_ENV (例如 local, staging, production) 或直接指定 ENV_FILE
+APP_ENV = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "local"))
+ENV_FILE = os.getenv("ENV_FILE")
+
+if ENV_FILE:
+    _env_files = (ENV_FILE,)
+else:
+    # 載入順序：先載入通用 .env，若存在 .env.{APP_ENV} 則會覆寫同名設定
+    _env_files = (".env", f".env.{APP_ENV}")
 
 
 class Settings(BaseSettings):
+    ENVIRONMENT: str = APP_ENV
     PROJECT_NAME: str = "Fred's POS Backend"
     API_V1_STR: str = "/api/v1"
     DEBUG: bool = True
+
+    # 資料庫設定
+    SQLALCHEMY_DATABASE_URI: str = "sqlite:///./freds_pos.db"
 
     # 伺服器設定
     HOST: str = "0.0.0.0"
@@ -20,6 +35,17 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
 
+    @field_validator("SQLALCHEMY_DATABASE_URI", mode="before")
+    @classmethod
+    def assemble_db_connection(cls, v: Union[str, None]) -> str:
+        if isinstance(v, str):
+            # 自動處理 Supabase 或雲端 PostgreSQL 預設提供的 postgres:// 格式
+            if v.startswith("postgres://"):
+                return v.replace("postgres://", "postgresql+psycopg2://", 1)
+            elif v.startswith("postgresql://") and not v.startswith("postgresql+"):
+                return v.replace("postgresql://", "postgresql+psycopg2://", 1)
+        return v
+
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
@@ -30,11 +56,12 @@ class Settings(BaseSettings):
         raise ValueError(v)
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_env_files,
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
     )
+
 
 
 settings = Settings()
