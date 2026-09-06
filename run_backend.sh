@@ -9,8 +9,8 @@ if [ -d ".venv" ]; then
     source .venv/bin/activate
 fi
 
-# 預設連線與環境參數（可透過環境變數覆寫，例如 APP_ENV=staging ./run_backend.sh）
-APP_ENV=${APP_ENV:-${ENVIRONMENT:-local}}
+# 預設連線與環境參數（預設為空以載入 .env；可透過 APP_ENV=staging ./run_backend.sh 覆寫）
+APP_ENV=${APP_ENV:-${ENVIRONMENT:-}}
 HOST=${HOST:-0.0.0.0}
 PORT=${PORT:-8000}
 

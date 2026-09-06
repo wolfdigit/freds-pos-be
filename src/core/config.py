@@ -3,15 +3,18 @@ from typing import List, Union
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# 支援環境切換：可透過 APP_ENV (例如 local, staging, production) 或直接指定 ENV_FILE
-APP_ENV = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", "local"))
+# 支援環境切換：可透過 APP_ENV (例如 staging, production) 或直接指定 ENV_FILE；預設僅載入 .env
+APP_ENV = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", ""))
 ENV_FILE = os.getenv("ENV_FILE")
 
 if ENV_FILE:
     _env_files = (ENV_FILE,)
-else:
+elif APP_ENV:
     # 載入順序：先載入通用 .env，若存在 .env.{APP_ENV} 則會覆寫同名設定
     _env_files = (".env", f".env.{APP_ENV}")
+else:
+    # 預設載入 .env
+    _env_files = (".env",)
 
 
 class Settings(BaseSettings):
