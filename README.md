@@ -9,7 +9,7 @@
 ### 啟動方式
 
 ```bash
-# 預設託管 ../fe/dist，監聽 port 3000
+# 預設託管 ../freds-pos-fe/dist，監聽 port 3000
 python3 serve_frontend.py
 ```
 
@@ -17,7 +17,7 @@ python3 serve_frontend.py
 
 ```bash
 # 自訂靜態檔案路徑
-STATIC_DIR=../fe/dist python3 serve_frontend.py
+STATIC_DIR=../freds-pos-fe/dist python3 serve_frontend.py
 
 # 自訂 Port
 PORT=8080 python3 serve_frontend.py

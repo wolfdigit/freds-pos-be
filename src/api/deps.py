@@ -1,5 +1,6 @@
-from typing import Generator, Optional
-from fastapi import Depends, HTTPException, status
+from typing import Any, Dict, Generator, Optional
+
+from fastapi import Depends
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
@@ -23,15 +24,16 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-
-def get_current_user_optional(token: Optional[str] = Depends(oauth2_scheme)) -> Optional[dict]:
+def get_current_user_optional(
+    token: Optional[str] = Depends(oauth2_scheme),
+) -> Dict[str, Any]:
     """
     JWT 身分驗證範例 (開發階段先回傳 Dummy User，未來啟用 JWT 解析驗證)
     """
     if not token:
         # 開發階段預設不強制要求 Token
         return {"id": 1, "username": "dev_user", "role": "admin"}
-    
+
     # 未來在此加入 jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM]) 驗證邏輯
     return {"id": 1, "username": "dev_user", "role": "admin"}
 
