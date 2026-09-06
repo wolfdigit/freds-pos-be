@@ -3,7 +3,7 @@ import sys
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 
 # 預設設定：指向前端編譯後的靜態檔案目錄與監聽 Port
-DIRECTORY = os.environ.get("STATIC_DIR", "../fe/dist")
+DIRECTORY = os.environ.get("STATIC_DIR", "../freds-pos-fe/dist")
 PORT = int(os.environ.get("PORT", 3000))
 HOST = os.environ.get("HOST", "0.0.0.0")
 
