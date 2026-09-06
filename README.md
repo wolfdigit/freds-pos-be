@@ -2,6 +2,41 @@
 
 後端專案服務與相關工具說明。
 
+## 功能開發流程 (Feature Planning)
+
+新功能（例如產品目錄、訂單）請先對齊前端契約、寫計畫文件並經人工確認，再交給 AI 實作。流程如下。
+
+### 1. 對齊 OpenAPI 契約
+
+從前端專案複製最新的 `openapi.yaml`，**刪掉尚未開始實作的 API**（只留下本階段要做的 paths / schemas），再覆寫本專案的 `prompts/openapi.yaml`。
+
+此檔是後端本階段的契約來源：之後的計畫與實作都以它為準，避免一次載入整份尚未開工的 API 造成範圍膨脹。
+
+### 2. 與 AI 討論並寫入獨立計畫資料夾
+
+與 AI 討論本階段的實作計畫與所有細節（範圍、資料模型、搜尋規則、前後端差異、未決問題等），產出的文件放在 `prompts/` 底下**新建的獨立資料夾**（例如 `prompts/products/`），不要混進其他功能的計畫裡。
+
+建議至少包含：
+
+- 總覽與範圍（in / out of scope）
+- API 契約對照
+- 資料模型
+- 業務規則
+- 前端需配合的變更
+- 未決問題
+
+可參考現有的 `prompts/products/`。
+
+### 3. 先上傳計畫供人討論
+
+計畫文件可以先 commit / 上傳，讓其他人 review 範圍與細節。**此時不必實作程式**。
+
+### 4. 確認後再交給 AI 實作
+
+實作計畫確定後，再把該資料夾內的文件（以及已裁切的 `prompts/openapi.yaml`）交給 AI 開始寫程式、migration 與測試。
+
+---
+
 ## 靜態網頁伺服器 (Static Web Server)
 
 專案提供 `serve_frontend.py`，使用 Python 內建的 `http.server` 託管已編譯的前端靜態資源（支援 Vue/React 等 SPA 前端路由 Fallback 機制，避免頁面重整出現 404）。
@@ -118,3 +153,48 @@ uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 - **Swagger UI**：[http://localhost:8000/docs](http://localhost:8000/docs)
 - **ReDoc**：[http://localhost:8000/redoc](http://localhost:8000/redoc)
 - **健康檢查**：[http://localhost:8000/api/v1/health](http://localhost:8000/api/v1/health)
+
+---
+
+## 資料庫遷移 (Alembic)
+
+資料庫 schema 變更請透過 Alembic migration，不要直接改資料庫。連線字串由 `.env` 的 `SQLALCHEMY_DATABASE_URI` 注入（見 `alembic/env.py`），預設為本地 SQLite `sqlite:///./freds_pos.db`。請在專案根目錄、已啟用虛擬環境後執行下列指令。
+
+### 套用 migration（更新資料庫）
+
+```bash
+# 查看目前資料庫版本
+alembic current
+
+# 套用所有尚未執行的 migration
+alembic upgrade head
+```
+
+成功後 `alembic current` 會顯示最新 revision（例如 `9fea24686b8f`）。Git commit 只保存 `alembic/versions/` 裡的檔案；真正改資料庫的是 `alembic upgrade head`。
+
+### 新增 schema 變更
+
+先改 `src/models/` 的 ORM，再產生 migration 並套用：
+
+```bash
+# 依模型差異自動產生 migration 檔
+alembic revision --autogenerate -m "describe the change"
+
+# 檢查產生的檔案後套用
+alembic upgrade head
+```
+
+Migration 檔會寫入 `alembic/versions/`，請一併提交到版控。
+
+### 其他常用指令
+
+```bash
+# 遷移歷史
+alembic history
+
+# 預覽即將執行的 SQL（不寫入資料庫）
+alembic upgrade head --sql
+
+# 回退一個版本
+alembic downgrade -1
+```
