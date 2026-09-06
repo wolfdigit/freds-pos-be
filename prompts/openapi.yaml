@@ -1,0 +1,358 @@
+openapi: 3.1.0
+info:
+  title: Fred's POS API
+  version: 1.0.0
+  description: |
+    HTTP contract for Fred's POS, matching the frontend Service Adapter
+    (`src/services/interfaces/`). Mockup currently uses localStorage adapters;
+    a future FastAPI backend can implement these paths without changing UI.
+
+    **Conventions**
+    - Amounts are TWD integers (no cents).
+    - Timestamps are ISO 8601 strings.
+    - Business failures use HTTP 4xx with `BusinessError` body (`code` + `message`).
+  contact:
+    name: Fred's POS
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local FastAPI (planned)
+  - url: /api/v1
+    description: Relative (same origin)
+
+tags:
+  - name: products
+    description: Product catalog and multi-location stock
+
+paths:
+  /products:
+    get:
+      tags: [products]
+      operationId: searchProducts
+      summary: Search products
+      description: |
+        Fuzzy search by barcode, SKU without dashes, product name, or brand.
+        Maps to `IProductService.searchProducts`.
+        Default sort: `sku ASC`.
+      parameters:
+        - name: keyword
+          in: query
+          schema:
+            type: string
+          description: SKU / barcode / name / brand
+        - name: scale
+          in: query
+          schema:
+            $ref: '#/components/schemas/ModelScaleOrAll'
+        - name: brand
+          in: query
+          schema:
+            type: string
+          description: Brand filter, or `ALL`
+        - name: inStockOnly
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Matching products
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Product'
+    post:
+      tags: [products]
+      operationId: createProduct
+      summary: Create product
+      description: |
+        Maps to `IProductService.createProduct`.
+        Server assigns `id` as `prod-{uuid4}` (no dashes), computes `normalizedSku`,
+        and always creates four stock rows at quantity `0` with fixed location names.
+        Does not write `product_pre_order_pending` (response `preOrderPendingCount` is `0`).
+        Initial / ongoing stock quantities use future inventory APIs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProductRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '409':
+          description: Duplicate SKU
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessError'
+              example:
+                code: PRODUCT_SKU_DUPLICATE
+                message: 貨號已存在
+
+  /products/{productId}:
+    get:
+      tags: [products]
+      operationId: getProductById
+      summary: Get product by ID
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      responses:
+        '200':
+          description: Product
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [products]
+      operationId: updateProduct
+      summary: Update product information
+      description: |
+        Maps to `IProductService.updateProduct`.
+        Metadata only — does not mutate stock rows or `product_pre_order_pending`.
+        On SKU change, server recomputes `normalizedSku`; duplicate SKU returns 409.
+      parameters:
+        - $ref: '#/components/parameters/ProductId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProductRequest'
+      responses:
+        '200':
+          description: Updated product
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Product'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Duplicate SKU
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessError'
+              example:
+                code: PRODUCT_SKU_DUPLICATE
+                message: 貨號已存在
+
+components:
+  parameters:
+    ProductId:
+      name: productId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: prod-001
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BusinessError'
+          example:
+            code: PRODUCT_NOT_FOUND
+            message: 找不到指定商品
+
+  schemas:
+    BusinessError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          $ref: '#/components/schemas/BusinessErrorCode'
+        message:
+          type: string
+
+    BusinessErrorCode:
+      type: string
+      enum:
+        - INSUFFICIENT_STORE_STOCK
+        - PREORDER_QTY_EXCEEDED
+        - PAYMENT_INSUFFICIENT
+        - PRODUCT_NOT_FOUND
+        - PRODUCT_SKU_DUPLICATE
+        - STORAGE_CORRUPTED
+
+    ModelScale:
+      type: string
+      enum:
+        - '1:18'
+        - '1:43'
+        - '1:64'
+        - '1:24'
+        - '1:12'
+        - 配件周邊
+
+    ModelScaleOrAll:
+      oneOf:
+        - $ref: '#/components/schemas/ModelScale'
+        - type: string
+          const: ALL
+
+    StockLocation:
+      type: string
+      enum: [store, warehouse, company, other]
+
+    LocationStock:
+      type: object
+      required: [location, locationName, quantity]
+      properties:
+        location:
+          $ref: '#/components/schemas/StockLocation'
+        locationName:
+          type: string
+          example: 門市現貨
+        quantity:
+          type: integer
+
+    ProductStatus:
+      type: string
+      enum: [active, discontinued]
+
+    Product:
+      type: object
+      required:
+        - id
+        - sku
+        - normalizedSku
+        - barcode
+        - brand
+        - name
+        - scale
+        - listPrice
+        - costPrice
+        - stocks
+        - totalStock
+        - preOrderPendingCount
+        - status
+      properties:
+        id:
+          type: string
+        sku:
+          type: string
+          example: AA-79121
+        normalizedSku:
+          type: string
+          example: AA79121
+        barcode:
+          type: string
+        brand:
+          type: string
+        name:
+          type: string
+        scale:
+          $ref: '#/components/schemas/ModelScale'
+        material:
+          type: string
+        color:
+          type: string
+        imageUrl:
+          type: string
+        listPrice:
+          type: integer
+        costPrice:
+          type: integer
+        vipPrice:
+          type: integer
+        stocks:
+          type: array
+          items:
+            $ref: '#/components/schemas/LocationStock'
+        totalStock:
+          type: integer
+        preOrderPendingCount:
+          type: integer
+        note:
+          type: string
+        status:
+          $ref: '#/components/schemas/ProductStatus'
+
+    CreateProductRequest:
+      type: object
+      required:
+        - sku
+        - barcode
+        - brand
+        - name
+        - scale
+        - listPrice
+        - costPrice
+        - status
+      properties:
+        sku:
+          type: string
+        barcode:
+          type: string
+        brand:
+          type: string
+        name:
+          type: string
+        scale:
+          $ref: '#/components/schemas/ModelScale'
+        material:
+          type: string
+        color:
+          type: string
+        imageUrl:
+          type: string
+        listPrice:
+          type: integer
+          minimum: 0
+        costPrice:
+          type: integer
+          minimum: 0
+        vipPrice:
+          type: integer
+          minimum: 0
+        note:
+          type: string
+        status:
+          $ref: '#/components/schemas/ProductStatus'
+
+    UpdateProductRequest:
+      type: object
+      description: Partial metadata update. Excludes stocks, totals, id, and normalizedSku.
+      properties:
+        sku:
+          type: string
+        barcode:
+          type: string
+        brand:
+          type: string
+        name:
+          type: string
+        scale:
+          $ref: '#/components/schemas/ModelScale'
+        material:
+          type: string
+        color:
+          type: string
+        imageUrl:
+          type: string
+        listPrice:
+          type: integer
+          minimum: 0
+        costPrice:
+          type: integer
+          minimum: 0
+        vipPrice:
+          type: integer
+          minimum: 0
+        note:
+          type: string
+        status:
+          $ref: '#/components/schemas/ProductStatus'
