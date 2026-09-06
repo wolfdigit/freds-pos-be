@@ -1,12 +1,14 @@
 import os
-from typing import List, Union
+from typing import List, Optional, Tuple, Union
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 支援環境切換：可透過 APP_ENV (例如 staging, production) 或直接指定 ENV_FILE；預設僅載入 .env
-APP_ENV = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", ""))
-ENV_FILE = os.getenv("ENV_FILE")
+APP_ENV: str = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", ""))
+ENV_FILE: Optional[str] = os.getenv("ENV_FILE")
 
+_env_files: Tuple[str, ...]
 if ENV_FILE:
     _env_files = (ENV_FILE,)
 elif APP_ENV:
@@ -40,7 +42,7 @@ class Settings(BaseSettings):
 
     @field_validator("SQLALCHEMY_DATABASE_URI", mode="before")
     @classmethod
-    def assemble_db_connection(cls, v: Union[str, None]) -> str:
+    def assemble_db_connection(cls, v: Union[str, None]) -> Union[str, None]:
         if isinstance(v, str):
             # 自動處理 Supabase 或雲端 PostgreSQL 預設提供的 postgres:// 格式
             if v.startswith("postgres://"):
@@ -51,7 +53,7 @@ class Settings(BaseSettings):
 
     @field_validator("BACKEND_CORS_ORIGINS", mode="before")
     @classmethod
-    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
+    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> Union[str, List[str]]:
         if isinstance(v, str) and not v.startswith("["):
             return [i.strip() for i in v.split(",")]
         elif isinstance(v, (list, str)):

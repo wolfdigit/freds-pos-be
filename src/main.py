@@ -1,3 +1,5 @@
+from typing import Dict
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from src.core.config import settings
@@ -27,11 +29,11 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 
 
 @app.get("/", tags=["Root"])
-def root_welcome():
+def root_welcome() -> Dict[str, str]:
     """
     後端服務根目錄歡迎訊息
     """
-    response = {
+    response: Dict[str, str] = {
         "message": f"Welcome to {settings.PROJECT_NAME} API Service",
         "health": f"{settings.API_V1_STR}/health",
         "environment": settings.ENVIRONMENT,

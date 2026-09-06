@@ -1,10 +1,11 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import Engine, create_engine
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 from src.core.config import settings
 
-is_sqlite = settings.SQLALCHEMY_DATABASE_URI.startswith("sqlite")
+is_sqlite: bool = settings.SQLALCHEMY_DATABASE_URI.startswith("sqlite")
 
+engine: Engine
 if is_sqlite:
     engine = create_engine(
         settings.SQLALCHEMY_DATABASE_URI,
@@ -21,5 +22,7 @@ else:
     )
 
 # 資料庫 Session 工廠
-SessionFactory = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionFactory: sessionmaker[Session] = sessionmaker(
+    autocommit=False, autoflush=False, bind=engine
+)
 
