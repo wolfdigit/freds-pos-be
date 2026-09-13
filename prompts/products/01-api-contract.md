@@ -71,7 +71,7 @@ Not accepted on create or update request schemas:
 | `brand` | string \| `ALL` | missing or `ALL` | No brand filter (`brand` exact match when set) |
 | `inStockOnly` | boolean | `false` | When `true`, only products with `totalStock > 0` |
 
-Search / filter semantics: see [`03-search-rules.md`](./03-search-rules.md).
+Search / filter semantics: see [`03-search-rules.md`](./03-search-rules.md). All filters run **in SQL**, not in Python after load.
 
 ### Responses
 

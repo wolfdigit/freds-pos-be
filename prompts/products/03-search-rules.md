@@ -122,13 +122,23 @@ If `created_at` / `updated_at` exist on `product`, still prefer `sku ASC` for ca
 
 ---
 
-## Implementation hints (service layer)
+## Implementation (service layer)
 
-1. Apply SQL/ORM filters for exact `scale`, exact `brand`, and optionally `inStockOnly` via `HAVING SUM(quantity) > 0` or a subquery/join aggregate.
-2. Keyword is hardest to push fully into SQL if matching four fields with different transforms; acceptable approaches:
-   - Load candidates with non-keyword filters then filter in Python (fine for early catalog size), or
-   - SQL: `normalized_sku ILIKE %q%` OR `barcode LIKE %trim%` OR `LOWER(name) LIKE %lower%` OR `LOWER(brand) LIKE %lower%` with `q = normalizeSku(keyword)`.
-3. Always return full `Product` DTOs including four `stocks` and computed totals.
+All keyword, scale, brand, and in-stock filters run **in the database**. Do **not** load candidate rows into Python and then filter.
+
+1. One SQLAlchemy/`SELECT` with:
+   - exact `scale` when set and not `ALL`
+   - exact `brand` when set and not `ALL`
+   - `inStockOnly` via `HAVING SUM(quantity) > 0` or a subquery/join aggregate
+   - keyword `OR` predicates when keyword is non-empty:
+     - `normalized_sku LIKE %normalizeSku(keyword)%` when the normalized query is non-empty (if normalize emptied the query, skip this branch; do not treat it as “always match”)
+     - `barcode LIKE %trim%` (raw, case-sensitive as in FE)
+     - `LOWER(name) LIKE %lower(trim)%`
+     - `LOWER(brand) LIKE %lower(trim)%`
+2. `ORDER BY sku ASC` in SQL.
+3. Map rows to full `Product` DTOs including four `stocks` and computed totals.
+
+SQLite: `LIKE` is case-insensitive for ASCII by default; if the engine is case-sensitive, use `LOWER(...)` on barcode only if product later requires it — until then keep barcode `LIKE` on the stored value to match FE `includes`.
 
 ---
 

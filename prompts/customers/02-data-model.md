@@ -1,6 +1,6 @@
 # Customers — Data Model
 
-Persistence design for member-catalog endpoints. Table: `customer`. Response DTO maps snake_case DB → camelCase JSON to match FE / OpenAPI `Customer`.
+Table: `customer`. Snake_case DB → camelCase JSON.
 
 ## ER sketch
 
@@ -12,7 +12,6 @@ erDiagram
     string phone UK
     string email UK
     string vip_tier
-    int reward_points
     int total_spent
     string note
     datetime created_at
@@ -20,142 +19,108 @@ erDiagram
   }
 ```
 
-**Primary key is `id`** (same as `product.id`). Future checkout / preorder tables FK to `customer.id` (`customer_id` nullable, **`ON DELETE SET NULL`**) and store **required** `customerName` / `customerPhone` snapshots. They are **not** created in this phase.
+**Primary key is `id`.** Future checkout / preorder FKs: `customer_id` nullable, **`ON DELETE SET NULL`**, plus name/phone snapshots. Those tables are **not** created here.
 
 ---
 
 ## Table: `customer`
 
-Member profile. **Primary key: `id`.** **Does not** store `vip_tier_name` (derived on read). **Does** store `total_spent` and `reward_points` as running balances.
+No `vip_tier_name` (derived). No `reward_points`.
 
 | Column | Type (suggested) | Constraints / notes |
 |--------|------------------|---------------------|
-| `id` | `VARCHAR` / `String` PK | Opaque `cust-{uuid4}` without dashes; seed may use `cust-001` style |
+| `id` | `String` PK | `cust-{uuid4}` without dashes |
 | `name` | `String` | Required |
-| `phone` | `String` | **UNIQUE**, required; canonical digits (see phone normalize) |
-| `email` | `String` | **UNIQUE**, required; trim + lowercase; valid email format |
-| `vip_tier` | `String` | `regular` \| `silver` \| `gold` \| `platinum` → JSON `vipTier`; **default `regular`** on insert if omitted |
-| `reward_points` | `Integer` | ≥ 0; default `0` → `rewardPoints`. PUT replaces; POST add increments; never store negative |
-| `total_spent` | `Integer` | TWD ≥ 0; default `0` → `totalSpent`; catalog create always `0`; catalog PUT must not change |
-| `note` | `Text` / `String` nullable | |
-| `created_at` | `DateTime` TZ | Server set on insert → JSON `createdAt` (ISO 8601) |
-| `updated_at` | `DateTime` TZ | Server set on insert/update; **not** in FE `Customer` response |
+| `phone` | `String` | **UNIQUE**, required; canonical |
+| `email` | `String` nullable | **UNIQUE** among non-null; trim + lowercase when set |
+| `vip_tier` | `String` | default `regular` |
+| `total_spent` | `Integer` | default `0`; catalog PUT must not change |
+| `note` | `Text` / `String` | Optional **string**. Omit or `""`. JSON type is `string`, not `nullable` |
+| `created_at` | `DateTime` TZ | JSON `createdAt` |
+| `updated_at` | `DateTime` TZ | JSON `updatedAt`; bump on profile update |
 
 ### Indexes / uniqueness
 
 | Index | Columns | Unique? | Purpose |
 |-------|---------|---------|---------|
-| PK | `id` | yes | Member identity; path param `{customerId}` |
-| UK | `phone` | yes | Duplicate phone → API conflict; exact `getCustomerByPhone` |
-| UK | `email` | yes | Duplicate email → API conflict; keyword search |
-| IX | `name` | no (optional) | Name filter / default list sort `name ASC` |
-| IX | `vip_tier` | no (optional) | VIP search filter |
-| IX | `reward_points` | no (optional) | `minPoints` search filter |
-
-**Confirmed:** `id` is the **only** primary key — server-assigned `cust-{uuid4}`; never an auto-increment integer. Same naming as `product.id`.  
-**Confirmed:** `phone` **is** unique — one member per canonical number; `getCustomerByPhone` returns a single row.  
-**Confirmed:** `email` **is** unique and **required** — one member per lowercased address; missing / invalid format is rejected before uniqueness.
+| PK | `id` | yes | `{customerId}` |
+| UK | `phone` | yes | Duplicate phone; keyword phone match |
+| UK | `email` | yes | Duplicate **non-null** email. Multiple `NULL` emails allowed |
+| IX | `name` | no | Keyword / sort `name ASC` |
+| IX | `vip_tier` | no | VIP search filter |
 
 ---
 
-## Phone canonicalize (stored in `phone`)
-
-Same spirit as product `normalizeSku`, but for MSISDN / local mobile strings.
+## Phone canonicalize
 
 ```text
 input → trim → remove spaces, hyphens, parentheses
 ```
 
-Examples:
+Keep a leading `+` if present (no E.164 conversion). After canonicalize, `phone` must be non-empty.
 
-| Input | Stored `phone` |
-|-------|----------------|
-| `0912345678` | `0912345678` |
-| `0912-345-678` | `0912345678` |
-| ` 0912 345 678 ` | `0912345678` |
-| `(09)12345678` | `0912345678` |
-
-Do **not** strip a leading `+` **and** country digits in this phase (no E.164 conversion). If a value still contains `+`, keep `+` plus remaining digits (`+886912345678`). After canonicalize, `phone` must be non-empty.
-
-Uniqueness and `GET /customers/by-phone/{phone}` both use this canonical form.
+Keyword search uses this stored form (substring, also `canonicalize(query)`).
 
 ---
 
 ## Email normalize
 
-Always applied on create / update when `email` is set:
+When `email` is sent and not `null`:
 
 ```text
 input → trim → lowercase
 ```
 
-Then validate as an email (Pydantic `EmailStr` / equivalent). After normalize:
+Then:
 
-- Empty → **invalid** (`422`); email is never optional and never `NULL`.
-- Malformed (no `@`, invalid local/domain) → `422`.
-- Unique on the stored lowercased value (`A@B.com` and `a@b.com` collide).
-
-Examples:
+- Omit, JSON `null`, or whitespace-only → store SQL `NULL` (JSON `null`).
+- Malformed → `422`.
+- Unique on stored lowercased non-null values only.
 
 | Input | Stored `email` |
 |-------|----------------|
 | `User@Example.COM` | `user@example.com` |
-| `  kuanyu.chen@example.com ` | `kuanyu.chen@example.com` |
-| `` (empty) | rejected `422` |
+| omit / `null` / `""` / `   ` | `NULL` |
 | `not-an-email` | rejected `422` |
 
 ---
 
-## Server-computed / server-owned response fields
+## `note`
 
-| API field | Computation / ownership |
-|-----------|-------------------------|
-| `id` | Assigned on insert (`cust-{uuid4}` no dashes); never trust client |
-| `createdAt` | `customer.created_at` ISO 8601; never trust client |
-| `vipTierName` | **Not stored.** Map from `vip_tier` (白金黑卡 (9折) / 金卡會員 (95折) / 銀卡會員 (98折) / 一般會員) |
-| `totalSpent` | Stored `total_spent`; catalog create writes `0`; catalog update must not accept; checkout later increments |
-| `rewardPoints` | Stored `reward_points`; create/PUT **set**; `POST .../reward-points` **adds**; checkout later increments/decrements |
-| `phone` | Stored canonical; always derived on write from client input |
-| `email` | Stored lowercased; always derived on write from client input; unique |
-
-`updated_at` is persistence-only (audit), not part of the FE `Customer` JSON.
+JSON type is **`string`**, optional (not in `required`). Do **not** mark OpenAPI `nullable: true`. Clients omit the field or send `""`. Persistence may use SQL `NULL` when omitted; that is storage, not the API type.
 
 ---
 
-## ORM / module map (planned, not implemented)
+## Server-owned response fields
 
-| Piece | Path |
-|-------|------|
-| Models | `src/models/customer.py` |
-| Schemas | `src/schemas/customer.py` |
-| Service | `src/services/customer_service.py` |
-| Endpoints | `src/api/v1/endpoints/customers.py` |
-| Router | `src/api/v1/api.py` |
-| Migration | `alembic/versions/…` |
-
-Register models in `src/models/__init__.py` / `src/db/base.py` so Alembic autogenerate sees them.
+| API field | Ownership |
+|-----------|-----------|
+| `id` | Assigned on insert |
+| `createdAt` | `created_at` ISO 8601 |
+| `updatedAt` | `updated_at` ISO 8601; set on insert and profile PUT |
+| `vipTierName` | Map from `vip_tier` |
+| `totalSpent` | Stored; create `0`; PUT must not accept |
+| `phone` | Canonical on write |
+| `email` | Lowercased on write, or `null` |
 
 ---
 
 ## Alembic notes
 
-1. First revision: **schema only** — `customer` table + indexes/constraints above (no seed data).
-2. Prefer explicit PK on `id` plus unique constraints on `phone` **and** `email` in migration (not only ORM).
-3. **Seed later (decision B):** Alembic data migration and/or management script — insert `customer` rows with seed-style `cust-001` ids OK. See [`04-open-questions.md`](./04-open-questions.md).
-4. `created_at` / `updated_at`: use timezone-aware UTC; update `updated_at` in service on profile PUT and on add-points.
-5. Do **not** add FKs from checkout/preorder in this migration (those tables do not exist yet).
-6. **Hard delete:** `DELETE` removes the `customer` row. No `deleted_at` / discontinued flag. Later modules: block delete when any related order/preorder is unfinished (not `completed`/`refunded`/`cancelled`); terminal rows use **`ON DELETE SET NULL`** on `customer_id` and **must keep** name/phone snapshots. This migration does not add those FKs.
+1. Schema only — no seed. Existing `customer` table (if already migrated) needs a **follow-up revision**: drop `reward_points`; make `email` nullable.
+2. Unique `phone`; unique `email` allowing multiple `NULL`.
+3. `created_at` / `updated_at` timezone-aware UTC; bump `updated_at` on PUT.
+4. No checkout/preorder FKs in this table.
 
----
-
-## Mapping cheatsheet (DB → JSON)
+## Mapping cheatsheet
 
 | DB | JSON |
 |----|------|
 | `id` | `id` |
 | `vip_tier` | `vipTier` |
-| (computed from `vip_tier`) | `vipTierName` |
-| `reward_points` | `rewardPoints` |
+| (from `vip_tier`) | `vipTierName` |
 | `total_spent` | `totalSpent` |
 | `created_at` | `createdAt` |
-| `updated_at` | *(not in API)* |
+| `updated_at` | `updatedAt` |
+| `email` | `email` (`null` when SQL `NULL`) |
+| `note` | `note` |

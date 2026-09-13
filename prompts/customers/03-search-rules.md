@@ -1,142 +1,103 @@
 # Customers — Search Rules
 
-Mirror FE mock [`mockCustomerService.searchCustomers`](../../../freds-pos-fe/src/services/mock/mockCustomerService.ts) for keyword behavior, plus VIP / points query filters aligned with product search (`scale` / `inStockOnly` style). Backend `GET /customers` must match this so UI adapters do not need special cases once FE sends the extra params.
+`GET /customers` is the only list/lookup. Checkout bind uses `keyword` (phone fragment). **No** `GET /customers/by-phone/{phone}`.
 
-Today’s FE HTTP adapter uses `q`; the contract is **`keyword`** (same as products). VIP/points UI does not exist yet — FE must extend `searchCustomers` (see [`05-fe-changes.md`](./05-fe-changes.md)).
+All filters, sort, and paging run **in the database** (`WHERE` / `ORDER BY` / `LIMIT` / `OFFSET`). Do **not** load matching-or-all rows into Python and then filter or slice.
 
 ## Query parameters
 
 | Param | Source | Notes |
 |-------|--------|--------|
-| `keyword` | query string | Optional. Same name as `GET /products`. Empty / missing = no keyword filter. |
+| `keyword` | query | Optional. Empty / missing = no keyword filter. Matches name, phone, or email. |
 | `vipTier` | query | `VipTier` or `ALL`. Missing / `ALL` = no VIP filter. |
-| `minPoints` | query integer ≥ 0 | Missing = no points filter. When set, `rewardPoints >= minPoints`. |
+| `page` | query integer ≥ 1 | Default `1`. |
+| `pageSize` | query integer 1–100 | Default `20`. |
 
-Filters are **AND**-combined. Within the keyword filter, match conditions are **OR**.
+AND-combined. Keyword conditions are OR.
 
 ---
 
-## Phone canonicalize (lookup + write)
-
-Used on create/update **and** on `GET /customers/by-phone/{phone}`:
+## Phone canonicalize (write + keyword)
 
 ```text
 input → trim → remove spaces, hyphens, parentheses
 ```
 
-Examples: see [`02-data-model.md`](./02-data-model.md).
-
-Keyword search does **not** require the user to type a canonical phone: substring match runs against the **stored** canonical `phone` using the trimmed query (and, if the query contains separators, also against `canonicalize(q)` so `0912-345` still hits `0912345678`).
+Keyword does **not** require a canonical typed phone: SQL matches stored canonical `phone` against the trimmed query **and** `canonicalize(query)` when that form is non-empty (`0912-345` still hits `0912345678`).
 
 ---
 
-## Keyword filter (`keyword`)
+## Keyword filter
 
-### Empty / missing keyword
+### Empty / missing
 
-- Treat missing or whitespace-only `keyword` as **no keyword filter** (other filters still apply).
-- FE mock: `const q = query.trim().toLowerCase(); if (!q) return customers;`
-- Member list (`useCustomerSearch`) starts with empty keyword and expects the full list when no VIP/points filters are set.
+No keyword predicate. Other filters and paging still apply.
 
-### Non-empty keyword
+### Non-empty
 
-A customer matches if **any** of the following is true:
+Keep the row if **any**:
 
-1. **Name contains** (case-insensitive)  
-   `customer.name.toLowerCase().includes(q.toLowerCase())`  
-   FE mock: `c.name.toLowerCase().includes(q)` after `q = query.trim().toLowerCase()`.
+1. `LOWER(name) LIKE %lower(trim)%`
+2. `phone LIKE %trim%` **OR** (`canonicalize(trim)` non-empty **AND** `phone LIKE %canonical%`)
+3. `email IS NOT NULL AND LOWER(email) LIKE %lower(trim)%`
 
-2. **Phone contains**  
-   - Stored canonical phone contains trimmed query: `customer.phone.includes(query.trim())`  
-   - **Or** stored phone contains `canonicalize(query)` when that canonical form is non-empty.  
-   FE mock today only does `c.phone.includes(q)` with `q` already lowercased; digits are unaffected.
+Null emails never match the email branch.
 
-3. **Email contains** (case-insensitive) — **extension vs mock**  
-   Stored `email` contains (case-insensitive)  
-   `customer.email.toLowerCase().includes(q.toLowerCase())`.  
-   Email is always present (required unique).  
-   FE mock currently **does not** search email; update mock for parity (see [`05-fe-changes.md`](./05-fe-changes.md)).
-
-Composition:
-
-```text
-keyword = trim(query)
-keep if name_contains_ci(keyword) || phone_contains(keyword) || email_contains_ci(keyword)
-```
-
-Empty `keyword` → skip this block.
-
-**Note:** `email` and `phone` are **unique**, so a **full** canonical phone or **full** lowercased email typically returns one row. Substring queries (`0912`, `@example.com`) may still return many.
+A **full** canonical phone typically returns one row (phone is unique). Substring (`0912`) may return many — that is the bind/search UX; the client picks from `items`.
 
 ---
 
 ## VIP tier filter
 
-Same idea as product `scale` / `ALL`:
-
-| `vipTier` value | Behavior |
-|-----------------|----------|
-| missing / omitted | No filter |
-| `ALL` | No filter |
-| a `VipTier` value (`regular` \| `silver` \| `gold` \| `platinum`) | Keep only `customer.vipTier === vipTier` (**exact**) |
-
-Invalid enum → `422`.
+| `vipTier` | Behavior |
+|-----------|----------|
+| missing / `ALL` | No filter |
+| a `VipTier` | `customer.vip_tier = vipTier` exact |
+| invalid | `422` |
 
 ---
 
-## Points filter
+## Paging
 
-| `minPoints` value | Behavior |
-|-------------------|----------|
-| missing / omitted | No filter |
-| integer `N` ≥ 0 | Keep only members with `rewardPoints >= N` |
-| negative | `422` |
+| Param | Default | Rules |
+|-------|---------|--------|
+| `page` | `1` | 1-based. `< 1` → `422`. |
+| `pageSize` | `20` | 1–100. Outside range → `422`. |
 
-This is a **minimum balance**, not “has any points” (`> 0`) and not a max/range (decision 19).
+```text
+OFFSET (page - 1) * pageSize
+LIMIT pageSize
+```
 
-`minPoints: 0` is equivalent to no filter (every stored balance is ≥ 0).
+`total` = `COUNT(*)` with the **same** `WHERE` (no Python `len()` on a loaded list).
 
----
-
-## Exact phone lookup (not search)
-
-`GET /customers/by-phone/{phone}` is **exact equality** on canonical phone, not substring. It does **not** accept `vipTier` / `minPoints`.
-
-| Path `phone` | Behavior |
-|--------------|----------|
-| canonicalizes to stored `phone` | `200` that member |
-| no row | `404` `CUSTOMER_NOT_FOUND` |
-
-Do not fall back to name/email on this path.
+Response: `{ items, page, pageSize, total }`.
 
 ---
 
 ## Sort
 
-Default: **`name ASC`**.
-
-If `created_at` / `updated_at` exist on `customer`, still prefer `name ASC` for member-list parity unless product later requires a different UX sort (e.g. newest-first). Tie-break: `id ASC` is acceptable.
+`ORDER BY name ASC, id ASC` in SQL, then page.
 
 ---
 
-## Implementation hints (service layer)
+## Implementation (service layer)
 
-1. Apply SQL/ORM filters for exact `vipTier` and `reward_points >= minPoints` first.
-2. Empty `keyword`: those filters only, `ORDER BY name ASC`.
-3. Non-empty `keyword`: plus  
-   `LOWER(name) LIKE %lower%`  
-   OR `phone LIKE %trim%`  
-   OR (`canonicalize(q)` non-empty AND `phone LIKE %canonical%`)  
-   OR `LOWER(email) LIKE %lower%`.
-4. Always return full `Customer` DTOs including derived `vipTierName`.
-5. For early member-table size, filtering in Python after load is acceptable (same note as product keyword search).
+1. Build one SQLAlchemy/`SELECT` with:
+   - exact `vip_tier` when set and not `ALL`
+   - keyword `OR` predicates above when keyword non-empty
+2. `COUNT(*)` with that `WHERE` → `total`
+3. `ORDER BY name ASC, id ASC LIMIT :pageSize OFFSET :offset` → `items`
+4. Map rows to `Customer` DTOs (derived `vipTierName`)
+
+No post-query Python filter/slice.
 
 ---
 
-## Out of scope for search
+## Out of scope
 
+- `minPoints` / `rewardPoints` (removed).
 - Filter by `totalSpent`.
-- `maxPoints` / points range (only `minPoints` in this phase).
-- Pagination / cursor (not in mock).
-- Full-text / trigram ranking (not in mock).
-- Nested preorder / order search (preorder and checkout modules).
+- Exact-phone dedicated path (removed).
+- Full-text / trigram ranking.
+- Nested preorder / order search.

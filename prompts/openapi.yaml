@@ -19,7 +19,8 @@ info:
     - Auth is optional/dummy for this phase.
 
     Customer spending increments, nested preorders/orders, seed data,
-    add-points UI, and delete UI are out of the current customer pass.
+    and delete UI are out of the current customer pass. Member reward
+    points are not part of the catalog.
   contact:
     name: Fred's POS
 servers:
@@ -32,7 +33,7 @@ tags:
   - name: products
     description: Product catalog and multi-location stock
   - name: customers
-    description: Member catalog (profile CRUD, search, cashier point adjust)
+    description: Member catalog (profile CRUD, paged search)
 
 paths:
   /products:
@@ -44,6 +45,8 @@ paths:
         Fuzzy search by barcode, SKU without dashes, product name, or brand.
         Maps to `IProductService.searchProducts`.
         Default sort: `sku ASC`.
+        Keyword, scale, brand, and inStockOnly filters run in SQL (`WHERE`),
+        not in Python after load.
       parameters:
         - name: keyword
           in: query
@@ -164,12 +167,13 @@ paths:
       summary: Search customers
       description: |
         Maps to `ICustomerService.searchCustomers`.
+        Also used for checkout phone bind (no `/customers/by-phone/{phone}`).
         Missing / empty `keyword` = no keyword filter.
         Keyword matches name (case-insensitive contains), phone (substring, also
-        against canonicalized query), or email (case-insensitive contains).
+        against canonicalized query), or non-null email (case-insensitive contains).
         `vipTier` missing or `ALL` = no VIP filter; otherwise exact match.
-        `minPoints` missing = no points filter; otherwise `rewardPoints >= minPoints`.
-        Filters are AND-combined. Default sort: `name ASC`.
+        Filters, sort, and paging run in SQL (`WHERE` / `ORDER BY` / `LIMIT` /
+        `OFFSET`), not in Python after load. Default sort: `name ASC`, then `id ASC`.
       parameters:
         - name: keyword
           in: query
@@ -181,21 +185,28 @@ paths:
           schema:
             $ref: '#/components/schemas/VipTierOrAll'
           description: Exact VIP filter, or `ALL`
-        - name: minPoints
+        - name: page
           in: query
           schema:
             type: integer
-            minimum: 0
-          description: Keep members with rewardPoints >= this value
+            minimum: 1
+            default: 1
+          description: 1-based page index
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Page length (max 100)
       responses:
         '200':
-          description: Matching customers
+          description: Paged matching customers
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Customer'
+                $ref: '#/components/schemas/CustomerSearchResponse'
     post:
       tags: [customers]
       operationId: createCustomer
@@ -203,12 +214,13 @@ paths:
       description: |
         Maps to `ICustomerService.createCustomer`.
         Server assigns `id` as `cust-{uuid4}` (no dashes) stored as PK `id`,
-        and `createdAt` (ISO 8601). Always sets `totalSpent: 0`.
+        plus `createdAt` and `updatedAt` (ISO 8601). Always sets `totalSpent: 0`.
         Missing `vipTier` → `regular`. Derives `vipTierName` from `vipTier`.
-        Missing `rewardPoints` → `0`.
-        Does not accept client `id` / `createdAt` / `vipTierName` / `totalSpent`.
-        Phone is stored canonical (strip spaces / hyphens / parentheses).
-        Email is trimmed, lowercased, and required unique.
+        Does not accept client `id` / `createdAt` / `updatedAt` / `vipTierName` /
+        `totalSpent`. Phone is stored canonical (strip spaces / hyphens /
+        parentheses). Email is optional: omit / `null` / whitespace → SQL NULL.
+        Non-null email is trimmed, lowercased, validated, and unique among
+        non-null values.
       requestBody:
         required: true
         content:
@@ -238,32 +250,6 @@ paths:
                     code: CUSTOMER_EMAIL_DUPLICATE
                     message: 電子信箱已存在
 
-  /customers/by-phone/{phone}:
-    get:
-      tags: [customers]
-      operationId: getCustomerByPhone
-      summary: Get customer by exact phone
-      description: |
-        Maps to `ICustomerService.getCustomerByPhone` (checkout member bind).
-        Server canonicalizes the path phone before exact lookup.
-        Distinct from `/customers/{customerId}` (ids are `cust-…`).
-      parameters:
-        - name: phone
-          in: path
-          required: true
-          schema:
-            type: string
-          example: '0912-345-678'
-      responses:
-        '200':
-          description: Customer
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Customer'
-        '404':
-          $ref: '#/components/responses/CustomerNotFound'
-
   /customers/{customerId}:
     get:
       tags: [customers]
@@ -286,10 +272,9 @@ paths:
       summary: Update customer profile
       description: |
         Maps to `ICustomerService.updateCustomer`.
-        Profile only. `rewardPoints` **replaces** the stored balance.
-        Never mutates `totalSpent`. On `vipTier` change, response `vipTierName`
-        follows the server map. Cannot clear email. Duplicate phone/email → 409.
-        To add/subtract points, use `POST /customers/{customerId}/reward-points`.
+        Profile only. Never mutates `totalSpent`. Bumps `updatedAt`.
+        On `vipTier` change, response `vipTierName` follows the server map.
+        `email` may be `null` to clear. Duplicate phone / non-null email → 409.
       parameters:
         - $ref: '#/components/parameters/CustomerId'
       requestBody:
@@ -351,46 +336,6 @@ paths:
                 code: CUSTOMER_HAS_UNFINISHED_ORDERS
                 message: 該會員尚有未完成訂單，無法刪除
 
-  /customers/{customerId}/reward-points:
-    post:
-      tags: [customers]
-      operationId: addRewardPoints
-      summary: Add or subtract reward points
-      description: |
-        Maps to `ICustomerService.addRewardPoints`.
-        `amount` is a signed integer (positive adds, negative subtracts).
-        `newBalance = stored + amount`. If `newBalance < 0`, deny with 422
-        `CUSTOMER_POINTS_INSUFFICIENT` (do not clamp). `amount: 0` is a no-op
-        (`200` + current Customer).
-        PUT `rewardPoints` remains replace. Checkout later owns sale-time
-        earned/used points.
-      parameters:
-        - $ref: '#/components/parameters/CustomerId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AddRewardPointsRequest'
-      responses:
-        '200':
-          description: Updated customer
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Customer'
-        '404':
-          $ref: '#/components/responses/CustomerNotFound'
-        '422':
-          description: Resulting balance would be negative, or invalid body
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BusinessError'
-              example:
-                code: CUSTOMER_POINTS_INSUFFICIENT
-                message: 點數不足
-
 components:
   parameters:
     ProductId:
@@ -451,7 +396,6 @@ components:
         - CUSTOMER_PHONE_DUPLICATE
         - CUSTOMER_EMAIL_DUPLICATE
         - CUSTOMER_HAS_UNFINISHED_ORDERS
-        - CUSTOMER_POINTS_INSUFFICIENT
 
     ModelScale:
       type: string
@@ -642,9 +586,9 @@ components:
         - email
         - vipTier
         - vipTierName
-        - rewardPoints
         - totalSpent
         - createdAt
+        - updatedAt
       properties:
         id:
           type: string
@@ -655,9 +599,11 @@ components:
           type: string
           description: Unique; stored canonical
         email:
-          type: string
+          type: [string, 'null']
           format: email
-          description: Required; unique after trim + lowercase
+          description: |
+            Optional. Always present on the response. Unique among non-null
+            values after trim + lowercase. JSON `null` when unset.
         vipTier:
           $ref: '#/components/schemas/VipTier'
         vipTierName:
@@ -666,71 +612,79 @@ components:
             Derived on read, not stored.
             platinum 白金黑卡 (9折); gold 金卡會員 (95折);
             silver 銀卡會員 (98折); regular 一般會員
-        rewardPoints:
-          type: integer
-          minimum: 0
         totalSpent:
           type: integer
           minimum: 0
           description: Server-owned after create; catalog create always 0
         note:
           type: string
+          description: Optional string. Omit or empty. Not JSON null.
         createdAt:
           type: string
           format: date-time
           description: Server-assigned ISO 8601
+        updatedAt:
+          type: string
+          format: date-time
+          description: Server-assigned ISO 8601; bump on profile update
+
+    CustomerSearchResponse:
+      type: object
+      required: [items, page, pageSize, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Customer'
+        page:
+          type: integer
+          minimum: 1
+        pageSize:
+          type: integer
+          minimum: 1
+          maximum: 100
+        total:
+          type: integer
+          minimum: 0
+          description: Filtered row count (not just this page)
 
     CreateCustomerRequest:
       type: object
       required:
         - name
         - phone
-        - email
       properties:
         name:
           type: string
         phone:
           type: string
         email:
-          type: string
+          type: [string, 'null']
           format: email
+          description: Optional. Omit / null / whitespace → SQL NULL
         vipTier:
           $ref: '#/components/schemas/VipTier'
           description: Optional; omit → regular
         note:
           type: string
-        rewardPoints:
-          type: integer
-          minimum: 0
-          description: Optional; omit → 0. Sets the initial balance.
+          description: Optional string. Omit or empty. Not JSON null.
 
     UpdateCustomerRequest:
       type: object
       description: |
-        Partial profile update. Excludes id, createdAt, vipTierName, totalSpent.
-        Sent email must remain a valid unique address (cannot clear).
-        rewardPoints replaces the stored balance.
+        Partial profile update. Excludes id, createdAt, updatedAt,
+        vipTierName, totalSpent. email may be null to clear.
       properties:
         name:
           type: string
         phone:
           type: string
         email:
-          type: string
+          type: [string, 'null']
           format: email
+          description: Omit to leave unchanged; null clears to SQL NULL
         vipTier:
           $ref: '#/components/schemas/VipTier'
         note:
           type: string
-        rewardPoints:
-          type: integer
-          minimum: 0
-          description: Replaces the stored balance when sent
-
-    AddRewardPointsRequest:
-      type: object
-      required: [amount]
-      properties:
-        amount:
-          type: integer
-          description: Signed. Positive adds, negative subtracts.
+          description: Optional string. Omit to leave unchanged; empty string is valid.

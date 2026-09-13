@@ -30,7 +30,7 @@ Catalog responsibilities:
 - Product **metadata** CRUD (sku, barcode, brand, name, scale, prices, note, status, optional material/color/imageUrl).
 - On create: always insert **four** `product_stock` rows at **`quantity: 0`** (`store`, `warehouse`, `company`, `other`). **No** client stock/quantity fields on `POST /products`.
 - Server-owned / response-only: `id`, `normalizedSku`, `totalStock`, `preOrderPendingCount`, `stocks` (assembled on read).
-- Search filters aligned with the FE mock (`keyword`, `scale`, `brand`, `inStockOnly`); default sort **`sku ASC`**.
+- Search filters aligned with the FE mock (`keyword`, `scale`, `brand`, `inStockOnly`); default sort **`sku ASC`**. Filters run **in SQL**, not in Python after load.
 
 ### Out of scope (future follow-up)
 
@@ -96,7 +96,7 @@ Source of truth for shapes and catalog method signatures:
 1. OpenAPI is the HTTP source of truth ([`../openapi.yaml`](../openapi.yaml)); where it **narrows** vs today’s FE (`Partial<Product>`, create `stocks`), FE adapts — see [`05-fe-changes.md`](./05-fe-changes.md).
 2. Response `Product` matches FE: camelCase, four locations in `stocks`, integer TWD prices, `status` ∈ `active` \| `discontinued`.
 3. Create request has **no** `stocks` / quantities; server assigns `id`, `normalizedSku`, zeros stocks, `preOrderPendingCount: 0`, `totalStock: 0`.
-4. Search semantics mirror the mock (empty keyword = no keyword filter; `scale`/`brand` missing or `ALL` = no filter; `inStockOnly` → `totalStock > 0`). Sort: **`sku ASC`**. Details in `03-search-rules.md`.
+4. Search semantics mirror the mock (empty keyword = no keyword filter; `scale`/`brand` missing or `ALL` = no filter; `inStockOnly` → `totalStock > 0`). Sort: **`sku ASC`**. Filters run **in SQL**. Details in `03-search-rules.md`.
 5. Catalog `PUT` uses **`UpdateProductRequest`** (metadata only in OpenAPI); stock / preorder never part of that schema.
 
 ### ID and create defaults (summary)

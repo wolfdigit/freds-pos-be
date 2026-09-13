@@ -1,12 +1,12 @@
 # Customers — Overview
 
-Planning doc for the **customer / member** phase of Fred's POS backend. Companion docs in this folder cover API contract, data model, search rules, and open questions. **No application code is produced by this planning pass.**
+Planning doc for the **customer / member** phase of Fred's POS backend. Companion docs in this folder cover API contract, data model, search rules, and open questions.
 
 ## Goals
 
 - Expose a FastAPI member catalog that matches the frontend `ICustomerService` member methods so the UI can switch from mock/localStorage to HTTP without rewriting screens.
-- Persist customers with unique server-assigned ids, unique phone numbers, a **required unique valid email**, VIP tier, cashier-adjustable reward points, and a checkout-owned spending aggregate.
-- Keep **contract → frontend/mock** alignment: OpenAPI is the planned HTTP contract; the FE HTTP adapter already ships and will be tightened where the contract narrows.
+- Persist customers with unique server-assigned ids, unique phone numbers, optional email, VIP tier, and a checkout-owned spending aggregate.
+- Keep **contract → frontend/mock** alignment: OpenAPI is the HTTP contract; the FE HTTP adapter already ships and will be tightened where the contract narrows.
 
 ## Scope
 
@@ -19,32 +19,27 @@ Planning doc for the **customer / member** phase of Fred's POS backend. Companio
 | `GET` | `/customers/{customerId}` | `ICustomerService.getCustomerById` |
 | `PUT` | `/customers/{customerId}` | `ICustomerService.updateCustomer` |
 | `DELETE` | `/customers/{customerId}` | `ICustomerService.deleteCustomer` |
-| `GET` | `/customers/by-phone/{phone}` | `ICustomerService.getCustomerByPhone` |
-| `POST` | `/customers/{customerId}/reward-points` | `ICustomerService.addRewardPoints` |
 
 Member-catalog responsibilities:
 
-- Customer **profile** CRUD including **delete** (name, phone, **required unique valid email**, vip tier, note, optional initial / cashier-set `rewardPoints`).
-- On create: server assigns `id` and `createdAt`; always sets `totalSpent: 0`; derives `vipTierName` from `vipTier`. **No** client `id` / `createdAt` / `vipTierName` / `totalSpent` on `POST /customers`.
-- Server-owned / response-only: `id`, `createdAt`, `vipTierName`, `totalSpent` (stored, but checkout-owned after create).
-- **Reward points:** `PUT` **`rewardPoints` replaces** the balance; `POST .../reward-points` **`amount` adds** (integer; may be negative). Balance stays ≥ 0.
-- Search aligned with products: query param **`keyword`**; match **name** / **phone** / **email**; optional **`vipTier`** and **`minPoints`**; default sort **`name ASC`**.
-- Exact phone lookup for checkout bind (`getCustomerByPhone`).
+- Customer **profile** CRUD including **delete** (name, phone, optional email, vip tier, note).
+- On create: server assigns `id`, `createdAt`, `updatedAt`; always sets `totalSpent: 0`; derives `vipTierName` from `vipTier`. **No** client `id` / `createdAt` / `updatedAt` / `vipTierName` / `totalSpent` on `POST /customers`.
+- Server-owned / response-only: `id`, `createdAt`, `updatedAt`, `vipTierName`, `totalSpent` (stored, but checkout-owned after create).
+- **No `rewardPoints`** on the member catalog (column, request, response, or search filter). Checkout later owns any sale-time points on orders, not on `customer`.
+- Search: query param **`keyword`** (name / phone / email); optional **`vipTier`**; **paged**. Default sort **`name ASC`**. Phone lookup uses this search (substring); **no** `GET /customers/by-phone/{phone}`.
+- Filters run **in SQL**, not in Python after load.
 
 ### Out of scope (future follow-up)
 
-Spending / points mutation as a side-effect of checkout, plus related member APIs, are **not** part of this phase; mention only as later work:
-
-- `updateCustomerSpending` / `POST /customers/{customerId}/spending` — **including incrementing `totalSpent` and checkout-earned points**. Checkout owns this atomically. Catalog still has **replace** (`PUT rewardPoints`) and **add** (`POST .../reward-points`) for cashier adjustments.
+- `updateCustomerSpending` / `POST /customers/{customerId}/spending` — checkout owns `totalSpent` (and any order-level points) atomically.
 - Writes to `totalSpent` from any catalog endpoint (create always `0`; update schema excludes the field).
-- Preorder / order history nested under a customer (`GET /customers/{id}/preorders`, history tabs) — those belong to preorder / checkout modules; this phase only returns the `Customer` profile.
-- Seeding mock customers via Alembic data migration / management script (**decision B**, later phase; see `04-open-questions.md`).
+- `rewardPoints`, `minPoints`, `POST .../reward-points`, `GET .../by-phone/{phone}`.
+- Preorder / order history nested under a customer.
+- Seeding mock customers (**decision B**, later phase).
 
 Auth stays optional/dummy for this phase (`src/api/deps.py`).
 
 ## Layered architecture
-
-Target layout matches the backend README and the products catalog. Members are wired as a thin HTTP layer over a service that owns business rules and persistence.
 
 ```
 HTTP (api/v1/endpoints/customers.py)
@@ -55,12 +50,10 @@ HTTP (api/v1/endpoints/customers.py)
 
 | Layer | Role |
 |-------|------|
-| **API / endpoints** | Route handlers, query/body parsing, status codes, dependency injection (`get_db`, optional user). No business rules beyond HTTP mapping. |
-| **Schemas** | Pydantic request/response DTOs; camelCase JSON (`vipTier`, `vipTierName`, `rewardPoints`, `totalSpent`, `createdAt`) matching FE `Customer`. |
-| **Services** | Phone / email normalize, uniqueness, `vipTierName` map, create defaults, search filters, `rewardPoints` replace vs add, hard delete, ignore client overwrite of server-owned fields. |
+| **API / endpoints** | Route handlers, query/body parsing, status codes, dependency injection (`get_db`, optional user). |
+| **Schemas** | Pydantic DTOs; camelCase JSON (`vipTier`, `vipTierName`, `totalSpent`, `createdAt`, `updatedAt`). |
+| **Services** | Phone / email normalize, uniqueness, `vipTierName` map, create defaults, **SQL** search + paging, hard delete. |
 | **Models + Alembic** | Table, indexes, uniqueness; migration for `customer`. |
-
-### Planned backend file map (document only — not implemented yet)
 
 | Piece | Path |
 |-------|------|
@@ -71,58 +64,48 @@ HTTP (api/v1/endpoints/customers.py)
 | Router wire-up | `src/api/v1/api.py` |
 | Migration | Alembic revision under `alembic/versions/` |
 
-Base URL (planned): `/api/v1` (see [`../openapi.yaml`](../openapi.yaml) servers).
+Base URL: `/api/v1` (see [`../openapi.yaml`](../openapi.yaml) servers).
 
 ### Storage sketch (detail in `02-data-model.md`)
 
-- **`customer`** — member profile; PK **`id`** (same pattern as `product.id`); unique `phone` (canonical digits); unique `email` (lowercased, required, valid format); timestamps `created_at` / `updated_at`.
-- **`vip_tier_name` is not stored** — assembled on read from a fixed `vipTier` map (same copy as FE `getVipTierName`).
-- **`total_spent`** is stored on `customer` (running aggregate). Catalog create initializes `0`; catalog update must not accept it; checkout later increments it.
-- **`reward_points`** is stored on `customer`. Create may set it; `PUT` **replaces**; `POST .../reward-points` **adds**; checkout later also adds/subtracts.
-
-`vipTierName` is derived; `id` / `createdAt` are server-assigned. None of those are accepted on create/update request schemas.
+- **`customer`** — PK **`id`**; unique `phone`; optional unique `email` (lowercased when set; `NULL` allowed); timestamps `created_at` / `updated_at` (both in JSON).
+- **`vip_tier_name` is not stored** — assembled on read.
+- **`total_spent`** stored; create initializes `0`; catalog update must not accept it.
+- **No `reward_points` column.**
 
 ## Frontend alignment
 
-Source of truth for shapes and member method signatures:
-
 - FE interface: `freds-pos-fe/src/services/interfaces/ICustomerService.ts`
-- Types: `freds-pos-fe/src/types/customer.ts` (`Customer`, `VipTier`, `getVipTierName`)
-- Mock behavior: `freds-pos-fe/src/services/mock/mockCustomerService.ts`
-- HTTP adapter (already shipped): `freds-pos-fe/src/services/api/httpCustomerService.ts`
+- Types: `freds-pos-fe/src/types/customer.ts`
+- Mock: `freds-pos-fe/src/services/mock/mockCustomerService.ts`
+- HTTP adapter: `freds-pos-fe/src/services/api/httpCustomerService.ts`
 - UI: `CustomerModal`, `CustomersPage`, checkout `CustomerBindCard`
-- HTTP contract: [`../openapi.yaml`](../openapi.yaml) (customers tag; merged with products)
+- HTTP contract: [`../openapi.yaml`](../openapi.yaml)
 
 ### Contract principles
 
-1. OpenAPI is the HTTP source of truth ([`../openapi.yaml`](../openapi.yaml)); where it **narrows** vs today’s FE (`Omit<Customer, 'id' | 'createdAt'>`, `Partial<Customer>`, create `vipTierName` / `totalSpent`), FE adapts later — see [`05-fe-changes.md`](./05-fe-changes.md).
-2. Response `Customer` matches FE: camelCase, integer TWD `totalSpent`, integer `rewardPoints`, required `email`, `vipTier` ∈ `regular` \| `silver` \| `gold` \| `platinum`, `vipTierName` from the fixed map.
-3. Create request has **no** `id` / `createdAt` / `vipTierName` / `totalSpent`; server assigns `id`, `createdAt`, `vipTierName`, `totalSpent: 0`. **Required:** `name`, `phone`, `email`. **`vipTier` optional** — omit → `regular`.
-4. Search: empty / missing **`keyword`** = no keyword filter; name case-insensitive contains; phone substring; email contains. Optional **`vipTier`** (`ALL` / missing = no filter, else exact) and **`minPoints`** (`rewardPoints >= minPoints`). Filters AND-combined. Sort: **`name ASC`**. Details in `03-search-rules.md`.
-5. Catalog `PUT` uses **`UpdateCustomerRequest`**; `id` / `createdAt` / `vipTierName` / `totalSpent` never part of that schema. `rewardPoints` on PUT **replaces**. Add uses `POST /customers/{id}/reward-points`.
-6. `DELETE /customers/{customerId}` hard-deletes the row. **API-only** this phase (no FE delete control). Denied with `409` if any related order/preorder is **unfinished** (not `completed`, `refunded`, or `cancelled`). Terminal history is kept: later `customer_id` **`SET NULL`**, **name/phone snapshots stay**. This phase has none of those tables, so the check cannot fire yet.
+1. OpenAPI is the HTTP source of truth ([`../openapi.yaml`](../openapi.yaml)). FE adapts later — [`05-fe-changes.md`](./05-fe-changes.md).
+2. Response `Customer`: camelCase, integer TWD `totalSpent`, **optional** `email` (`null` allowed), `vipTier` ∈ `regular` \| `silver` \| `gold` \| `platinum`, `vipTierName` from the map, **`createdAt` and `updatedAt`** ISO 8601. **No `rewardPoints`.**
+3. Create: **required** `name`, `phone`. **Optional** `email` (omit / `null` → store `NULL`), `vipTier` (omit → `regular`), `note` (optional string).
+4. Search: `keyword` + `vipTier` + **`page` / `pageSize`**. Keyword matches name / phone / email (skip email when `NULL`). Phone bind uses `keyword` (no separate by-phone API). SQL-only filters. Sort `name ASC`. See `03-search-rules.md`.
+5. `PUT` profile-only: `name`, `phone`, `email` (may be `null` to clear), `vipTier`, `note`. Never `id` / `createdAt` / `updatedAt` / `vipTierName` / `totalSpent`.
+6. `DELETE` hard-delete; API-only UI this phase; `409` if unfinished orders once those tables exist.
 
-### ID and create defaults (summary)
+### ID and create defaults
 
-- Server assigns opaque `cust-{uuid4}` (no dashes) into PK column **`id`** (JSON `id`, path `{customerId}` — same three-way identity as products’ `prod-…` / `id` / `{productId}`). Do not accept client `id` on create. Seed-style `cust-001` remains valid only as imported data (later seed phase).
-- Create always sets `totalSpent: 0`, derives `vipTierName`. Missing `rewardPoints` → `0`. Missing **`vipTier` → `regular`**.
-- Phone is stored in canonical form (strip spaces / hyphens / parentheses); uniqueness is on that canonical value.
-- Email is required: trim + lowercase, valid format, **unique**. Duplicate → `409` `CUSTOMER_EMAIL_DUPLICATE`; missing / invalid → `422`.
+- Server assigns `cust-{uuid4}` (no dashes) into PK **`id`**.
+- Create always `totalSpent: 0`, derives `vipTierName`. Missing **`vipTier` → `regular`**.
+- Phone stored canonical (strip spaces / hyphens / parentheses); unique.
+- Email optional: omit / `null` / whitespace → `NULL`. Non-null: trim + lowercase, valid format, unique among non-null rows. Duplicate → `409` `CUSTOMER_EMAIL_DUPLICATE`; malformed → `422`.
 
 ## Doc map
 
 | File | Purpose |
 |------|---------|
-| `00-overview.md` | This file — goals, scope, architecture, FE alignment |
-| `01-api-contract.md` | Endpoint contracts, errors, proposed OpenAPI patch list |
-| `02-data-model.md` | Table, indexes, uniqueness, computed fields, Alembic notes |
-| `03-search-rules.md` | Query `keyword` / `vipTier` / `minPoints` / name / phone / email / exact-phone rules |
-| `04-open-questions.md` | Decision log (open questions resolved) |
-| `05-fe-changes.md` | FE checklist (later pass; this implement pass is backend only) |
-| [`../openapi.yaml`](../openapi.yaml) | Merged HTTP contract (products + customers) |
-
-## Non-goals for this planning pass
-
-- Implementing endpoints, models, or migrations.
-- Changing frontend code (this implement pass is backend only).
-- Nested preorder or order-history endpoints under a customer.
+| `00-overview.md` | This file |
+| `01-api-contract.md` | Endpoint contracts, errors |
+| `02-data-model.md` | Table, indexes, uniqueness |
+| `03-search-rules.md` | Keyword / vipTier / paging / SQL filters |
+| `04-open-questions.md` | Decision log |
+| `05-fe-changes.md` | FE checklist (later) |
+| [`../openapi.yaml`](../openapi.yaml) | Merged HTTP contract |
