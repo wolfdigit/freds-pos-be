@@ -1,6 +1,6 @@
 # Products Catalog — API Contract
 
-HTTP contract for the four catalog endpoints. Align OpenAPI with decided catalog rules; where the contract **narrows** relative to today’s FE, FE adapts (see [`05-fe-changes.md`](./05-fe-changes.md)). Proposed YAML edits are listed at the end; **do not change** [`prompts/openapi.yaml`](../openapi.yaml) until implementation is approved.
+HTTP contract for the four catalog endpoints. Align OpenAPI with decided catalog rules; where the contract **narrows** relative to today’s FE, FE adapts (see [`05-fe-changes.md`](./05-fe-changes.md)). Contract file: [`../openapi.yaml`](../openapi.yaml).
 
 Base path: `/api/v1` (see OpenAPI `servers`).
 
@@ -202,9 +202,9 @@ Auth remains optional/dummy for this phase.
 
 ---
 
-## OpenAPI patch recommendations (do not apply yet)
+## OpenAPI
 
-Proposed edits to [`prompts/openapi.yaml`](../openapi.yaml) when implementation is approved. Full FE sync list: [`05-fe-changes.md`](./05-fe-changes.md).
+This phase’s contract is [`../openapi.yaml`](../openapi.yaml) (products tag; merged with customers). Full FE sync list: [`05-fe-changes.md`](./05-fe-changes.md).
 
 ### 1. `CreateProductRequest`
 

@@ -1,6 +1,6 @@
 # Products Catalog — Overview
 
-Planning doc for the **product catalog** phase of Fred's POS backend. Companion docs in this folder cover API contract, data model, search rules, and open questions. **No application code is produced by this planning pass.**
+The **product catalog** phase of Fred's POS backend. Companion docs in this folder cover API contract, data model, search rules, and open questions. **No application code is produced by this planning pass.**
 
 ## Goals
 
@@ -8,16 +8,22 @@ Planning doc for the **product catalog** phase of Fred's POS backend. Companion 
 - Persist products with multi-location stock rows and a separate preorder-pending aggregate (read-only on catalog endpoints).
 - Keep **contract → frontend/mock** alignment: OpenAPI is the planned HTTP contract; the FE adapter already ships.
 
+
+
 ## Scope
+
+
 
 ### In scope (this phase)
 
-| Method | Path | Maps to |
-|--------|------|---------|
-| `GET` | `/products` | `IProductService.searchProducts` |
-| `POST` | `/products` | `IProductService.createProduct` |
-| `GET` | `/products/{productId}` | `IProductService.getProductById` |
-| `PUT` | `/products/{productId}` | `IProductService.updateProduct` |
+
+| Method | Path                    | Maps to                          |
+| ------ | ----------------------- | -------------------------------- |
+| `GET`  | `/products`             | `IProductService.searchProducts` |
+| `POST` | `/products`             | `IProductService.createProduct`  |
+| `GET`  | `/products/{productId}` | `IProductService.getProductById` |
+| `PUT`  | `/products/{productId}` | `IProductService.updateProduct`  |
+
 
 Catalog responsibilities:
 
@@ -65,7 +71,7 @@ HTTP (api/v1/endpoints/products.py)
 | Router wire-up | `src/api/v1/api.py` |
 | Migration | Alembic revision under `alembic/versions/` |
 
-Base URL (planned): `/api/v1` (see `prompts/openapi.yaml` servers).
+Base URL (planned): `/api/v1` (see [`../openapi.yaml`](../openapi.yaml) servers).
 
 ### Storage sketch (detail in `02-data-model.md`)
 
@@ -83,11 +89,11 @@ Source of truth for shapes and catalog method signatures:
 - Types: `freds-pos-fe/src/types/product.ts`
 - Mock behavior: `freds-pos-fe/src/services/mock/mockProductService.ts`
 - SKU normalize: `freds-pos-fe/src/utils/skuNormalizer.ts` (`upper` + strip non `[A-Z0-9]`)
-- HTTP contract draft: `prompts/openapi.yaml` (products tag)
+- HTTP contract: [`../openapi.yaml`](../openapi.yaml) (products tag; merged with customers)
 
 ### Contract principles
 
-1. OpenAPI is the HTTP source of truth; where it **narrows** vs today’s FE (`Partial<Product>`, create `stocks`), FE adapts — see [`05-fe-changes.md`](./05-fe-changes.md). **Do not edit YAML until implementation is approved**.
+1. OpenAPI is the HTTP source of truth ([`../openapi.yaml`](../openapi.yaml)); where it **narrows** vs today’s FE (`Partial<Product>`, create `stocks`), FE adapts — see [`05-fe-changes.md`](./05-fe-changes.md).
 2. Response `Product` matches FE: camelCase, four locations in `stocks`, integer TWD prices, `status` ∈ `active` \| `discontinued`.
 3. Create request has **no** `stocks` / quantities; server assigns `id`, `normalizedSku`, zeros stocks, `preOrderPendingCount: 0`, `totalStock: 0`.
 4. Search semantics mirror the mock (empty keyword = no keyword filter; `scale`/`brand` missing or `ALL` = no filter; `inStockOnly` → `totalStock > 0`). Sort: **`sku ASC`**. Details in `03-search-rules.md`.
@@ -108,9 +114,9 @@ Source of truth for shapes and catalog method signatures:
 | `03-search-rules.md` | Keyword / scale / brand / inStockOnly rules |
 | `04-open-questions.md` | Decision log (open questions resolved) |
 | `05-fe-changes.md` | FE + OpenAPI change checklist |
+| [`../openapi.yaml`](../openapi.yaml) | Merged HTTP contract (products + customers) |
 
 ## Non-goals for this planning pass
 
 - Implementing endpoints, models, or migrations.
-- Changing `prompts/openapi.yaml`.
 - Inventory / preorder write APIs.
