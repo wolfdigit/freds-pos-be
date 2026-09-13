@@ -23,7 +23,7 @@ AND-combined. Keyword conditions are OR.
 input → trim → remove spaces, hyphens, parentheses
 ```
 
-Keyword does **not** require a canonical typed phone: SQL matches stored canonical `phone` against the trimmed query **and** `canonicalize(query)` when that form is non-empty (`0912-345` still hits `0912345678`).
+Keyword does **not** require a canonical typed phone: SQL matches stored canonical **non-null** `phone` against the trimmed query **and** `canonicalize(query)` when that form is non-empty (`0912-345` still hits `0912345678`). Null phones never match the phone branch.
 
 ---
 
@@ -38,12 +38,12 @@ No keyword predicate. Other filters and paging still apply.
 Keep the row if **any**:
 
 1. `LOWER(name) LIKE %lower(trim)%`
-2. `phone LIKE %trim%` **OR** (`canonicalize(trim)` non-empty **AND** `phone LIKE %canonical%`)
+2. `phone IS NOT NULL` **AND** (`phone LIKE %trim%` **OR** (`canonicalize(trim)` non-empty **AND** `phone LIKE %canonical%`))
 3. `email IS NOT NULL AND LOWER(email) LIKE %lower(trim)%`
 
-Null emails never match the email branch.
+Null phones never match the phone branch. Null emails never match the email branch.
 
-A **full** canonical phone typically returns one row (phone is unique). Substring (`0912`) may return many — that is the bind/search UX; the client picks from `items`.
+A **full** canonical phone typically returns one row (non-null phone is unique). Substring (`0912`) may return many — that is the bind/search UX; the client picks from `items`.
 
 ---
 

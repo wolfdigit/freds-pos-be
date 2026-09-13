@@ -1,20 +1,8 @@
-import re
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
-
-_PHONE_STRIP = re.compile(r"[\s\-()]")
-
-
-def _require_canonical_phone(value: str) -> str:
-    stripped = value.strip()
-    if not stripped:
-        raise ValueError("must not be empty")
-    if not _PHONE_STRIP.sub("", stripped):
-        raise ValueError("must not be empty")
-    return stripped
 
 
 class VipTier(str, Enum):
@@ -24,34 +12,41 @@ class VipTier(str, Enum):
     PLATINUM = "platinum"
 
 
+def _blank_to_none(value: object) -> object:
+    if value is None:
+        return None
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
 class Customer(BaseModel):
-    """Full customer response matching FE Customer type."""
+    """Full customer response matching the member-catalog contract."""
 
     model_config = ConfigDict(populate_by_name=True, from_attributes=True)
 
     id: str
     name: str
-    phone: str
-    email: EmailStr
+    phone: Optional[str] = None
+    email: Optional[EmailStr] = None
     vip_tier: VipTier = Field(..., alias="vipTier")
     vip_tier_name: str = Field(..., alias="vipTierName")
-    reward_points: int = Field(..., alias="rewardPoints", ge=0)
     total_spent: int = Field(..., alias="totalSpent", ge=0)
-    note: Optional[str] = None
+    note: str = ""
     created_at: datetime = Field(..., alias="createdAt")
+    updated_at: datetime = Field(..., alias="updatedAt")
 
 
 class CreateCustomerRequest(BaseModel):
-    """Create body: profile only — no id / createdAt / vipTierName / totalSpent."""
+    """Create body: profile only — no id / timestamps / vipTierName / totalSpent."""
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     name: str
-    phone: str
-    email: EmailStr
+    phone: Optional[str] = None
+    email: Optional[EmailStr] = None
     vip_tier: Optional[VipTier] = Field(None, alias="vipTier")
     note: Optional[str] = None
-    reward_points: Optional[int] = Field(None, alias="rewardPoints", ge=0)
 
     @field_validator("name")
     @classmethod
@@ -60,21 +55,24 @@ class CreateCustomerRequest(BaseModel):
             raise ValueError("must not be empty")
         return v.strip()
 
-    @field_validator("phone")
+    @field_validator("phone", mode="before")
     @classmethod
-    def non_empty_phone(cls, v: str) -> str:
-        return _require_canonical_phone(v)
+    def blank_phone_to_none(cls, v: object) -> object:
+        return _blank_to_none(v)
 
     @field_validator("email", mode="before")
     @classmethod
-    def normalize_email(cls, v: object) -> object:
-        if not isinstance(v, str) or not v.strip():
-            raise ValueError("must not be empty")
-        return v.strip().lower()
+    def normalize_optional_email(cls, v: object) -> object:
+        blanked = _blank_to_none(v)
+        if blanked is None:
+            return None
+        if isinstance(blanked, str):
+            return blanked.strip().lower()
+        return blanked
 
 
 class UpdateCustomerRequest(BaseModel):
-    """Partial profile update — excludes id / createdAt / vipTierName / totalSpent."""
+    """Partial profile update — excludes id / timestamps / vipTierName / totalSpent."""
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
@@ -83,7 +81,6 @@ class UpdateCustomerRequest(BaseModel):
     email: Optional[EmailStr] = None
     vip_tier: Optional[VipTier] = Field(None, alias="vipTier")
     note: Optional[str] = None
-    reward_points: Optional[int] = Field(None, alias="rewardPoints", ge=0)
 
     @field_validator("name")
     @classmethod
@@ -94,26 +91,28 @@ class UpdateCustomerRequest(BaseModel):
             raise ValueError("must not be empty")
         return v.strip()
 
-    @field_validator("phone")
+    @field_validator("phone", mode="before")
     @classmethod
-    def non_empty_optional_phone(cls, v: Optional[str]) -> Optional[str]:
-        if v is None:
-            return v
-        return _require_canonical_phone(v)
+    def blank_phone_to_none(cls, v: object) -> object:
+        return _blank_to_none(v)
 
     @field_validator("email", mode="before")
     @classmethod
     def normalize_optional_email(cls, v: object) -> object:
-        if v is None:
-            return v
-        if not isinstance(v, str) or not v.strip():
-            raise ValueError("must not be empty")
-        return v.strip().lower()
+        blanked = _blank_to_none(v)
+        if blanked is None:
+            return None
+        if isinstance(blanked, str):
+            return blanked.strip().lower()
+        return blanked
 
 
-class AddRewardPointsRequest(BaseModel):
-    """Signed point delta. Positive adds, negative subtracts."""
+class CustomerSearchResponse(BaseModel):
+    """Paged search result for GET /customers."""
 
-    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+    model_config = ConfigDict(populate_by_name=True)
 
-    amount: int
+    items: List[Customer]
+    page: int
+    page_size: int = Field(..., alias="pageSize")
+    total: int

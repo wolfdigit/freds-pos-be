@@ -169,8 +169,9 @@ paths:
         Maps to `ICustomerService.searchCustomers`.
         Also used for checkout phone bind (no `/customers/by-phone/{phone}`).
         Missing / empty `keyword` = no keyword filter.
-        Keyword matches name (case-insensitive contains), phone (substring, also
-        against canonicalized query), or non-null email (case-insensitive contains).
+        Keyword matches name (case-insensitive contains), non-null phone
+        (substring, also against canonicalized query), or non-null email
+        (case-insensitive contains).
         `vipTier` missing or `ALL` = no VIP filter; otherwise exact match.
         Filters, sort, and paging run in SQL (`WHERE` / `ORDER BY` / `LIMIT` /
         `OFFSET`), not in Python after load. Default sort: `name ASC`, then `id ASC`.
@@ -217,10 +218,11 @@ paths:
         plus `createdAt` and `updatedAt` (ISO 8601). Always sets `totalSpent: 0`.
         Missing `vipTier` → `regular`. Derives `vipTierName` from `vipTier`.
         Does not accept client `id` / `createdAt` / `updatedAt` / `vipTierName` /
-        `totalSpent`. Phone is stored canonical (strip spaces / hyphens /
-        parentheses). Email is optional: omit / `null` / whitespace → SQL NULL.
-        Non-null email is trimmed, lowercased, validated, and unique among
-        non-null values.
+        `totalSpent`. Phone is optional: omit / `null` / whitespace / empty after
+        canonicalize → SQL NULL. Non-null phone is stored canonical (strip spaces
+        / hyphens / parentheses) and unique among non-null values. Email is
+        optional: omit / `null` / whitespace → SQL NULL. Non-null email is
+        trimmed, lowercased, validated, and unique among non-null values.
       requestBody:
         required: true
         content:
@@ -274,7 +276,8 @@ paths:
         Maps to `ICustomerService.updateCustomer`.
         Profile only. Never mutates `totalSpent`. Bumps `updatedAt`.
         On `vipTier` change, response `vipTierName` follows the server map.
-        `email` may be `null` to clear. Duplicate phone / non-null email → 409.
+        `phone` and `email` may be `null` to clear. Duplicate non-null phone /
+        non-null email → 409.
       parameters:
         - $ref: '#/components/parameters/CustomerId'
       requestBody:
@@ -596,8 +599,10 @@ components:
         name:
           type: string
         phone:
-          type: string
-          description: Unique; stored canonical
+          type: [string, 'null']
+          description: |
+            Optional. Always present on the response. Unique among non-null
+            values after canonicalize. JSON `null` when unset.
         email:
           type: [string, 'null']
           format: email
@@ -652,12 +657,14 @@ components:
       type: object
       required:
         - name
-        - phone
       properties:
         name:
           type: string
         phone:
-          type: string
+          type: [string, 'null']
+          description: |
+            Optional. Omit / null / whitespace / empty after canonicalize →
+            SQL NULL. Unique among non-null canonical values.
         email:
           type: [string, 'null']
           format: email
@@ -673,12 +680,13 @@ components:
       type: object
       description: |
         Partial profile update. Excludes id, createdAt, updatedAt,
-        vipTierName, totalSpent. email may be null to clear.
+        vipTierName, totalSpent. phone and email may be null to clear.
       properties:
         name:
           type: string
         phone:
-          type: string
+          type: [string, 'null']
+          description: Omit to leave unchanged; null clears to SQL NULL
         email:
           type: [string, 'null']
           format: email

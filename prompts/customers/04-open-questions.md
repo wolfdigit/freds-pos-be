@@ -1,6 +1,6 @@
 # Customers — Open Questions
 
-Decisions from the planning discussion are recorded below. Items marked **Decided** should not be reopened without cause. Rows **27–33** (2026-09-13 revision) supersede earlier choices on points, email, by-phone, `updatedAt`, `note`, paging, and SQL-only search.
+Decisions from the planning discussion are recorded below. Items marked **Decided** should not be reopened without cause. Rows **27–34** (2026-09-13 revision) supersede earlier choices on points, email, phone, by-phone, `updatedAt`, `note`, paging, and SQL-only search.
 
 ---
 
@@ -18,14 +18,14 @@ Decisions from the planning discussion are recorded below. Items marked **Decide
 | 8 | FE / OpenAPI sync | Track all FE + contract changes in [`05-fe-changes.md`](./05-fe-changes.md). | 2026-09-13 |
 | 9 | Search query param | **`keyword`** — same as products. FE HTTP `q` and FE OpenAPI `query` both become `keyword`. | 2026-09-13 |
 | 10 | Email | **Superseded by #28.** Was: required unique. Now: optional, `null` allowed. | 2026-09-13 |
-| 11 | Phone uniqueness | **Unique** on canonical form. **Revised by #30:** no exact get-by-phone endpoint; search `keyword` covers phone. | 2026-09-13 |
+| 11 | Phone uniqueness | **Unique among non-null** on canonical form. **Revised by #30:** no exact get-by-phone endpoint; search `keyword` covers phone. **Revised by #34:** phone is optional; `NULL` allowed; multiple `NULL` phones allowed. | 2026-09-13 |
 | 12 | Spending HTTP | **Out of scope** — no `POST /customers/{id}/spending`. Checkout owns `totalSpent`. **Revised by #27:** catalog must not set `rewardPoints`. | 2026-09-13 |
 | 13 | Email in keyword search | **Include** email contains (case-insensitive) when email is non-null. | 2026-09-13 |
 | 14 | DB primary key | **`customer.id`** — same as `product.id`. JSON `id` / path `{customerId}` are that column. Future FKs reference `customer.id`. | 2026-09-13 |
 | 15 | Create `vipTier` | **Optional** — omit / missing → default **`regular`**. | 2026-09-13 |
 | 16 | Purchase / preorder this phase | **A** — profile only. Member detail tabs will see **empty lists** until checkout / preorder modules exist. | 2026-09-13 |
 | 17 | Implementation timing | Contract YAML + planning docs stay in `prompts/`. Application code follows an explicit implement pass. | 2026-09-13 |
-| 18 | Phone format | Canonicalize (strip spaces / hyphens / parentheses), non-empty, unique. **No** Taiwan-only `09xxxxxxxx` / E.164 rule. | 2026-09-13 |
+| 18 | Phone format | Canonicalize (strip spaces / hyphens / parentheses). Empty after canonicalize → `NULL`. Unique among non-null. **No** Taiwan-only `09xxxxxxxx` / E.164 rule. **Revised by #34:** optional. | 2026-09-13 |
 | 19 | Search VIP / points | **`vipTier`** (`ALL` / missing = no filter). **`minPoints` superseded by #27** — removed. | 2026-09-13 |
 | 20 | Reward points mutate | **Superseded by #27** — no member `rewardPoints`. | 2026-09-13 |
 | 21 | Delete | **`DELETE /customers/{id}`** hard-delete. **API-only this phase**. `204` / `404`. Unfinished order/preorder → `409`. Completed history allowed; later FKs **`SET NULL`**. | 2026-09-13 |
@@ -41,6 +41,7 @@ Decisions from the planning discussion are recorded below. Items marked **Decide
 | 31 | `note` type | Optional **`string`**. Omit or `""`. Do **not** document OpenAPI `nullable: true` / `null` on `note`. SQL `NULL` on omit is storage, not the JSON type. | 2026-09-13 |
 | 32 | Search paging | `page` (default `1`, ≥ 1) + `pageSize` (default `20`, max `100`). Response `{ items, page, pageSize, total }`. SQL `LIMIT`/`OFFSET` after `ORDER BY name ASC, id ASC`. | 2026-09-13 |
 | 33 | SQL-only search filters | Customer **and** product search: apply keyword/filters/sort/(paging) **in the database**. Do not load then filter or slice in Python. | 2026-09-13 |
+| 34 | Phone optional | Omit / JSON `null` / whitespace / empty after canonicalize → SQL `NULL`. Non-null: unique after canonicalize. Duplicate → `409` `CUSTOMER_PHONE_DUPLICATE`. PUT may clear with `null`. Multiple `NULL` phones allowed. | 2026-09-13 |
 
 ---
 
@@ -84,8 +85,9 @@ Decisions from the planning discussion are recorded below. Items marked **Decide
 - `CreateCustomerRequest` **does not** include `id`, `createdAt`, `updatedAt`, `vipTierName`, `totalSpent`, `rewardPoints`
 - Server always sets `totalSpent: 0`, assigns `cust-{uuid4}` (no dashes), sets `createdAt` and `updatedAt`
 - `email` is **optional** (decision 28)
+- `phone` is **optional** (decision 34)
 - Missing `vipTier` → `regular`; still derive `vipTierName` from the stored tier
-- FE `CustomerModal` must stop sending `vipTierName` and `totalSpent: 0`; email is optional
+- FE `CustomerModal` must stop sending `vipTierName` and `totalSpent: 0`; email and phone are optional
 - Details for FE: [`05-fe-changes.md`](./05-fe-changes.md)
 
 ### 6–7. Sort and auth
@@ -104,12 +106,13 @@ Decisions from the planning discussion are recorded below. Items marked **Decide
 - Empty `keyword` = no keyword filter (member page initial load)
 - Phone bind uses this param (decision 30)
 
-### 10–11 / 28 / 30. Uniqueness and lookup
+### 10–11 / 28 / 30 / 34. Uniqueness and lookup
 
-- `phone` unique after canonicalize (spaces / hyphens / parentheses stripped)
+- `phone` **optional**. Omit / `null` / whitespace / empty after canonicalize → SQL `NULL`. Non-null: unique after canonicalize (spaces / hyphens / parentheses stripped)
 - `email` **optional**. Omit / `null` / whitespace → SQL `NULL`. Non-null: unique after trim + lowercase, valid format
+- Duplicate non-null phone → `409` `{ code: CUSTOMER_PHONE_DUPLICATE, message: 手機號碼已存在 }`
 - Duplicate non-null email → `409` `{ code: CUSTOMER_EMAIL_DUPLICATE, message: 電子信箱已存在 }`
-- PUT may send `email: null` to clear
+- PUT may send `phone: null` or `email: null` to clear
 - **No** `GET /customers/by-phone/{phone}`. Checkout bind: `GET /customers?keyword=`
 
 ### 12 / 27. Spending and points writes
@@ -147,11 +150,11 @@ Decisions from the planning discussion are recorded below. Items marked **Decide
 ### 17. Implement vs planning
 
 - Contract YAML is [`../openapi.yaml`](../openapi.yaml) (merged products + customers)
-- Existing backend still follows the **previous** contract until an explicit code pass (drop `reward_points`, nullable email, paging, SQL keyword, `updatedAt` JSON, remove by-phone / add-points)
+- Existing backend still follows the **previous** contract until an explicit code pass (drop `reward_points`, nullable phone / email, paging, SQL keyword, `updatedAt` JSON, remove by-phone / add-points)
 
 ### 18. Phone format — keep current
 
-- Canonicalize then unique / non-empty only
+- Canonicalize then unique among non-null; empty after canonicalize → `NULL`
 - Do not add country-specific length or `+886` conversion
 
 ### 19 / 32. Search — `vipTier` + paging (no `minPoints`)
@@ -174,7 +177,7 @@ Decisions from the planning discussion are recorded below. Items marked **Decide
 - `DELETE /customers/{id}` → `204` or `404 CUSTOMER_NOT_FOUND`
 - Hard delete (row gone). No soft-delete / `discontinued` flag
 - **FE:** API-only this phase — no delete button / confirm dialog until a later FE pass
-- After delete, unique `phone` / non-null `email` are free for a new member
+- After delete, unique non-null `phone` / non-null `email` are free for a new member
 - Leftover `totalSpent` on the member row is discarded with the delete (history amounts stay on order/preorder rows)
 
 ### 23. Unfinished statuses (block delete)
@@ -244,6 +247,15 @@ This catalog phase has no order/preorder tables, so the check cannot fire yet. C
 - Customer: `WHERE` + `ORDER BY` + `LIMIT`/`OFFSET` + `COUNT(*)` in the DB
 - Product: keyword / scale / brand / inStockOnly in SQL (see [`../products/03-search-rules.md`](../products/03-search-rules.md)); do **not** load candidates then filter in Python
 
+### 34. Phone optional
+
+- Same shape as email (decision 28): omit / JSON `null` / whitespace / empty after canonicalize → SQL `NULL` (JSON `null`)
+- Non-null: canonicalize, unique among non-null. Duplicate → `409` `CUSTOMER_PHONE_DUPLICATE`
+- PUT may send `phone: null` to clear
+- Multiple `NULL` phones allowed
+- Keyword search skips the phone branch when `phone` is `NULL`
+- `CreateCustomerRequest.required` is **`name` only**
+
 ---
 
 ## Closed / confirmed (do not reopen without cause)
@@ -257,12 +269,12 @@ This catalog phase has no order/preorder tables, so the check cannot fire yet. C
 | Search params | `keyword` + `vipTier` (`ALL`) + `page` / `pageSize` |
 | Spending / checkout writes | Out of scope; future checkout owns `totalSpent` increments |
 | Nested preorders / history | Out of scope this phase (**A**); empty until checkout/preorder modules |
-| Phone format | Canonicalize + unique; not TW-only / not E.164 |
+| Phone format | Canonicalize; unique among non-null; empty → `NULL`; not TW-only / not E.164 |
 | Phone lookup | `GET /customers?keyword=` only |
 | YAML / code | Contract in `prompts/openapi.yaml`; next code pass must match **this** revision |
 | OpenAPI file | `prompts/openapi.yaml` (merged products + customers) |
 | Storage | Single `customer` table; PK **`id`**; **no** `reward_points` |
-| Phone uniqueness | **Unique** (canonical); duplicate → `CUSTOMER_PHONE_DUPLICATE` |
+| Phone uniqueness | **Optional**; unique among non-null (canonical); `null` allowed; duplicate → `CUSTOMER_PHONE_DUPLICATE` |
 | Email | **Optional**; unique among non-null (lowercased); `null` allowed; duplicate → `CUSTOMER_EMAIL_DUPLICATE` |
 | `note` | Optional `string` (not OpenAPI nullable) |
 | `vipTierName` | Derived map; not a column |
@@ -288,5 +300,5 @@ This catalog phase has no order/preorder tables, so the check cannot fire yet. C
 | Exact Chinese copy for `CUSTOMER_HAS_UNFINISHED_ORDERS` | Default `該會員尚有未完成訂單，無法刪除` |
 | Seed script vs Alembic data revision | Choose when entering seed phase (both allowed under decision B) |
 | `createdAt` / `updatedAt` display | API emits ISO 8601 — FE detail panel should `formatDate` / `formatDateTime` (see `05-fe-changes.md`) |
-| Follow-up Alembic | Existing `customer` table (if already migrated) needs a revision: drop `reward_points`; make `email` nullable; unique non-null email |
+| Follow-up Alembic | Existing `customer` table (if already migrated) needs a revision: drop `reward_points`; make `phone` and `email` nullable; unique non-null phone and email |
 | Backend code vs this contract | Python still implements the **previous** contract until an explicit implement pass |

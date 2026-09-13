@@ -10,8 +10,8 @@ Base path: `/api/v1`.
 |-------|------|--------|
 | `id` | string | Server-assigned PK; `cust-{uuid4}` without dashes |
 | `name` | string | Required |
-| `phone` | string | Unique; stored canonical |
-| `email` | string \| `null` | **Optional.** Unique among non-null values after trim + lowercase. Valid email when set |
+| `phone` | string \| `null` | **Optional.** Unique among non-null after canonicalize. Always present on the response; JSON `null` when unset |
+| `email` | string \| `null` | **Optional.** Unique among non-null values after trim + lowercase. Valid email when set. Always present on the response; JSON `null` when unset |
 | `vipTier` | `VipTier` | `regular` \| `silver` \| `gold` \| `platinum` |
 | `vipTierName` | string | Derived map from `vipTier` |
 | `totalSpent` | integer | TWD ≥ 0; server-owned after create (always `0` on create) |
@@ -68,9 +68,9 @@ Empty page: `items: []`, `total` still set.
 
 ## `POST /customers` — `createCustomer`
 
-**Required:** `name`, `phone`
+**Required:** `name`
 
-**Optional:** `email` (omit / `null` → `NULL`), `vipTier` (default `regular`), `note`
+**Optional:** `phone` (omit / `null` → `NULL`), `email` (omit / `null` → `NULL`), `vipTier` (default `regular`), `note`
 
 **Not in request schema:** `id`, `createdAt`, `updatedAt`, `vipTierName`, `totalSpent`, `rewardPoints`
 
@@ -83,10 +83,11 @@ Empty page: `items: []`, `total` still set.
 
 ### Validation
 
+- `phone` omitted, `null`, whitespace-only, or empty after canonicalize → store `NULL` (not 422).
+- Non-null phone: canonicalize; duplicate among non-null → `409` `CUSTOMER_PHONE_DUPLICATE`.
 - `email` omitted, `null`, or whitespace-only → store `NULL` (not 422).
 - Non-null email: trim + lowercase; invalid format → `422`; duplicate among non-null → `409` `CUSTOMER_EMAIL_DUPLICATE`.
-- `phone` unique after canonicalize → `409` `CUSTOMER_PHONE_DUPLICATE`.
-- `name` / canonical `phone` required non-empty.
+- `name` required non-empty.
 
 ### Responses
 
@@ -115,7 +116,7 @@ Partial: `name`, `phone`, `email`, `vipTier`, `note`
 
 Rules:
 
-- Phone change: canonicalize; duplicate → `409`.
+- Phone: omit → unchanged. `null`, whitespace, or empty after canonicalize → clear to `NULL`. Non-null must be unique after canonicalize → `409` on duplicate.
 - Email: omit → unchanged. `null` or whitespace → clear to `NULL`. Non-null must be valid unique (trim + lowercase).
 - `vipTier` change: name derived on read.
 - Never mutate `totalSpent` / `id` / `createdAt`. Bump `updatedAt`.
@@ -162,10 +163,10 @@ Unfinished order/preorder → `409` `CUSTOMER_HAS_UNFINISHED_ORDERS` (cannot fir
 | HTTP | `code` | When |
 |------|--------|------|
 | `404` | `CUSTOMER_NOT_FOUND` | Missing `customerId` on get/update/delete |
-| `409` | `CUSTOMER_PHONE_DUPLICATE` | Duplicate canonical phone |
+| `409` | `CUSTOMER_PHONE_DUPLICATE` | Duplicate non-null canonical phone |
 | `409` | `CUSTOMER_EMAIL_DUPLICATE` | Duplicate non-null lowercased email |
 | `409` | `CUSTOMER_HAS_UNFINISHED_ORDERS` | Delete blocked (after checkout/preorder exist) |
-| `422` | (FastAPI default) | Invalid body, empty name/phone, malformed email, bad page/pageSize, invalid enums |
+| `422` | (FastAPI default) | Invalid body, empty name, malformed email, bad page/pageSize, invalid enums |
 
 Auth: optional/dummy.
 
@@ -177,7 +178,7 @@ Keep [`../openapi.yaml`](../openapi.yaml) in sync with this file.
 
 - Search returns `CustomerSearchResponse`; params `keyword`, `vipTier`, `page`, `pageSize`.
 - No `by-phone`, no `reward-points`, no `rewardPoints` / `minPoints`.
-- `email` optional; OpenAPI 3.1 type `[string, null]` on response and request (always present on response, value may be `null`).
+- `phone` and `email` optional; OpenAPI 3.1 type `[string, null]` on response and request (always present on response, value may be `null`).
 - `note` optional `string` only — do **not** mark `nullable: true` / `null` in the type.
 - `createdAt` and `updatedAt` on `Customer`.
 - Do not add spending / nested preorder paths.

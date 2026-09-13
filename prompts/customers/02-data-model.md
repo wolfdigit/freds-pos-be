@@ -31,7 +31,7 @@ No `vip_tier_name` (derived). No `reward_points`.
 |--------|------------------|---------------------|
 | `id` | `String` PK | `cust-{uuid4}` without dashes |
 | `name` | `String` | Required |
-| `phone` | `String` | **UNIQUE**, required; canonical |
+| `phone` | `String` nullable | **UNIQUE** among non-null; canonical when set |
 | `email` | `String` nullable | **UNIQUE** among non-null; trim + lowercase when set |
 | `vip_tier` | `String` | default `regular` |
 | `total_spent` | `Integer` | default `0`; catalog PUT must not change |
@@ -44,7 +44,7 @@ No `vip_tier_name` (derived). No `reward_points`.
 | Index | Columns | Unique? | Purpose |
 |-------|---------|---------|---------|
 | PK | `id` | yes | `{customerId}` |
-| UK | `phone` | yes | Duplicate phone; keyword phone match |
+| UK | `phone` | yes | Duplicate **non-null** phone. Multiple `NULL` phones allowed |
 | UK | `email` | yes | Duplicate **non-null** email. Multiple `NULL` emails allowed |
 | IX | `name` | no | Keyword / sort `name ASC` |
 | IX | `vip_tier` | no | VIP search filter |
@@ -57,9 +57,14 @@ No `vip_tier_name` (derived). No `reward_points`.
 input → trim → remove spaces, hyphens, parentheses
 ```
 
-Keep a leading `+` if present (no E.164 conversion). After canonicalize, `phone` must be non-empty.
+Keep a leading `+` if present (no E.164 conversion). After canonicalize, empty → store SQL `NULL` (JSON `null`). Non-empty stored form is unique among non-null rows.
 
-Keyword search uses this stored form (substring, also `canonicalize(query)`).
+Keyword search uses this stored form (substring, also `canonicalize(query)`). Null phones never match the phone keyword branch.
+
+| Input | Stored `phone` |
+|-------|----------------|
+| omit / `null` / `""` / `   ` / `---` | `NULL` |
+| `0912-345-678` | `0912345678` |
 
 ---
 
@@ -100,15 +105,15 @@ JSON type is **`string`**, optional (not in `required`). Do **not** mark OpenAPI
 | `updatedAt` | `updated_at` ISO 8601; set on insert and profile PUT |
 | `vipTierName` | Map from `vip_tier` |
 | `totalSpent` | Stored; create `0`; PUT must not accept |
-| `phone` | Canonical on write |
+| `phone` | Canonical on write, or `null` |
 | `email` | Lowercased on write, or `null` |
 
 ---
 
 ## Alembic notes
 
-1. Schema only — no seed. Existing `customer` table (if already migrated) needs a **follow-up revision**: drop `reward_points`; make `email` nullable.
-2. Unique `phone`; unique `email` allowing multiple `NULL`.
+1. Schema only — no seed. Existing `customer` table (if already migrated) needs a **follow-up revision**: drop `reward_points`; make `phone` and `email` nullable.
+2. Unique `phone` allowing multiple `NULL`; unique `email` allowing multiple `NULL`.
 3. `created_at` / `updated_at` timezone-aware UTC; bump `updated_at` on PUT.
 4. No checkout/preorder FKs in this table.
 
@@ -122,5 +127,6 @@ JSON type is **`string`**, optional (not in `required`). Do **not** mark OpenAPI
 | `total_spent` | `totalSpent` |
 | `created_at` | `createdAt` |
 | `updated_at` | `updatedAt` |
+| `phone` | `phone` (`null` when SQL `NULL`) |
 | `email` | `email` (`null` when SQL `NULL`) |
 | `note` | `note` |

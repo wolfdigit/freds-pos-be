@@ -18,10 +18,9 @@ class Customer(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
-    phone: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
-    email: Mapped[str] = mapped_column(String(256), nullable=False, unique=True)
+    phone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, unique=True)
+    email: Mapped[Optional[str]] = mapped_column(String(256), nullable=True, unique=True)
     vip_tier: Mapped[str] = mapped_column(String(32), nullable=False, default="regular")
-    reward_points: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_spent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -34,5 +33,4 @@ class Customer(Base):
     __table_args__ = (
         Index("ix_customer_name", "name"),
         Index("ix_customer_vip_tier", "vip_tier"),
-        Index("ix_customer_reward_points", "reward_points"),
     )
