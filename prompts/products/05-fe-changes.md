@@ -1,6 +1,6 @@
 # Products Catalog — Frontend & OpenAPI Change Notes
 
-Checklist of **everything the frontend and `prompts/openapi.yaml` must change** to match the decided catalog contract. Backend implementation should treat this as the FE/contract sync list; apply YAML when BE implementation starts; FE can land in one or more PRs.
+Checklist of **everything the frontend and [`../openapi.yaml`](../openapi.yaml) must change** to match the decided catalog contract. Backend implementation should treat this as the FE/contract sync list; FE can land in one or more PRs.
 
 Related planning: [`00-overview.md`](./00-overview.md), [`01-api-contract.md`](./01-api-contract.md), [`04-open-questions.md`](./04-open-questions.md).
 
@@ -8,7 +8,7 @@ Related planning: [`00-overview.md`](./00-overview.md), [`01-api-contract.md`](.
 
 ## 1. OpenAPI (`prompts/openapi.yaml`) — BE-owned, FE consumes
 
-Apply when catalog implementation is approved (not before).
+BE contract lives in the merged [`../openapi.yaml`](../openapi.yaml). FE `docs/openapi.yaml` still needs the same tightenings when FE is implemented.
 
 | Change | Detail |
 |--------|--------|

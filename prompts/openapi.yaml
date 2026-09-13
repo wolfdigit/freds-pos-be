@@ -5,12 +5,22 @@ info:
   description: |
     HTTP contract for Fred's POS, matching the frontend Service Adapter
     (`src/services/interfaces/`). Mockup currently uses localStorage adapters;
-    a future FastAPI backend can implement these paths without changing UI.
+    the FastAPI backend implements these paths without changing UI.
+
+    This file is the merged contract for implemented / in-scope phases
+    (products catalog + member catalog). Do not add checkout, inventory, or
+    preorder paths until those phases start.
 
     **Conventions**
     - Amounts are TWD integers (no cents).
     - Timestamps are ISO 8601 strings.
+    - JSON is camelCase.
     - Business failures use HTTP 4xx with `BusinessError` body (`code` + `message`).
+    - Auth is optional/dummy for this phase.
+
+    Customer spending increments, nested preorders/orders, seed data,
+    and delete UI are out of the current customer pass. Member reward
+    points are not part of the catalog.
   contact:
     name: Fred's POS
 servers:
@@ -22,6 +32,8 @@ servers:
 tags:
   - name: products
     description: Product catalog and multi-location stock
+  - name: customers
+    description: Member catalog (profile CRUD, paged search)
 
 paths:
   /products:
@@ -33,6 +45,8 @@ paths:
         Fuzzy search by barcode, SKU without dashes, product name, or brand.
         Maps to `IProductService.searchProducts`.
         Default sort: `sku ASC`.
+        Keyword, scale, brand, and inStockOnly filters run in SQL (`WHERE`),
+        not in Python after load.
       parameters:
         - name: keyword
           in: query
@@ -110,7 +124,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Product'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProductNotFound'
     put:
       tags: [products]
       operationId: updateProduct
@@ -135,7 +149,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Product'
         '404':
-          $ref: '#/components/responses/NotFound'
+          $ref: '#/components/responses/ProductNotFound'
         '409':
           description: Duplicate SKU
           content:
@@ -146,6 +160,185 @@ paths:
                 code: PRODUCT_SKU_DUPLICATE
                 message: 貨號已存在
 
+  /customers:
+    get:
+      tags: [customers]
+      operationId: searchCustomers
+      summary: Search customers
+      description: |
+        Maps to `ICustomerService.searchCustomers`.
+        Also used for checkout phone bind (no `/customers/by-phone/{phone}`).
+        Missing / empty `keyword` = no keyword filter.
+        Keyword matches name (case-insensitive contains), non-null phone
+        (substring, also against canonicalized query), or non-null email
+        (case-insensitive contains).
+        `vipTier` missing or `ALL` = no VIP filter; otherwise exact match.
+        Filters, sort, and paging run in SQL (`WHERE` / `ORDER BY` / `LIMIT` /
+        `OFFSET`), not in Python after load. Default sort: `name ASC`, then `id ASC`.
+      parameters:
+        - name: keyword
+          in: query
+          schema:
+            type: string
+          description: Name / phone / email fragment
+        - name: vipTier
+          in: query
+          schema:
+            $ref: '#/components/schemas/VipTierOrAll'
+          description: Exact VIP filter, or `ALL`
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: 1-based page index
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Page length (max 100)
+      responses:
+        '200':
+          description: Paged matching customers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CustomerSearchResponse'
+    post:
+      tags: [customers]
+      operationId: createCustomer
+      summary: Create customer
+      description: |
+        Maps to `ICustomerService.createCustomer`.
+        Server assigns `id` as `cust-{uuid4}` (no dashes) stored as PK `id`,
+        plus `createdAt` and `updatedAt` (ISO 8601). Always sets `totalSpent: 0`.
+        Missing `vipTier` → `regular`. Derives `vipTierName` from `vipTier`.
+        Does not accept client `id` / `createdAt` / `updatedAt` / `vipTierName` /
+        `totalSpent`. Phone is optional: omit / `null` / whitespace / empty after
+        canonicalize → SQL NULL. Non-null phone is stored canonical (strip spaces
+        / hyphens / parentheses) and unique among non-null values. Email is
+        optional: omit / `null` / whitespace → SQL NULL. Non-null email is
+        trimmed, lowercased, validated, and unique among non-null values.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCustomerRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '409':
+          description: Duplicate phone or email
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessError'
+              examples:
+                duplicatePhone:
+                  value:
+                    code: CUSTOMER_PHONE_DUPLICATE
+                    message: 手機號碼已存在
+                duplicateEmail:
+                  value:
+                    code: CUSTOMER_EMAIL_DUPLICATE
+                    message: 電子信箱已存在
+
+  /customers/{customerId}:
+    get:
+      tags: [customers]
+      operationId: getCustomerById
+      summary: Get customer by ID
+      parameters:
+        - $ref: '#/components/parameters/CustomerId'
+      responses:
+        '200':
+          description: Customer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '404':
+          $ref: '#/components/responses/CustomerNotFound'
+    put:
+      tags: [customers]
+      operationId: updateCustomer
+      summary: Update customer profile
+      description: |
+        Maps to `ICustomerService.updateCustomer`.
+        Profile only. Never mutates `totalSpent`. Bumps `updatedAt`.
+        On `vipTier` change, response `vipTierName` follows the server map.
+        `phone` and `email` may be `null` to clear. Duplicate non-null phone /
+        non-null email → 409.
+      parameters:
+        - $ref: '#/components/parameters/CustomerId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCustomerRequest'
+      responses:
+        '200':
+          description: Updated customer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Customer'
+        '404':
+          $ref: '#/components/responses/CustomerNotFound'
+        '409':
+          description: Duplicate phone or email
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessError'
+              examples:
+                duplicatePhone:
+                  value:
+                    code: CUSTOMER_PHONE_DUPLICATE
+                    message: 手機號碼已存在
+                duplicateEmail:
+                  value:
+                    code: CUSTOMER_EMAIL_DUPLICATE
+                    message: 電子信箱已存在
+    delete:
+      tags: [customers]
+      operationId: deleteCustomer
+      summary: Delete customer
+      description: |
+        Maps to `ICustomerService.deleteCustomer`. Hard-delete. API-only this
+        phase (no FE delete control).
+        `409` when a related order/preorder is unfinished (status is not
+        `completed`, `refunded`, or `cancelled`). This catalog phase has no
+        order/preorder tables, so `409` cannot fire yet.
+        Terminal history is kept; later `customer_id` FKs `ON DELETE SET NULL`
+        and must retain `customerName` / `customerPhone` snapshots.
+      parameters:
+        - $ref: '#/components/parameters/CustomerId'
+      responses:
+        '204':
+          description: Deleted
+        '404':
+          $ref: '#/components/responses/CustomerNotFound'
+        '409':
+          description: Unfinished order or preorder
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessError'
+              example:
+                code: CUSTOMER_HAS_UNFINISHED_ORDERS
+                message: 該會員尚有未完成訂單，無法刪除
+
 components:
   parameters:
     ProductId:
@@ -155,10 +348,17 @@ components:
       schema:
         type: string
       example: prod-001
+    CustomerId:
+      name: customerId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: cust-001
 
   responses:
-    NotFound:
-      description: Resource not found
+    ProductNotFound:
+      description: Product not found
       content:
         application/json:
           schema:
@@ -166,6 +366,15 @@ components:
           example:
             code: PRODUCT_NOT_FOUND
             message: 找不到指定商品
+    CustomerNotFound:
+      description: Customer not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BusinessError'
+          example:
+            code: CUSTOMER_NOT_FOUND
+            message: 找不到指定的會員
 
   schemas:
     BusinessError:
@@ -186,6 +395,10 @@ components:
         - PRODUCT_NOT_FOUND
         - PRODUCT_SKU_DUPLICATE
         - STORAGE_CORRUPTED
+        - CUSTOMER_NOT_FOUND
+        - CUSTOMER_PHONE_DUPLICATE
+        - CUSTOMER_EMAIL_DUPLICATE
+        - CUSTOMER_HAS_UNFINISHED_ORDERS
 
     ModelScale:
       type: string
@@ -356,3 +569,130 @@ components:
           type: string
         status:
           $ref: '#/components/schemas/ProductStatus'
+
+    VipTier:
+      type: string
+      enum: [regular, silver, gold, platinum]
+
+    VipTierOrAll:
+      oneOf:
+        - $ref: '#/components/schemas/VipTier'
+        - type: string
+          const: ALL
+
+    Customer:
+      type: object
+      required:
+        - id
+        - name
+        - phone
+        - email
+        - vipTier
+        - vipTierName
+        - totalSpent
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          description: Server-assigned PK (`cust-{uuid4}` without dashes)
+        name:
+          type: string
+        phone:
+          type: [string, 'null']
+          description: |
+            Optional. Always present on the response. Unique among non-null
+            values after canonicalize. JSON `null` when unset.
+        email:
+          type: [string, 'null']
+          format: email
+          description: |
+            Optional. Always present on the response. Unique among non-null
+            values after trim + lowercase. JSON `null` when unset.
+        vipTier:
+          $ref: '#/components/schemas/VipTier'
+        vipTierName:
+          type: string
+          description: |
+            Derived on read, not stored.
+            platinum 白金黑卡 (9折); gold 金卡會員 (95折);
+            silver 銀卡會員 (98折); regular 一般會員
+        totalSpent:
+          type: integer
+          minimum: 0
+          description: Server-owned after create; catalog create always 0
+        note:
+          type: string
+          description: Optional string. Omit or empty. Not JSON null.
+        createdAt:
+          type: string
+          format: date-time
+          description: Server-assigned ISO 8601
+        updatedAt:
+          type: string
+          format: date-time
+          description: Server-assigned ISO 8601; bump on profile update
+
+    CustomerSearchResponse:
+      type: object
+      required: [items, page, pageSize, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Customer'
+        page:
+          type: integer
+          minimum: 1
+        pageSize:
+          type: integer
+          minimum: 1
+          maximum: 100
+        total:
+          type: integer
+          minimum: 0
+          description: Filtered row count (not just this page)
+
+    CreateCustomerRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        phone:
+          type: [string, 'null']
+          description: |
+            Optional. Omit / null / whitespace / empty after canonicalize →
+            SQL NULL. Unique among non-null canonical values.
+        email:
+          type: [string, 'null']
+          format: email
+          description: Optional. Omit / null / whitespace → SQL NULL
+        vipTier:
+          $ref: '#/components/schemas/VipTier'
+          description: Optional; omit → regular
+        note:
+          type: string
+          description: Optional string. Omit or empty. Not JSON null.
+
+    UpdateCustomerRequest:
+      type: object
+      description: |
+        Partial profile update. Excludes id, createdAt, updatedAt,
+        vipTierName, totalSpent. phone and email may be null to clear.
+      properties:
+        name:
+          type: string
+        phone:
+          type: [string, 'null']
+          description: Omit to leave unchanged; null clears to SQL NULL
+        email:
+          type: [string, 'null']
+          format: email
+          description: Omit to leave unchanged; null clears to SQL NULL
+        vipTier:
+          $ref: '#/components/schemas/VipTier'
+        note:
+          type: string
+          description: Optional string. Omit to leave unchanged; empty string is valid.

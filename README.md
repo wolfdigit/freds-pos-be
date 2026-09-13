@@ -8,9 +8,9 @@
 
 ### 1. 對齊 OpenAPI 契約
 
-從前端專案複製最新的 `openapi.yaml`，**刪掉尚未開始實作的 API**（只留下本階段要做的 paths / schemas），再覆寫本專案的 `prompts/openapi.yaml`。
+從前端專案複製最新的 `openapi.yaml`，**刪掉尚未開始實作的 API**（只留下本階段要做的 paths / schemas），**合併進**本專案的 `prompts/openapi.yaml`（已實作功能的契約都留在這一份）。
 
-此檔是後端本階段的契約來源：之後的計畫與實作都以它為準，避免一次載入整份尚未開工的 API 造成範圍膨脹。
+此檔是後端的契約來源：之後的計畫與實作都以它為準。不要在各功能資料夾再放一份 `openapi.yaml`。
 
 ### 2. 與 AI 討論並寫入獨立計畫資料夾
 
@@ -33,7 +33,7 @@
 
 ### 4. 確認後再交給 AI 實作
 
-實作計畫確定後，再把該資料夾內的文件（以及已裁切的 `prompts/openapi.yaml`）交給 AI 開始寫程式、migration 與測試。
+實作計畫確定後，再把該資料夾內的文件（以及已合併的 `prompts/openapi.yaml`）交給 AI 開始寫程式、migration 與測試。
 
 ---
 

@@ -5,7 +5,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional, Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
+from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.orm import Session, selectinload
 
 from src.core.exceptions import BusinessException
@@ -19,6 +20,7 @@ from src.schemas.product import (
     UpdateProductRequest,
 )
 
+# 庫存地點代碼對應的中文顯示名稱（門市、倉庫、總倉、調度暫存）。
 LOCATION_NAME_MAP = {
     StockLocation.STORE: "門市現貨",
     StockLocation.WAREHOUSE: "後方倉庫",
@@ -26,6 +28,7 @@ LOCATION_NAME_MAP = {
     StockLocation.OTHER: "調度暫存",
 }
 
+# 回傳庫存列表時的固定地點順序，與前端顯示一致。
 STOCK_LOCATION_ORDER: Sequence[StockLocation] = (
     StockLocation.STORE,
     StockLocation.WAREHOUSE,
@@ -34,15 +37,20 @@ STOCK_LOCATION_ORDER: Sequence[StockLocation] = (
 )
 
 
+# 將 SKU 轉成大寫並移除非 A-Z/0-9 字元（與前端相同）。
+# value: 原始貨號字串。
 def normalize_sku(value: str) -> str:
     """Uppercase and strip every character not in [A-Z0-9] (same as FE)."""
     return re.sub(r"[^A-Z0-9]", "", value.upper())
 
 
+# 產生新商品主鍵，格式為 prod-{32 位 hex uuid}。
 def _new_product_id() -> str:
     return f"prod-{uuid.uuid4().hex}"
 
 
+# 將 ORM Product 轉成 API 的 ProductSchema（含庫存與預購待出）。
+# product: 已載入關聯的商品
 def _to_product_schema(product: Product) -> ProductSchema:
     stocks_by_location = {s.location: s for s in product.stocks}
     stocks: List[LocationStock] = []
@@ -94,31 +102,19 @@ def _to_product_schema(product: Product) -> ProductSchema:
     )
 
 
-def _keyword_matches(product: Product, keyword: str) -> bool:
-    """Mirror FE mock: matchesSku || matchesName || matchesBrand."""
-    trimmed = keyword.strip()
-    if not trimmed:
-        return True
-
-    normalized_query = normalize_sku(trimmed)
-    # isSkuMatch: empty normalized query → True; else SKU contains or barcode includes
-    if not normalized_query:
-        matches_sku = True
-    else:
-        matches_sku = normalized_query in product.normalized_sku or (
-            trimmed in product.barcode
-        )
-
-    lower = trimmed.lower()
-    matches_name = lower in product.name.lower()
-    matches_brand = lower in product.brand.lower()
-    return matches_sku or matches_name or matches_brand
+# LIKE 子字串比對：跳脫 % / _ / \，行為對齊 Python `in`。
+def _contains_like(column: ColumnElement, value: str) -> ColumnElement:
+    escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return column.like(f"%{escaped}%", escape="\\")
 
 
 class ProductService:
+    # 綁定此 service 使用的資料庫 session。
+    # db: 被綁定的 SQLAlchemy Session。
     def __init__(self, db: Session) -> None:
         self.db = db
 
+    # 依 product_id (商品主鍵) 查商品並預載庫存與預購；找不到則拋 404。
     def _get_by_id_or_raise(self, product_id: str) -> Product:
         product = self.db.get(
             Product,
@@ -136,6 +132,9 @@ class ProductService:
             )
         return product
 
+    # 確認 SKU 未被其他商品使用，重複則拋 409。
+    # sku: 欲檢查的貨號
+    # exclude_id: 更新時排除自身的商品 id
     def _ensure_sku_unique(self, sku: str, exclude_id: Optional[str] = None) -> None:
         stmt = select(Product.id).where(Product.sku == sku)
         if exclude_id is not None:
@@ -148,6 +147,8 @@ class ProductService:
                 message="貨號已存在",
             )
 
+    # 新增商品並建立各地點庫存列（數量 0）。
+    # data: 建立商品的請求內容。
     def create(self, data: CreateProductRequest) -> ProductSchema:
         self._ensure_sku_unique(data.sku)
 
@@ -184,9 +185,13 @@ class ProductService:
         self.db.commit()
         return _to_product_schema(self._get_by_id_or_raise(product.id))
 
+    # 依 product_id (商品主鍵) 取得單一商品的 API 資料。
     def get_by_id(self, product_id: str) -> ProductSchema:
         return _to_product_schema(self._get_by_id_or_raise(product_id))
 
+    # 更新指定商品已提供的欄位。
+    # product_id: 商品主鍵
+    # data: 部分更新請求
     def update(self, product_id: str, data: UpdateProductRequest) -> ProductSchema:
         product = self._get_by_id_or_raise(product_id)
         updates = data.model_dump(exclude_unset=True)
@@ -226,6 +231,10 @@ class ProductService:
         self.db.commit()
         return _to_product_schema(self._get_by_id_or_raise(product_id))
 
+    # 依條件搜尋商品。關鍵字／比例／品牌／庫存篩選都在 SQL 執行。
+    # keyword: 關鍵字
+    # scale/brand: 比例與品牌
+    # in_stock_only: 是否僅回傳有庫存者
     def search(
         self,
         *,
@@ -253,11 +262,23 @@ class ProductService:
             )
             stmt = stmt.where(stock_sum > 0)
 
-        stmt = stmt.order_by(Product.sku.asc())
-        products = list(self.db.scalars(stmt).unique().all())
-
         trimmed_keyword = (keyword or "").strip()
         if trimmed_keyword:
-            products = [p for p in products if _keyword_matches(p, trimmed_keyword)]
+            name_match = _contains_like(
+                func.lower(Product.name), trimmed_keyword.lower()
+            )
+            brand_match = _contains_like(
+                func.lower(Product.brand), trimmed_keyword.lower()
+            )
+            barcode_match = _contains_like(Product.barcode, trimmed_keyword)
+            keyword_preds = [name_match, brand_match, barcode_match]
+            normalized_query = normalize_sku(trimmed_keyword)
+            if normalized_query:
+                keyword_preds.append(
+                    _contains_like(Product.normalized_sku, normalized_query)
+                )
+            stmt = stmt.where(or_(*keyword_preds))
 
+        stmt = stmt.order_by(Product.sku.asc())
+        products = list(self.db.scalars(stmt).unique().all())
         return [_to_product_schema(p) for p in products]

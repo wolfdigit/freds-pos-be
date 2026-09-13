@@ -24,15 +24,26 @@ async def business_exception_handler(
         content={"code": exc.code.value if hasattr(exc.code, "value") else exc.code, "message": exc.message},
     )
 
-# 設定 CORS 中間件 (支援本地 5173/3000 以及 Vercel 部署網域 *.vercel.app)
+# 設定 CORS 中間件 (支援本地 5173/3000、LAN / WSL IP，以及 Vercel 部署網域 *.vercel.app)
+# allow_private_network：Chrome / Edge 對 localhost、私有網段會先發 Private Network Access
+# preflight（Access-Control-Request-Private-Network）。未開啟時 OPTIONS 會回 400
+# "Disallowed CORS private-network"，實際 GET 搜尋永遠不會送出。
 if settings.BACKEND_CORS_ORIGINS:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[str(origin) for origin in settings.BACKEND_CORS_ORIGINS],
-        allow_origin_regex=r"https://.*\.vercel\.app",
+        allow_origin_regex=(
+            r"https://.*\.vercel\.app"
+            r"|https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?"
+            r"|https?://.+\.localhost(:\d+)?"
+            r"|https?://(10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+            r"|192\.168\.\d{1,3}\.\d{1,3}"
+            r"|172\.(1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3})(:\d+)?"
+        ),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        allow_private_network=True,
     )
 
 
