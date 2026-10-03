@@ -7,9 +7,9 @@ info:
     (`src/services/interfaces/`). Mockup currently uses localStorage adapters;
     the FastAPI backend implements these paths without changing UI.
 
-    This file is the merged contract for implemented / in-scope phases
-    (products catalog + member catalog). Do not add checkout, inventory, or
-    preorder paths until those phases start.
+    This file is the merged contract for implemented phases
+    (products catalog, member catalog, and checkout). Inventory stays out.
+    Preorder rows exist so checkout can record a pickup; there is no preorder authoring API.
 
     **Conventions**
     - Amounts are TWD integers (no cents).
@@ -34,6 +34,8 @@ tags:
     description: Product catalog and multi-location stock
   - name: customers
     description: Member catalog (profile CRUD, paged search)
+  - name: checkout
+    description: Recorded sales, stock movement, and preorder pickup
 
 paths:
   /products:
@@ -339,6 +341,126 @@ paths:
                 code: CUSTOMER_HAS_UNFINISHED_ORDERS
                 message: 該會員尚有未完成訂單，無法刪除
 
+  /checkout/orders:
+    post:
+      tags: [checkout]
+      operationId: createCheckoutOrder
+      summary: Record a checkout sale
+      description: |
+        Cashier id and name are copied from the current user.
+        The client does not send them. Until staff login exists,
+        that user is the demo cashier `staff-001` / `店長 Fred`.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+      responses:
+        '201':
+          description: Receipt
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckoutReceipt'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Stock, return, payment, preorder, or idempotency conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessError'
+        '422':
+          description: Invalid tender, branch, or points-discount flag
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessError'
+    get:
+      tags: [checkout]
+      operationId: getOrderHistory
+      summary: Search recorded sales
+      parameters:
+        - in: query
+          name: customerId
+          schema: {type: string}
+        - in: query
+          name: orderNumber
+          schema: {type: string}
+        - in: query
+          name: invoiceNumber
+          schema: {type: string}
+          description: Exact match. Returns the sale and every refund that reused this number.
+        - in: query
+          name: productId
+          schema: {type: string}
+        - in: query
+          name: keyword
+          schema: {type: string}
+        - in: query
+          name: productKeyword
+          schema: {type: string}
+        - in: query
+          name: startDate
+          schema: {type: string, format: date-time}
+        - in: query
+          name: endDate
+          schema: {type: string, format: date-time}
+        - in: query
+          name: minAmount
+          schema: {type: integer}
+        - in: query
+          name: maxAmount
+          schema: {type: integer}
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [completed, partially_refunded, refunded, all]
+        - in: query
+          name: page
+          schema: {type: integer, minimum: 1, default: 1}
+        - in: query
+          name: pageSize
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+      responses:
+        '200':
+          description: Page of sales
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckoutOrderSearchResponse'
+  /checkout/orders/{orderId}:
+    get:
+      tags: [checkout]
+      operationId: getOrderById
+      summary: Get one recorded sale
+      parameters:
+        - in: path
+          name: orderId
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Sale
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckoutOrder'
+        '404':
+          description: Order not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessError'
+
 components:
   parameters:
     ProductId:
@@ -399,6 +521,113 @@ components:
         - CUSTOMER_PHONE_DUPLICATE
         - CUSTOMER_EMAIL_DUPLICATE
         - CUSTOMER_HAS_UNFINISHED_ORDERS
+        - ORDER_NOT_FOUND
+        - RETURN_QTY_EXCEEDED
+        - INVALID_RETURN_CUSTOMER
+        - IDEMPOTENCY_CONFLICT
+        - INVALID_PAYMENT
+        - INVOICE_NUMBER_DUPLICATE
+
+
+    CreateOrderRequest:
+      type: object
+      description: |
+        The client does not send `cashierId` or `cashierName`. The server copies
+        them from the current user. Until staff login exists, that user is the
+        demo cashier `staff-001` / `店長 Fred`. A body that still includes cashier
+        fields is ignored.
+      required: [items, shippingFee, payments, invoice]
+      properties:
+        customerId: {type: string}
+        branchId:
+          type: string
+          enum: [branch-store, branch-online]
+          default: branch-store
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/CreateOrderItem'
+        shippingFee: {type: integer, minimum: 0}
+        payments:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/PaymentTender'
+        invoice:
+          $ref: '#/components/schemas/InvoiceInfo'
+        note: {type: string}
+    CreateOrderItem:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId: {type: string}
+        quantity: {type: integer}
+        unitPrice: {type: integer, minimum: 0}
+        isManualPrice: {type: boolean, default: false}
+        priceDiffReason: {type: string}
+        pointsDiscountApplied: {type: boolean, default: false}
+        preOrderId: {type: string}
+        preOrderItemId: {type: string}
+        originalOrderId: {type: string}
+        originalOrderItemId: {type: string}
+        restock: {type: boolean}
+        returnReason: {type: string}
+    PaymentTender:
+      type: object
+      required: [type, name, amount]
+      properties:
+        type:
+          type: string
+          enum: [cash, bank_transfer_ctbc, bank_transfer_ubot, credit_card_physical, credit_card_online, line_pay, cod]
+        name: {type: string}
+        amount: {type: integer}
+        tenderedCash: {type: integer}
+        changeAmount: {type: integer}
+        transactionRef: {type: string}
+    InvoiceInfo:
+      type: object
+      required: [invoiceNumber, type]
+      properties:
+        invoiceNumber:
+          type: string
+          description: |
+            Invoice number stored on the order. Required and non-empty.
+            A sale stores the client value, unique among sales. Another sale
+            with that number is `INVOICE_NUMBER_DUPLICATE`. A refund stores the
+            original sale's number again. One ticket cannot both sell and return.
+            History search uses exact query `invoiceNumber`.
+        type:
+          type: string
+          enum: [none, carrier, tax_id, paper]
+        carrierCode: {type: string}
+        taxId: {type: string}
+        buyerTitle: {type: string}
+    CheckoutOrder:
+      type: object
+      description: |
+        Recorded sale. `cashierId` and `cashierName` are snapshots of the current
+        user (`id`, `name`), not values from the request. Until staff login exists,
+        that user is the demo cashier `staff-001` / `店長 Fred`. `costPrice` is stored
+        on the line and omitted here.
+    CheckoutReceipt:
+      type: object
+      required: [order, receiptPrintHtml]
+      properties:
+        order:
+          $ref: '#/components/schemas/CheckoutOrder'
+        receiptPrintHtml: {type: string}
+    CheckoutOrderSearchResponse:
+      type: object
+      required: [items, page, pageSize, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CheckoutOrder'
+        page: {type: integer}
+        pageSize: {type: integer}
+        total: {type: integer}
 
     ModelScale:
       type: string
