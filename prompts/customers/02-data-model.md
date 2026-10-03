@@ -25,7 +25,7 @@ erDiagram
 
 ## Table: `customer`
 
-No `vip_tier_name` (derived). No `reward_points`.
+No `vip_tier_name` (derived). No `reward_points`. The NT$360 exchange is a flag on the checkout line, not a member balance.
 
 | Column | Type (suggested) | Constraints / notes |
 |--------|------------------|---------------------|
