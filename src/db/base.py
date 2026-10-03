@@ -2,8 +2,5 @@
 from src.db.base_class import Base  # noqa: F401
 from src.models.product import Product, ProductPreOrderPending, ProductStock  # noqa: F401
 from src.models.customer import Customer  # noqa: F401
-<<<<<<< HEAD
 from src.models.checkout import CheckoutOrder, CheckoutOrderItem, CheckoutPayment  # noqa: F401
 from src.models.preorder import PreOrder, PreOrderItem  # noqa: F401
-=======
->>>>>>> 27ae09e34fd9ceac91a9c305e35364c13394d52e

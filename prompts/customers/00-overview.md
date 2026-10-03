@@ -73,11 +73,7 @@ Base URL: `/api/v1` (see [`../openapi.yaml`](../openapi.yaml) servers).
 - **`customer`** — PK **`id`**; optional unique `phone` (canonical when set; `NULL` allowed); optional unique `email` (lowercased when set; `NULL` allowed); timestamps `created_at` / `updated_at` (both in JSON).
 - **`vip_tier_name` is not stored** — assembled on read.
 - **`total_spent`** stored; create initializes `0`; catalog update must not accept it.
-<<<<<<< HEAD
 - **No `reward_points` column.** The NT$360 points exchange is recorded on the sale line, not on the member. See [`../transaction/02-data-model.md`](../transaction/02-data-model.md).
-=======
-- **No `reward_points` column.**
->>>>>>> 27ae09e34fd9ceac91a9c305e35364c13394d52e
 
 ## Frontend alignment
 

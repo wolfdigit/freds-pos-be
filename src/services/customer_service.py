@@ -10,13 +10,9 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from src.core.exceptions import BusinessException
-<<<<<<< HEAD
 from src.models.checkout import CheckoutOrder
 from src.models.customer import Customer
 from src.models.preorder import PreOrder
-=======
-from src.models.customer import Customer
->>>>>>> 27ae09e34fd9ceac91a9c305e35364c13394d52e
 from src.schemas.common import BusinessErrorCode
 from src.schemas.customer import (
     CreateCustomerRequest,
@@ -231,7 +227,6 @@ class CustomerService:
         self.db.commit()
         return _to_customer_schema(self._get_by_id_or_raise(customer_id))
 
-<<<<<<< HEAD
     # 硬刪除會員列。未完成的結帳（部分退貨）或未結案預購會回 409。
     def delete(self, customer_id: str) -> None:
         customer = self._get_by_id_or_raise(customer_id)
@@ -257,11 +252,6 @@ class CustomerService:
                 code=BusinessErrorCode.CUSTOMER_HAS_UNFINISHED_ORDERS,
                 message="此會員仍有未完成的訂單",
             )
-=======
-    # 硬刪除會員列。此階段尚無訂單／預購表，未完成訂單的 409 不會觸發。
-    def delete(self, customer_id: str) -> None:
-        customer = self._get_by_id_or_raise(customer_id)
->>>>>>> 27ae09e34fd9ceac91a9c305e35364c13394d52e
         self.db.delete(customer)
         self.db.commit()
 
