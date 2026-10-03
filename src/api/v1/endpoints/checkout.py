@@ -55,7 +55,6 @@ def create_checkout_order(
 def search_checkout_orders(
     customerId: Optional[str] = Query(None),
     orderNumber: Optional[str] = Query(None),
-    invoiceNumber: Optional[str] = Query(None),
     productId: Optional[str] = Query(None),
     keyword: Optional[str] = Query(None),
     productKeyword: Optional[str] = Query(None),
@@ -73,7 +72,6 @@ def search_checkout_orders(
     return CheckoutService(db).search(
         customer_id=customerId,
         order_number=orderNumber,
-        invoice_number=invoiceNumber,
         product_id=productId,
         keyword=keyword,
         product_keyword=productKeyword,

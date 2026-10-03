@@ -50,11 +50,6 @@ class CheckoutOrder(Base):
     discount_amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     shipping_fee: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     total_amount: Mapped[int] = mapped_column(Integer, nullable=False)
-    invoice_number: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    invoice_type: Mapped[str] = mapped_column(String(32), nullable=False)
-    carrier_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    tax_id: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
-    buyer_title: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     business_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -92,10 +87,10 @@ class CheckoutOrderItem(Base):
         index=True,
     )
     line_no: Mapped[int] = mapped_column(Integer, nullable=False)
-    product_id: Mapped[str] = mapped_column(
+    product_id: Mapped[Optional[str]] = mapped_column(
         String(64),
-        ForeignKey("product.id", ondelete="RESTRICT"),
-        nullable=False,
+        ForeignKey("product.id", ondelete="SET NULL"),
+        nullable=True,
         index=True,
     )
     sku: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -104,7 +99,6 @@ class CheckoutOrderItem(Base):
     brand: Mapped[str] = mapped_column(String(128), nullable=False)
     original_price: Mapped[int] = mapped_column(Integer, nullable=False)
     unit_price: Mapped[int] = mapped_column(Integer, nullable=False)
-    cost_price: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_manual_price: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     price_diff_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -112,17 +106,6 @@ class CheckoutOrderItem(Base):
     points_discount_applied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     points_discount_amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     returned_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    pre_order_id: Mapped[Optional[str]] = mapped_column(
-        String(64),
-        ForeignKey("pre_order.id", ondelete="RESTRICT"),
-        nullable=True,
-    )
-    pre_order_item_id: Mapped[Optional[str]] = mapped_column(
-        String(64),
-        ForeignKey("pre_order_item.id", ondelete="RESTRICT"),
-        nullable=True,
-        index=True,
-    )
     original_order_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     original_order_item_id: Mapped[Optional[str]] = mapped_column(
         String(64),
@@ -158,11 +141,7 @@ class CheckoutPayment(Base):
     )
     line_no: Mapped[int] = mapped_column(Integer, nullable=False)
     type: Mapped[str] = mapped_column(String(32), nullable=False)
-    name: Mapped[str] = mapped_column(String(64), nullable=False)
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
-    tendered_cash: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    change_amount: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    transaction_ref: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     order: Mapped["CheckoutOrder"] = relationship("CheckoutOrder", back_populates="payments")
 

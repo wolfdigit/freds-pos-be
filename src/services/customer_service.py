@@ -19,7 +19,7 @@ from src.schemas.customer import (
     Customer as CustomerSchema,
     CustomerSearchResponse,
     UpdateCustomerRequest,
-    VipTier,
+    VipTier, 
 )
 
 # VIP 等級對應的顯示名稱（與前端 getVipTierName 相同）。

@@ -15,13 +15,6 @@ class PaymentMethodType(str, Enum):
     COD = "cod"
 
 
-class InvoiceType(str, Enum):
-    NONE = "none"
-    CARRIER = "carrier"
-    TAX_ID = "tax_id"
-    PAPER = "paper"
-
-
 class OrderStatus(str, Enum):
     COMPLETED = "completed"
     PARTIALLY_REFUNDED = "partially_refunded"
@@ -33,37 +26,18 @@ class BranchId(str, Enum):
     ONLINE = "branch-online"
 
 
-class InvoiceInfo(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
-    invoice_number: str = Field(..., alias="invoiceNumber")
-    type: InvoiceType
-    carrier_code: Optional[str] = Field(None, alias="carrierCode")
-    tax_id: Optional[str] = Field(None, alias="taxId")
-    buyer_title: Optional[str] = Field(None, alias="buyerTitle")
-
-    @field_validator("invoice_number")
-    @classmethod
-    def strip_invoice_number(cls, value: str) -> str:
-        return value.strip()
-
-
 class PaymentTender(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     type: PaymentMethodType
-    name: str
     amount: int
-    tendered_cash: Optional[int] = Field(None, alias="tenderedCash")
-    change_amount: Optional[int] = Field(None, alias="changeAmount")
-    transaction_ref: Optional[str] = Field(None, alias="transactionRef")
 
 
 class CheckoutOrderItem(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
-    product_id: str = Field(..., alias="productId")
+    product_id: Optional[str] = Field(None, alias="productId")
     sku: str
     name: str
     scale: str
@@ -77,8 +51,6 @@ class CheckoutOrderItem(BaseModel):
     points_discount_applied: bool = Field(..., alias="pointsDiscountApplied")
     points_discount_amount: int = Field(..., alias="pointsDiscountAmount")
     returned_quantity: int = Field(..., alias="returnedQuantity")
-    pre_order_id: Optional[str] = Field(None, alias="preOrderId")
-    pre_order_item_id: Optional[str] = Field(None, alias="preOrderItemId")
     original_order_id: Optional[str] = Field(None, alias="originalOrderId")
     original_order_item_id: Optional[str] = Field(None, alias="originalOrderItemId")
     restock: Optional[bool] = None
@@ -105,7 +77,6 @@ class CheckoutOrder(BaseModel):
     shipping_fee: int = Field(..., alias="shippingFee")
     total_amount: int = Field(..., alias="totalAmount")
     payments: List[PaymentTender]
-    invoice: InvoiceInfo
     note: str = ""
     created_at: datetime = Field(..., alias="createdAt")
     updated_at: datetime = Field(..., alias="updatedAt")
@@ -123,12 +94,10 @@ class CreateOrderItem(BaseModel):
 
     product_id: str = Field(..., alias="productId")
     quantity: int
-    unit_price: Optional[int] = Field(None, alias="unitPrice", ge=0)
+    unit_price: Optional[int] = Field(None, alias="unitPrice")
     is_manual_price: bool = Field(False, alias="isManualPrice")
     price_diff_reason: Optional[str] = Field(None, alias="priceDiffReason")
     points_discount_applied: bool = Field(False, alias="pointsDiscountApplied")
-    pre_order_id: Optional[str] = Field(None, alias="preOrderId")
-    pre_order_item_id: Optional[str] = Field(None, alias="preOrderItemId")
     original_order_id: Optional[str] = Field(None, alias="originalOrderId")
     original_order_item_id: Optional[str] = Field(None, alias="originalOrderItemId")
     restock: Optional[bool] = None
@@ -150,7 +119,6 @@ class CreateOrderRequest(BaseModel):
     items: List[CreateOrderItem] = Field(..., min_length=1)
     shipping_fee: int = Field(..., alias="shippingFee", ge=0)
     payments: List[PaymentTender] = Field(..., min_length=1)
-    invoice: InvoiceInfo
     note: str = ""
 
 

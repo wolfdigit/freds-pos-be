@@ -22,17 +22,16 @@ Money fields are integers (TWD). Timestamps are ISO 8601 UTC.
 | `customerPhone` | string \| null | Snapshot. Null when the member has no phone. |
 | `items` | `CheckoutOrderItem[]` | At least one |
 | `itemsSubtotal` | integer | Sum of line `subtotal` |
-| `discountAmount` | integer | Sum of `(originalPrice - unitPrice) * quantity` across lines. May be negative on a return. This is the manual/list gap only. It does not include points discounts. |
-| `pointsDiscountAmount` | integer | Sum of line `pointsDiscountAmount`. Server-owned. |
+| `discountAmount` | integer | Sum of `(originalPrice - unitPrice) * quantity` across manual-price lines only. The NT$360 points cut is already inside `unitPrice` and is reported separately as `pointsDiscountAmount`. May be negative on a return. |
+| `pointsDiscountAmount` | integer | Sum of line `pointsDiscountAmount`. Server-owned record of the exchange. Not subtracted again from `totalAmount`. |
 | `shippingFee` | integer | ≥ 0. Copied from the request. |
-| `totalAmount` | integer | Merchandise + shipping − points discounts. Floors at 0 only when that gross amount is ≥ 0. A refund total stays negative. |
+| `totalAmount` | integer | Sum of line `subtotal` + shipping. Points are not subtracted again, and this total is not floored for points. A ticket may mix sale lines and return lines, so the total may be negative. |
 | `payments` | `PaymentTender[]` | At least one |
-| `invoice` | `InvoiceInfo` | Includes `invoiceNumber`. A sale stores the number the client sent. A refund stores the original sale's number. No gateway call. |
 | `note` | string | Optional. Omit or `""`. |
 | `createdAt` | string | Server time. The sale datetime. |
 | `updatedAt` | string | Set on insert. Bumped only when a later return changes `status` or line `returnedQuantity`. |
 
-**Not on the response:** `costPrice`. It is stored on the line for later margin reports and is not part of the cashier contract.
+There is no invoice and no `costPrice` on the order or the line.
 
 ### `CheckoutOrderItem`
 
@@ -45,18 +44,16 @@ Money fields are integers (TWD). Timestamps are ISO 8601 UTC.
 | `scale` | `ModelScale` | Snapshot |
 | `brand` | string | Snapshot |
 | `originalPrice` | integer | `product.list_price` at commit. Not the client's number. |
-| `unitPrice` | integer | Price actually charged. ≥ 0. |
+| `unitPrice` | integer | Price actually charged. When `pointsDiscountApplied` is true, this is the frontend price already reduced by 360. The server stores it unchanged. |
 | `isManualPrice` | boolean | |
 | `priceDiffReason` | string | Optional. Present when the cashier entered a reason. |
-| `quantity` | integer | Not zero. Positive sale, negative return. |
-| `subtotal` | integer | `unitPrice * quantity` before the points discount |
+| `quantity` | integer | Not zero. Positive sale. Negative when this line returns product from an earlier sale line. |
+| `subtotal` | integer | `unitPrice * quantity`. If a points reduction would make this negative, **0**. A return line stays negative. |
 | `pointsDiscountApplied` | boolean | True when this product used one points exchange. Always false on a return line. |
-| `pointsDiscountAmount` | integer | **360** when applied, otherwise **0**. Server-owned. A return line is **0**. |
-| `returnedQuantity` | integer | Units already returned against this line. `0` on create. |
-| `preOrderId` | string | Optional pickup link |
-| `preOrderItemId` | string | Optional pickup link |
-| `originalOrderId` | string | Required when `quantity < 0` |
-| `originalOrderItemId` | string | Required when `quantity < 0` |
+| `pointsDiscountAmount` | integer | **360** when applied, otherwise **0**. A record of the exchange, not a second deduction. A return line is **0**. |
+| `returnedQuantity` | integer | Units of this sale line already returned. `0` on create. |
+| `originalOrderId` | string | When `quantity < 0`, the earlier checkout order this line is returning product from. Required on a return line. |
+| `originalOrderItemId` | string | When `quantity < 0`, the earlier sale line whose units are being returned. Required on a return line. |
 | `restock` | boolean | Return only. Default `true`. |
 | `returnReason` | string | Optional |
 
@@ -69,21 +66,9 @@ Matches the current frontend union:
 | Field | Type | Notes |
 |-------|------|--------|
 | `type` | `PaymentMethodType` | `cod` is rejected in this phase (`422`). |
-| `name` | string | Display label the client sent |
 | `amount` | integer | This tender's applied amount. Negative on a refund tender. |
-| `tenderedCash` | integer | Cash only. Bills received. |
-| `changeAmount` | integer | Cash only. Server sets `tenderedCash - amount` when `tenderedCash` is sent. Must be ≥ 0. |
-| `transactionRef` | string | Optional. Card last digits or transfer reference. |
 
-### `InvoiceInfo`
-
-| Field | Type | Notes |
-|-------|------|--------|
-| `invoiceNumber` | string | Required. Non-empty after trim. On a sale, the client sends it and it is unique among sales. On a refund, it must be the original sale's number, and that number is stored again. This phase does not call an e-invoice gateway. |
-| `type` | `none` \| `carrier` \| `tax_id` \| `paper` | |
-| `carrierCode` | string | When `type` is `carrier` |
-| `taxId` | string | When `type` is `tax_id`. 8 digits. |
-| `buyerTitle` | string | Optional title for a tax id |
+No `name`, `tenderedCash`, `changeAmount`, or `transactionRef`. There is no invoice on the request or the response.
 
 ---
 
@@ -101,13 +86,12 @@ Product search on the counter is the existing `GET /products`. See [`03-search-r
 |-------|------|--------|
 | `customerId` | string | Optional. Omit for a walk-in. Unknown id → `404` `CUSTOMER_NOT_FOUND`. |
 | `branchId` | `branch-store` \| `branch-online` | Optional. Omit → `branch-store`. Unknown value → `422`. |
-| `items` | array | At least one |
+| `items` | array | At least one. Sale lines and return lines may appear on the same ticket. |
 | `shippingFee` | integer ≥ 0 | Required. `0` is valid. |
 | `payments` | array | At least one |
-| `invoice` | `InvoiceInfo` | Required |
 | `note` | string | Optional |
 
-**Item request fields:** `productId`, `quantity`, `unitPrice`, `isManualPrice`, `priceDiffReason`, `pointsDiscountApplied`, `preOrderId`, `preOrderItemId`, `originalOrderId`, `originalOrderItemId`, `restock`, `returnReason`.
+**Item request fields:** `productId`, `quantity`, `unitPrice`, `isManualPrice`, `priceDiffReason`, `pointsDiscountApplied`, `originalOrderId`, `originalOrderItemId`, `restock`, `returnReason`.
 
 `pointsDiscountApplied` defaults to false. The client does not send line `pointsDiscountAmount`.
 
@@ -117,38 +101,35 @@ The client does not send `id`, `orderNumber`, `createdAt`, `status`, totals, sna
 
 | Line kind | `unitPrice` |
 |-----------|-------------|
+| `pointsDiscountApplied: true` | Request `unitPrice`. The frontend already subtracted 360. The server stores it and does not subtract 360 again. |
 | `isManualPrice: true` | Request `unitPrice`, required, integer ≥ 0 |
-| Otherwise | Current `product.list_price`. Client price is ignored. A preorder pickup follows this same rule. |
+| Otherwise | Current `product.list_price`. Client price is ignored. |
 
-`originalPrice` is always `list_price`, including preorder and manual lines, so the discount column can compare list versus charged.
+`originalPrice` is always `list_price`, including manual lines and points lines, so the discount column can compare list versus charged.
 
 ### Validation before any write
 
 All checks run inside the database transaction. Any failure rolls back.
 
 1. Every `productId` exists. Missing → `404` `PRODUCT_NOT_FOUND`.
-2. Positive lines that are not preorder pickups: locked `store` quantity ≥ `quantity`. Short → `409` `INSUFFICIENT_STORE_STOCK`.
-3. Preorder pickup: both ids present, line exists, `1 ≤ quantity ≤ qtyArrived - qtyDelivered`. Else `409` `PREORDER_QTY_EXCEEDED`.
-4. Negative lines: both original ids present, original line exists, `abs(quantity) ≤ quantity - returnedQuantity` on that line. Else `409` `RETURN_QTY_EXCEEDED`. Original sale missing → `404` `ORDER_NOT_FOUND`.
-5. Return customer: if both the new order and the original order have a `customerId`, they must be equal. A walk-in original may be returned onto a member. A member original may not be returned onto a different member. Else `409` `INVALID_RETURN_CUSTOMER`.
-6. `branchId`, when sent, is `branch-store` or `branch-online`. Anything else → `422`.
-7. A line with `pointsDiscountApplied: true` must have `quantity > 0` and a `customerId` on the order. Otherwise `422`. At most one such line per `productId` on the order. A second line for the same product with the flag set → `422`. The flag does not change `unitPrice`. The server does not read a points balance. A return line (`quantity < 0`) is stored with `pointsDiscountApplied: false` and `pointsDiscountAmount: 0` even if the original line was discounted. The refund amount is `unitPrice × quantity` only.
-8. Payments: when `totalAmount ≥ 0`, the sum of `amount` must be ≥ `totalAmount`. Else `409` `PAYMENT_INSUFFICIENT`. When `totalAmount < 0`, the sum must equal `totalAmount`.
-9. `cod` tender → `422`.
-10. Cash with `tenderedCash` set and `tenderedCash < amount` → `422`.
-11. A ticket is either a sale or a refund. One order cannot contain both a positive line and a negative line. That mix → `422`.
-12. `invoice.invoiceNumber` is required and non-empty after trim. Blank → `422`. A sale whose number is already stored on another sale → `409` `INVOICE_NUMBER_DUPLICATE`. A refund must send the original sale's number; a different number, or return lines from more than one invoice, → `422`. That refund stores the original number again.
+2. Positive lines deduct `store` stock even when the shelf quantity is short. Short stock is not an error. The counter shows a warning popup; the cashier decides. The server commits.
+3. Negative lines return product from an earlier sale: both original ids present, that sale line exists, `abs(quantity) ≤ quantity - returnedQuantity` on that line. Else `409` `RETURN_QTY_EXCEEDED`. The earlier sale is missing → `404` `ORDER_NOT_FOUND`.
+4. Return customer: if both the new order and the earlier sale have a `customerId`, they must be equal. A walk-in sale may be returned onto a member. A member sale may not be returned onto a different member. Else `409` `INVALID_RETURN_CUSTOMER`.
+5. `branchId`, when sent, is `branch-store` or `branch-online`. Anything else → `422`.
+6. A line with `pointsDiscountApplied: true` must have `quantity > 0` and a `customerId` on the order. Otherwise `422`. At most one such line per `productId` on the order. A second line for the same product with the flag set → `422`. The frontend already reduced `unitPrice` by 360. The server does not change `unitPrice` again and does not read a points balance. A return line (`quantity < 0`) is stored with `pointsDiscountApplied: false` and `pointsDiscountAmount: 0` even if the original line was discounted. The refund amount is that line's `unitPrice × quantity` only.
+7. Payments: when `totalAmount ≥ 0`, the sum of `amount` must be ≥ `totalAmount`. Else `409` `PAYMENT_INSUFFICIENT`. When `totalAmount < 0`, the sum must equal `totalAmount`.
+8. `cod` tender → `422`.
+9. A checkout ticket can contain both sale lines (`quantity > 0`) and return lines (`quantity < 0`). That mix is valid.
 
 ### Writes on success
 
 In one commit:
 
 - Insert order, lines, payments.
-- Positive non-preorder lines, and preorder pickup lines: subtract `quantity` from `store`.
-- Negative lines with `restock` not `false`: add `abs(quantity)` to `store`.
+- Positive lines: subtract `quantity` from `store`, even when that drives the shelf quantity below zero.
+- Negative lines with `restock` not `false`: add `abs(quantity)` to `store` for the units being returned.
 - Recompute nothing else on the product row. `totalStock` stays a read-time sum.
-- Preorder pickup: add `quantity` to `qty_delivered`, then derive status (`pending`, `partially_arrived`, `partially_completed`, `completed`) with the same rules as the frontend `derivePreOrderStatus`.
-- Return: add `abs(quantity)` to the original line `returnedQuantity`. If every original line is fully returned, original `status` becomes `refunded`. If any line has `returnedQuantity > 0`, `partially_refunded`. Otherwise leave `completed`. The original line's points-discount flag and 360 amount stay as they were.
+- Return: add `abs(quantity)` to the earlier sale line `returnedQuantity`. If every line on that earlier order is fully returned, its `status` becomes `refunded`. If any line has `returnedQuantity > 0`, `partially_refunded`. Otherwise leave `completed`. The earlier line's points-discount flag and 360 amount stay as they were.
 - Bound customer: `total_spent = max(0, total_spent + totalAmount)`.
 - Redeemed lines keep `pointsDiscountApplied` and `pointsDiscountAmount` of 360. Nothing is written to a points balance.
 
@@ -158,10 +139,10 @@ In one commit:
 |--------|------|
 | `201` | `CheckoutReceipt`: `{ order, receiptPrintHtml }` |
 | `404` | `PRODUCT_NOT_FOUND`, `CUSTOMER_NOT_FOUND`, `ORDER_NOT_FOUND` |
-| `409` | Stock, preorder, return, payment, an invoice number already used by another sale, or idempotency conflicts |
-| `422` | Malformed body, empty items, zero quantity, unknown branch, `cod`, bad cash, blank `invoiceNumber`, or a ticket that both sells and returns |
+| `409` | Return quantity, return customer, payment, or idempotency conflicts |
+| `422` | Malformed body, empty items, zero quantity, unknown branch, or `cod` |
 
-`receiptPrintHtml` is a simple HTML slip (store name, order number, invoice number, cashier, lines, total). It is not a fiscal invoice.
+`receiptPrintHtml` is a simple HTML slip (store name, order number, cashier, lines, total). There is no invoice on the slip.
 
 ---
 
@@ -173,9 +154,8 @@ In one commit:
 |-------|---------|--------|
 | `customerId` | — | Exact. Includes orders whose member was later deleted only when the id still matches; deleted members are found by `keyword` on the name/phone snapshot. |
 | `orderNumber` | — | Exact |
-| `invoiceNumber` | — | Exact match on the stored invoice number, after trim. Returns the sale and every refund that reused that number. |
 | `productId` | — | Order has a line with this product |
-| `keyword` | — | Order number, invoice number, buyer name, or buyer phone contains |
+| `keyword` | — | Order number, buyer name, or buyer phone contains |
 | `productKeyword` | — | A line sku or name contains. SKU uses the catalog normalizer. |
 | `startDate` | — | Inclusive `createdAt`, ISO 8601 |
 | `endDate` | — | Exclusive upper bound, ISO 8601 |
