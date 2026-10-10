@@ -15,11 +15,12 @@ BE contract lives in the merged [`../openapi.yaml`](../openapi.yaml). FE `docs/o
 | `CreateProductRequest.required` | Remove `normalizedSku`, `totalStock`, `preOrderPendingCount`, **`stocks`**. Keep: `sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `costPrice`, `status`. |
 | `CreateProductRequest` properties | Remove or stop documenting client `stocks` / any quantity fields. Optional metadata only: `material`, `color`, `imageUrl`, `vipPrice`, `note`. Server-owned fields (`normalizedSku`, `totalStock`, `preOrderPendingCount`, `id`) must not be required; if listed, mark as response-only / ignore on create. |
 | `POST /products` description | Server assigns `id` (`prod-{uuid4}` no dashes); always creates four stock rows at qty `0`; does not write `product_pre_order_pending`; real stock qty via future inventory APIs. |
-| New `UpdateProductRequest` | Replace opaque PUT `type: object` with named schema: metadata fields only (`sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `costPrice`, `vipPrice`, `note`, `status`, `material`, `color`, `imageUrl`). **Exclude** `stocks`, `totalStock`, `id`, `normalizedSku`, `preOrderPendingCount`. |
+| New `UpdateProductRequest` | Replace opaque PUT `type: object` with named schema: metadata fields only (`sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `costPrice`, `vipPrice`, `note`, `status`, `material`, `color`, `imageUrl`, `deleted`). **Exclude** `stocks`, `totalStock`, `id`, `normalizedSku`, `preOrderPendingCount`. |
 | `PUT` description | Metadata only; stock / pending never mutated here. |
 | `BusinessErrorCode` | Add `PRODUCT_SKU_DUPLICATE`. |
 | Create/update responses | Document `409` + example `{ code: PRODUCT_SKU_DUPLICATE, message: 貨號已存在 }`. |
-| `GET /products` | Note default sort `sku ASC`; keep search param semantics (`keyword`, `scale`/`ALL`, `brand`/`ALL`, `inStockOnly`). |
+| `GET /products` | Note default sort `sku ASC`; keep search param semantics (`keyword`, `scale`/`ALL`, `brand`/`ALL`, `inStockOnly`). Omit `deleted: true`. |
+| `Product.deleted` | Boolean on the response. Create stores `false`. `PUT` sets `true` to hide and `false` to restore. There is no `DELETE /products/{productId}` and no hard delete. |
 | Inventory paths | **Do not** add `/inventory/*` in this catalog phase (separate pass). |
 
 ---
@@ -30,7 +31,7 @@ BE contract lives in the merged [`../openapi.yaml`](../openapi.yaml). FE `docs/o
 |--------|--------|
 | Add `CreateProductRequest` (or equivalent) | Match OpenAPI create: no `id`, `normalizedSku`, `totalStock`, `preOrderPendingCount`, **no `stocks` / quantities**. |
 | Add `UpdateProductRequest` | Metadata-only partial; **not** `Partial<Product>`. |
-| Keep `Product` response type | Unchanged shape for list/detail responses (still includes `stocks`, `totalStock`, `preOrderPendingCount`). |
+| `Product` response type | Add `deleted: boolean`. List and detail still include `stocks`, `totalStock`, and `preOrderPendingCount`. |
 
 ---
 

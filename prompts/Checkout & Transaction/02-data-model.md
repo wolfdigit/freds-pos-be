@@ -16,15 +16,15 @@ erDiagram
   product ||--|{ product_stock : stocks
 ```
 
-`customer_id` is nullable, **`ON DELETE SET NULL`**. Name and phone snapshots are required to remain. `product_id` is nullable, **`ON DELETE SET NULL`**. Checkout history stays after a product is deleted. The line keeps its sku, name, scale, and brand snapshots. Deleting a catalog product is allowed even when sale lines reference it. A return line points at the earlier sale line it is giving product back from, not at the product id alone.
+`customer_id` is nullable, **`ON DELETE SET NULL`**. Name and phone snapshots are required to remain. `product_id` is required, **`ON DELETE RESTRICT`**. A catalog product is not deleted. `product.deleted` hides it from the counter and leaves the row, so a sale line's `product_id` stays filled. The line still keeps its sku, name, scale, and brand snapshots. A return line points at the earlier sale line it is giving product back from, and its `product_id` must equal that sale line's `product_id`. The service must not skip that comparison.
 
 ## Table: `checkout_order`
 
 | Column | Type | Notes |
 |--------|------|--------|
 | `id` | `String` PK | `ord-{uuid4}` no dashes |
-| `order_number` | `String` UNIQUE | `SO-YYYYMMDD-####` |
-| `idempotency_key` | `String` UNIQUE, nullable | From the header. Null when the client omits it. |
+| `order_number` | `String` UNIQUE | `SO-YYYYMMDD-HHMMSS-####`. Date and clock are `Asia/Taipei`. `####` is the max suffix for that second, plus 1. The per-second prefix is the concurrency control. There is no retry when two sales share a second. |
+| `idempotency_key` | `String` UNIQUE, nullable | From the header. Null when the client omits it. A unique conflict is caught, then the winning row is re-selected and replayed. |
 | `branch_id` | `String` | `branch-store` or `branch-online`. No branch table. |
 | `branch_name` | `String` | `台北旗艦店` or `官網`, copied from `branch_id` |
 | `cashier_id` | `String` | Snapshot of the current user id. No staff table. |
@@ -53,7 +53,7 @@ Indexes: unique `order_number`, unique `idempotency_key`, `customer_id`, `busine
 | `id` | `String` PK | `oli-{uuid4}` no dashes |
 | `order_id` | `String` FK | `ON DELETE CASCADE` |
 | `line_no` | `Integer` | 1-based order of the request items |
-| `product_id` | `String` FK nullable | `ON DELETE SET NULL`. History snapshots remain after the product row is deleted. |
+| `product_id` | `String` FK | Required. `ON DELETE RESTRICT`. The product row stays; `product.deleted` is the hide flag. |
 | `sku` | `String` | Snapshot |
 | `name` | `String` | Snapshot |
 | `scale` | `String` | Snapshot |
@@ -85,10 +85,12 @@ A return line and a sale line for the same product are different rows. Matching 
 | `id` | `String` PK | `pay-{uuid4}` no dashes |
 | `order_id` | `String` FK | `ON DELETE CASCADE` |
 | `line_no` | `Integer` | 1-based |
-| `type` | `String` | Payment method union. `cod` is not inserted. |
+| `type` | `String` | `cash`, `credit_card`, `line_pay`, `bank_transfer`, or `cod`. `cod` is not inserted. |
+| `name` | `String` | Display name from the tender. |
 | `amount` | `Integer` | |
-
-No `name`, `tendered_cash`, `change_amount`, or `transaction_ref`.
+| `tendered_cash` | `Integer` nullable | Cash notes received. |
+| `change_amount` | `Integer` nullable | |
+| `transaction_ref` | `String` nullable | Card last-4 or transfer last-5. |
 
 Unique `(order_id, line_no)`.
 

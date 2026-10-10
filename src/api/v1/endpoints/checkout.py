@@ -9,7 +9,6 @@ from src.api.deps import get_current_user_optional, get_db
 from src.schemas.checkout import (
     CheckoutOrder,
     CheckoutOrderSearchResponse,
-    CheckoutReceipt,
     CreateOrderRequest,
     OrderStatus,
 )

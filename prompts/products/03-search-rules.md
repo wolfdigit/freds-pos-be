@@ -13,6 +13,8 @@ Mirror FE mock [`mockProductService.searchProducts`](../../../freds-pos-fe/src/s
 
 Filters are **AND**-combined. Within the keyword filter, match conditions are **OR**.
 
+`GET /products` omits rows with `deleted = true`. A hidden product is not offered on the counter. `GET /products/{productId}` still returns that row.
+
 ---
 
 ## SKU normalization

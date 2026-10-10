@@ -9,6 +9,7 @@ from typing import List, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -20,7 +21,6 @@ from src.schemas.checkout import (
     CheckoutOrder as CheckoutOrderSchema,
     CheckoutOrderItem as CheckoutOrderItemSchema,
     CheckoutOrderSearchResponse,
-    CheckoutReceipt,
     CreateOrderItem,
     CreateOrderRequest,
     OrderStatus,

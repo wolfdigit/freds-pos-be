@@ -350,12 +350,36 @@ paths:
         Cashier id and name are copied from the current user.
         The client does not send them. Until staff login exists,
         that user is the demo cashier `staff-001` / `店長 Fred`.
+        There is no invoice on the request or the response.
+        Checkout does not accept `preOrderId` or `preOrderItemId`.
+        Each tender uses the frontend fields: `type`, `name`, `amount`,
+        `tenderedCash`, `changeAmount`, and `transactionRef`.
+        `type` is `cash`, `credit_card`, `line_pay`, `bank_transfer`, or `cod`.
+        `cod` is rejected with `422`.
+        The `201` body is the order JSON. The server does not return HTML.
+        The client composes the slip from those fields.
+
+        `orderNumber` is `SO-YYYYMMDD-HHMMSS-####` in `Asia/Taipei`.
+        `####` is the max suffix already stored for that second, plus 1.
+        The per-second prefix is the concurrency control. There is no retry when two sales share a second.
+
+        `X-Idempotency-Key` replays the stored order when the cashier and body match.
+        A lookup before insert is not enough. On a unique conflict for that key,
+        catch it, re-select the stored order, and apply the same replay rules.
+
+        A return line's `productId` must equal the original sale line's `productId`.
+        That check always runs. Catalog products are soft-deleted (`deleted`),
+        so the sale line's product id is never cleared.
       parameters:
         - in: header
-          name: Idempotency-Key
+          name: X-Idempotency-Key
           required: false
           schema:
             type: string
+          description: |
+            Optional. Same key, same cashier, and same body replays the stored order JSON.
+            A different body or cashier is `409` `IDEMPOTENCY_CONFLICT`.
+            On unique conflict, re-select and replay. Do not rely on a prior SELECT alone.
       requestBody:
         required: true
         content:
@@ -364,7 +388,7 @@ paths:
               $ref: '#/components/schemas/CreateOrderRequest'
       responses:
         '201':
-          description: Receipt
+          description: Recorded order JSON. No HTML.
           content:
             application/json:
               schema:
@@ -372,7 +396,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Stock, return, payment, preorder, or idempotency conflict
+          description: Return quantity, return customer, payment, or idempotency conflict
           content:
             application/json:
               schema:
@@ -394,10 +418,7 @@ paths:
         - in: query
           name: orderNumber
           schema: {type: string}
-        - in: query
-          name: invoiceNumber
-          schema: {type: string}
-          description: Exact match. Returns the sale and every refund that reused this number.
+          description: Exact `SO-YYYYMMDD-HHMMSS-####`
         - in: query
           name: productId
           schema: {type: string}
@@ -526,7 +547,6 @@ components:
         - INVALID_RETURN_CUSTOMER
         - IDEMPOTENCY_CONFLICT
         - INVALID_PAYMENT
-        - INVOICE_NUMBER_DUPLICATE
 
 
     CreateOrderRequest:
@@ -536,7 +556,7 @@ components:
         them from the current user. Until staff login exists, that user is the
         demo cashier `staff-001` / `店長 Fred`. A body that still includes cashier
         fields is ignored.
-      required: [items, shippingFee, payments, invoice]
+      required: [items, shippingFee, payments]
       properties:
         customerId: {type: string}
         branchId:
@@ -554,8 +574,6 @@ components:
           minItems: 1
           items:
             $ref: '#/components/schemas/PaymentTender'
-        invoice:
-          $ref: '#/components/schemas/InvoiceInfo'
         note: {type: string}
     CreateOrderItem:
       type: object
@@ -567,56 +585,143 @@ components:
         isManualPrice: {type: boolean, default: false}
         priceDiffReason: {type: string}
         pointsDiscountApplied: {type: boolean, default: false}
-        preOrderId: {type: string}
-        preOrderItemId: {type: string}
         originalOrderId: {type: string}
         originalOrderItemId: {type: string}
         restock: {type: boolean}
         returnReason: {type: string}
+    PaymentMethodType:
+      type: string
+      enum: [cash, credit_card, line_pay, bank_transfer, cod]
     PaymentTender:
       type: object
       required: [type, name, amount]
       properties:
         type:
+          $ref: '#/components/schemas/PaymentMethodType'
+        name:
           type: string
-          enum: [cash, bank_transfer_ctbc, bank_transfer_ubot, credit_card_physical, credit_card_online, line_pay, cod]
-        name: {type: string}
-        amount: {type: integer}
-        tenderedCash: {type: integer}
-        changeAmount: {type: integer}
-        transactionRef: {type: string}
-    InvoiceInfo:
+          example: 現金
+        amount:
+          type: integer
+        tenderedCash:
+          type: integer
+          description: Cash notes received
+        changeAmount:
+          type: integer
+        transactionRef:
+          type: string
+          description: Card last-4 or transfer last-5
+    CheckoutOrderItem:
       type: object
-      required: [invoiceNumber, type]
+      required:
+        - id
+        - productId
+        - sku
+        - name
+        - scale
+        - brand
+        - originalPrice
+        - unitPrice
+        - isManualPrice
+        - quantity
+        - subtotal
+        - pointsDiscountApplied
+        - pointsDiscountAmount
+        - returnedQuantity
       properties:
-        invoiceNumber:
+        id: {type: string}
+        productId:
           type: string
-          description: |
-            Invoice number stored on the order. Required and non-empty.
-            A sale stores the client value, unique among sales. Another sale
-            with that number is `INVOICE_NUMBER_DUPLICATE`. A refund stores the
-            original sale's number again. One ticket cannot both sell and return.
-            History search uses exact query `invoiceNumber`.
-        type:
-          type: string
-          enum: [none, carrier, tax_id, paper]
-        carrierCode: {type: string}
-        taxId: {type: string}
-        buyerTitle: {type: string}
+          description: Catalog id. Remains set because products are soft-deleted.
+        sku: {type: string}
+        name: {type: string}
+        scale:
+          $ref: '#/components/schemas/ModelScale'
+        brand: {type: string}
+        originalPrice: {type: integer}
+        unitPrice: {type: integer}
+        isManualPrice: {type: boolean}
+        priceDiffReason: {type: string}
+        quantity: {type: integer}
+        subtotal: {type: integer}
+        pointsDiscountApplied: {type: boolean}
+        pointsDiscountAmount: {type: integer}
+        returnedQuantity: {type: integer}
+        originalOrderId: {type: string}
+        originalOrderItemId: {type: string}
+        restock: {type: boolean}
+        returnReason: {type: string}
     CheckoutOrder:
       type: object
       description: |
         Recorded sale. `cashierId` and `cashierName` are snapshots of the current
         user (`id`, `name`), not values from the request. Until staff login exists,
-        that user is the demo cashier `staff-001` / `店長 Fred`. `costPrice` is stored
-        on the line and omitted here.
+        that user is the demo cashier `staff-001` / `店長 Fred`.
+        There is no invoice and no `costPrice`.
+        These fields are what the client uses to compose the slip.
+      required:
+        - id
+        - orderNumber
+        - branchId
+        - branchName
+        - cashierId
+        - cashierName
+        - status
+        - items
+        - itemsSubtotal
+        - discountAmount
+        - pointsDiscountAmount
+        - shippingFee
+        - totalAmount
+        - payments
+        - createdAt
+        - updatedAt
+      properties:
+        id: {type: string}
+        orderNumber:
+          type: string
+          description: '`SO-YYYYMMDD-HHMMSS-####` in Asia/Taipei. Sequence is per second.'
+          example: SO-20261011-014430-0001
+        branchId:
+          type: string
+          enum: [branch-store, branch-online]
+        branchName: {type: string, example: 台北旗艦店}
+        cashierId: {type: string}
+        cashierName: {type: string}
+        status:
+          type: string
+          enum: [completed, partially_refunded, refunded]
+        customerId: {type: [string, 'null']}
+        customerName: {type: [string, 'null']}
+        customerPhone: {type: [string, 'null']}
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CheckoutOrderItem'
+        itemsSubtotal: {type: integer}
+        discountAmount: {type: integer}
+        pointsDiscountAmount: {type: integer}
+        shippingFee: {type: integer}
+        totalAmount: {type: integer}
+        payments:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentTender'
+        note: {type: string}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
     CheckoutReceipt:
       type: object
-      required: [order, receiptPrintHtml]
+      description: |
+        JSON only. The server does not return HTML.
+        The client composes the slip from `order.branchName`, `order.orderNumber`,
+        `order.cashierName`, `order.createdAt`, each item `name` / `quantity` /
+        `unitPrice` / `subtotal`, `order.shippingFee`, `order.payments`, and
+        `order.totalAmount`.
+      required: [order]
       properties:
         order:
           $ref: '#/components/schemas/CheckoutOrder'
-        receiptPrintHtml: {type: string}
     CheckoutOrderSearchResponse:
       type: object
       required: [items, page, pageSize, total]
@@ -681,6 +786,7 @@ components:
         - totalStock
         - preOrderPendingCount
         - status
+        - deleted
       properties:
         id:
           type: string
@@ -722,6 +828,14 @@ components:
           type: string
         status:
           $ref: '#/components/schemas/ProductStatus'
+        deleted:
+          type: boolean
+          description: |
+            Soft-delete flag. Create stores `false`.
+            `PUT /products/{productId}` sets it: `true` hides the product, `false` shows it again.
+            The row is not removed. There is no `DELETE /products/{productId}`.
+            `GET /products` omits `deleted: true`. `GET /products/{productId}` still returns it.
+            A new sale rejects a hidden product. A return may still use that `productId`.
 
     CreateProductRequest:
       type: object
@@ -798,6 +912,11 @@ components:
           type: string
         status:
           $ref: '#/components/schemas/ProductStatus'
+        deleted:
+          type: boolean
+          description: |
+            `true` hides the product from search and from a new sale.
+            `false` shows it again. Does not remove the row.
 
     VipTier:
       type: string

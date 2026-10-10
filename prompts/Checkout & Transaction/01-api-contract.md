@@ -11,7 +11,7 @@ Money fields are integers (TWD). Timestamps are ISO 8601 UTC.
 | Field | Type | Notes |
 |-------|------|--------|
 | `id` | string | Server `ord-{uuid4}` without dashes |
-| `orderNumber` | string | Server `SO-YYYYMMDD-####`, business date `Asia/Taipei`, unique |
+| `orderNumber` | string | Server `SO-YYYYMMDD-HHMMSS-####`. Date and clock are `Asia/Taipei`. `####` is the max suffix already stored for that second, plus 1, from `0001`. Unique. The per-second prefix is enough. There is no retry for two sales in the same second. |
 | `branchId` | `branch-store` \| `branch-online` | Physical counter, or the online store |
 | `branchName` | string | `台北旗艦店` or `官網`. Server sets this from `branchId`. |
 | `cashierId` | string | Snapshot of the current user `id`. Not sent by the client. |
@@ -38,7 +38,7 @@ There is no invoice and no `costPrice` on the order or the line.
 | Field | Type | Notes |
 |-------|------|--------|
 | `id` | string | Server `oli-{uuid4}` without dashes. Return payloads send this as `originalOrderItemId`. |
-| `productId` | string | Catalog id. Required. |
+| `productId` | string | Catalog id. Required on every line, including a return. The product row is never removed; `deleted` only hides it. |
 | `sku` | string | Snapshot |
 | `name` | string | Snapshot |
 | `scale` | `ModelScale` | Snapshot |
@@ -59,16 +59,20 @@ There is no invoice and no `costPrice` on the order or the line.
 
 ### `PaymentTender`
 
-Matches the current frontend union:
+Same fields as the frontend tender:
 
-`cash` | `bank_transfer_ctbc` | `bank_transfer_ubot` | `credit_card_physical` | `credit_card_online` | `line_pay` | `cod`
+`cash` | `credit_card` | `line_pay` | `bank_transfer` | `cod`
 
 | Field | Type | Notes |
 |-------|------|--------|
 | `type` | `PaymentMethodType` | `cod` is rejected in this phase (`422`). |
+| `name` | string | Required. Display name, such as `現金`. |
 | `amount` | integer | This tender's applied amount. Negative on a refund tender. |
+| `tenderedCash` | integer | Optional. Cash notes received. |
+| `changeAmount` | integer | Optional. |
+| `transactionRef` | string | Optional. Card last-4 or transfer last-5. |
 
-No `name`, `tenderedCash`, `changeAmount`, or `transactionRef`. There is no invoice on the request or the response.
+The server stores these fields and returns them on the order. There is no invoice on the request or the response. Checkout does not accept `preOrderId` or `preOrderItemId`.
 
 ---
 
@@ -78,7 +82,9 @@ Product search on the counter is the existing `GET /products`. See [`03-search-r
 
 **Maps to:** `ICheckoutService.createCheckoutOrder`.
 
-**Header:** `Idempotency-Key` optional. When present, a repeat with the same key, the same current user, and the same body returns the original `201` body and does not write again. A reuse with a different body or a different user → `409` `IDEMPOTENCY_CONFLICT`.
+**Header:** `X-Idempotency-Key` optional. When present, a repeat with the same key, the same current user, and the same body returns the original `201` body and does not write again. A reuse with a different body or a different user → `409` `IDEMPOTENCY_CONFLICT`.
+
+Do not rely on a lookup before insert. Two requests can both miss that lookup and both insert. The `idempotency_key` unique constraint is the lock. On that unique conflict, catch it, re-select the stored order, and apply the same replay rules: matching cashier and body returns that order JSON; a mismatch is `409` `IDEMPOTENCY_CONFLICT`.
 
 ### Request — `CreateOrderPayload`
 
@@ -91,7 +97,9 @@ Product search on the counter is the existing `GET /products`. See [`03-search-r
 | `payments` | array | At least one |
 | `note` | string | Optional |
 
-**Item request fields:** `productId`, `quantity`, `unitPrice`, `isManualPrice`, `priceDiffReason`, `pointsDiscountApplied`, `originalOrderId`, `originalOrderItemId`, `restock`, `returnReason`.
+**Item request fields:** `productId`, `quantity`, `unitPrice`, `isManualPrice`, `priceDiffReason`, `pointsDiscountApplied`, `originalOrderId`, `originalOrderItemId`, `restock`, `returnReason`. Do not send `preOrderId` or `preOrderItemId`.
+
+**Payment request fields:** `type`, `name`, `amount`, and optionally `tenderedCash`, `changeAmount`, `transactionRef`.
 
 `pointsDiscountApplied` defaults to false. The client does not send line `pointsDiscountAmount`.
 
@@ -111,9 +119,9 @@ The client does not send `id`, `orderNumber`, `createdAt`, `status`, totals, sna
 
 All checks run inside the database transaction. Any failure rolls back.
 
-1. Every `productId` exists. Missing → `404` `PRODUCT_NOT_FOUND`.
+1. Every `productId` exists. Missing → `404` `PRODUCT_NOT_FOUND`. A positive line also requires `product.deleted` false. A return line may name a soft-deleted product, because the row is still there.
 2. Positive lines deduct `store` stock even when the shelf quantity is short. Short stock is not an error. The counter shows a warning popup; the cashier decides. The server commits.
-3. Negative lines return product from an earlier sale: both original ids present, that sale line exists, `abs(quantity) ≤ quantity - returnedQuantity` on that line. Else `409` `RETURN_QTY_EXCEEDED`. The earlier sale is missing → `404` `ORDER_NOT_FOUND`.
+3. Negative lines return product from an earlier sale: both original ids present, that sale line exists, `abs(quantity) ≤ quantity - returnedQuantity` on that line. Else `409` `RETURN_QTY_EXCEEDED`. The earlier sale is missing → `404` `ORDER_NOT_FOUND`. The return `productId` must equal that sale line's `product_id`. This comparison always runs. It is not skipped when the product was hidden, because `product_id` is never cleared.
 4. Return customer: if both the new order and the earlier sale have a `customerId`, they must be equal. A walk-in sale may be returned onto a member. A member sale may not be returned onto a different member. Else `409` `INVALID_RETURN_CUSTOMER`.
 5. `branchId`, when sent, is `branch-store` or `branch-online`. Anything else → `422`.
 6. A line with `pointsDiscountApplied: true` must have `quantity > 0` and a `customerId` on the order. Otherwise `422`. At most one such line per `productId` on the order. A second line for the same product with the flag set → `422`. The frontend already reduced `unitPrice` by 360. The server does not change `unitPrice` again and does not read a points balance. A return line (`quantity < 0`) is stored with `pointsDiscountApplied: false` and `pointsDiscountAmount: 0` even if the original line was discounted. The refund amount is that line's `unitPrice × quantity` only.
@@ -137,12 +145,12 @@ In one commit:
 
 | Status | Body |
 |--------|------|
-| `201` | `CheckoutReceipt`: `{ order, receiptPrintHtml }` |
+| `201` | `CheckoutReceipt`: `{ order }`. `order` is `CheckoutOrder`. |
 | `404` | `PRODUCT_NOT_FOUND`, `CUSTOMER_NOT_FOUND`, `ORDER_NOT_FOUND` |
 | `409` | Return quantity, return customer, payment, or idempotency conflicts |
 | `422` | Malformed body, empty items, zero quantity, unknown branch, or `cod` |
 
-`receiptPrintHtml` is a simple HTML slip (store name, order number, cashier, lines, total). There is no invoice on the slip.
+The server does not return HTML. The client builds the slip from `order.branchName`, `order.orderNumber`, `order.cashierName`, `order.createdAt`, each item's `name`, `quantity`, `unitPrice`, and `subtotal`, `order.shippingFee`, `order.payments`, and `order.totalAmount`. There is no invoice on the slip.
 
 ---
 

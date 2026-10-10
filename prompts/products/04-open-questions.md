@@ -16,6 +16,7 @@ Decisions from the planning discussion are recorded below. Items marked **Decide
 | 6 | Search sort | **`sku ASC`**; still add `created_at` / `updated_at` for audit. | 2026-09-07 |
 | 7 | Auth | Keep **optional/dummy** for this phase. | 2026-09-07 |
 | 8 | FE / OpenAPI sync | Track all FE + contract changes in [`05-fe-changes.md`](./05-fe-changes.md). | 2026-09-07 |
+| 9 | Product delete | **Soft delete through update.** `PUT /products/{productId}` sets `deleted`. `true` hides the product. `false` shows it again. No `DELETE` route and no row removal. Search omits `deleted = true`. `GET /products/{productId}` still returns the row. | 2026-10-11 |
 
 ---
 

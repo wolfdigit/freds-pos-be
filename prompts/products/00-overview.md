@@ -75,7 +75,7 @@ Base URL (planned): `/api/v1` (see [`../openapi.yaml`](../openapi.yaml) servers)
 
 ### Storage sketch (detail in `02-data-model.md`)
 
-- **`product`** — catalog metadata; unique `sku`; `barcode` indexed but **not** unique; timestamps `created_at` / `updated_at`.
+- **`product`** — catalog metadata; unique `sku`; `barcode` indexed but **not** unique; timestamps `created_at` / `updated_at`. Rows are not deleted. `PUT` sets `deleted` to hide or restore a product and leaves the id in place for checkout history and returns.
 - **`product_stock`** — one row per location; unique `(product_id, location)`.
 - **`product_pre_order_pending`** — separate table (not a column on `product`); default 1:1 via unique `product_id`; no row ⇒ API returns `preOrderPendingCount: 0`.
 

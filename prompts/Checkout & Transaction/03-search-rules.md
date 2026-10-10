@@ -32,9 +32,8 @@ Adding to the cart, changing quantity, switching SKU, and manual price stay in `
 |-------|--------|
 | `customerId` | `checkout_order.customer_id` equals |
 | `orderNumber` | `order_number` equals |
-| `invoiceNumber` | `invoice_number` equals the trimmed text. A sale and its refunds share one number, so this can return more than one order. |
 | `productId` | A line `product_id` equals |
-| `keyword` | `order_number`, `invoice_number`, `customer_name`, or `customer_phone` contains the trimmed text. Phone also tries the canonical form (strip spaces, hyphens, parentheses), same idea as customer search. Null name or phone does not match that branch. |
+| `keyword` | `order_number`, `customer_name`, or `customer_phone` contains the trimmed text. Phone also tries the canonical form (strip spaces, hyphens, parentheses), same idea as customer search. Null name or phone does not match that branch. There is no invoice number to match. |
 | `productKeyword` | A line `name` contains (case-insensitive), or a line `sku` contains after `normalizeSku` on both sides when the normalized query is non-empty |
 | `startDate` | `created_at >=` |
 | `endDate` | `created_at <` |

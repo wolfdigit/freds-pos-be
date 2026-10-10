@@ -23,6 +23,7 @@ erDiagram
     int cost_price
     int vip_price
     string status
+    boolean deleted
     string note
     datetime created_at
     datetime updated_at
@@ -63,6 +64,7 @@ Catalog metadata only. **Does not** store `total_stock` or `pre_order_pending_co
 | `cost_price` | `Integer` | TWD ≥ 0 → `costPrice` |
 | `vip_price` | `Integer` nullable | TWD ≥ 0 → `vipPrice` |
 | `status` | `String` | `active` \| `discontinued` |
+| `deleted` | `Boolean` | Not null. Default `false`. `PUT /products/{productId}` sets it. `true` hides the product. `false` restores it. The row is never removed, so checkout lines keep `product_id` and a return can still require the same product id. |
 | `note` | `Text` / `String` nullable | |
 | `created_at` | `DateTime` TZ | Server set on insert |
 | `updated_at` | `DateTime` TZ | Server set on insert/update |
@@ -89,7 +91,7 @@ One row per product per location. Catalog create **always inserts** all four loc
 | Column | Type (suggested) | Constraints / notes |
 |--------|------------------|---------------------|
 | `id` | `Integer` PK / serial | Surrogate key |
-| `product_id` | `String` FK → `product.id` | `ON DELETE CASCADE` recommended |
+| `product_id` | `String` FK → `product.id` | `ON DELETE RESTRICT`. Product rows are not deleted. |
 | `location` | `String` | `store` \| `warehouse` \| `company` \| `other` |
 | `location_name` | `String` | Fixed display map (門市現貨 / 後方倉庫 / 公司總倉 / 調度暫存) |
 | `quantity` | `Integer` | ≥ 0; default `0` |
@@ -112,7 +114,7 @@ Separate from catalog columns. Holds pending preorder quantity for API field `pr
 | Column | Type (suggested) | Constraints / notes |
 |--------|------------------|---------------------|
 | `id` | `Integer` PK / serial | |
-| `product_id` | `String` FK → `product.id` | **UNIQUE** (default **1:1** with product) |
+| `product_id` | `String` FK → `product.id` | **UNIQUE** (default **1:1** with product). `ON DELETE RESTRICT`. |
 | `quantity` | `Integer` | ≥ 0; pending count source |
 
 ### Behavior

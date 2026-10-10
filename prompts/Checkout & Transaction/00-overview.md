@@ -34,13 +34,13 @@ History lookup (`GET /checkout/orders`, `GET /checkout/orders/{orderId}`) is par
 Recording responsibilities:
 
 - One database transaction for the order, its lines, its tenders, `store` stock movement, member `total_spent`, and return counters on the original lines.
-- Server-assigned `id`, `orderNumber`, `createdAt`, line ids, and totals.
+- Server-assigned `id`, `orderNumber`, `createdAt`, line ids, and totals. `orderNumber` is `SO-YYYYMMDD-HHMMSS-####` in `Asia/Taipei`. The `####` sequence is the max suffix already stored for that exact second, plus 1. The second in the prefix is the concurrency control. There is no retry when two sales share a second.
 - Snapshots copied by the server, never trusted from the client for identity fields: product sku / name / scale / brand, list price as `originalPrice`, buyer name and phone, cashier id and name (from the current user, not the body), branch id and name.
 - Sold `unitPrice` comes from the client when `isManualPrice` is true, and when `pointsDiscountApplied` is true (the frontend already subtracted NT$360). Otherwise the server sets it from the current `listPrice`. The server does not subtract 360 again.
 - A bound member may redeem points for **NT$360 off a product**, at most once for that product on the sale. Each redeemed line stores `pointsDiscountApplied`. Buying several different products can redeem several times. Quantity does not multiply the discount: two units of one product are still one exchange. The frontend reduces that line's `unitPrice` by 360 before submit. If that reduction would make the line `subtotal` negative, the line `subtotal` is **0**. `totalAmount` does not apply a second points floor. The system does not store or check a points balance. The cashier confirms the points in the real world, then sets the flag.
 - Positive quantity deducts `store` stock. When the shelf quantity is short, the counter shows a warning popup and the cashier decides whether to complete the sale. The server does not block the sale.
 - Negative quantity is a return. It must point at the earlier sale line whose units are being returned, must not exceed the remaining returnable quantity, and restocks `store` when `restock` is true. The refund uses that line's `unitPrice` only (already reduced by 360 when the original sale redeemed points). It does not subtract 360 again. The original line keeps `pointsDiscountApplied` and `pointsDiscountAmount`.
-- Idempotency-Key so a double submit returns the original receipt.
+- `X-Idempotency-Key` so a double submit returns the original order JSON. A lookup before insert is not enough. If the insert hits the unique constraint on `idempotency_key`, catch it, re-select the stored order, and replay that JSON when the cashier and body match.
 
 ### Out of scope
 
@@ -52,7 +52,8 @@ Recording responsibilities:
 - Editing a completed order (price, buyer, lines, payments). Later returns append a new order and only then change `returnedQuantity` and `status` on the original.
 - VIP auto-pricing. A bound member does not change the price. `vipPrice` and tier discounts stay for a later pass.
 - Preorders. This phase does not record, pick up, or author preorders.
-- Invoices. There is no invoice number, invoice type, carrier, tax id, or buyer title.
+- Invoices. There is no invoice number, invoice type, carrier, tax id, or buyer title on the request, the order, history search, or the receipt.
+- A server-rendered receipt. `POST /checkout/orders` returns the order fields as JSON. The frontend composes the slip.
 - Seeding historical orders.
 
 ## Layered architecture
@@ -98,7 +99,7 @@ Base URL: `/api/v1` (see [`../openapi.yaml`](../openapi.yaml) servers).
 | Branch | One of the two known branches. Counter default `branch-store` / `台北旗艦店`. Online store `branch-online` / `官網`. | order |
 | When | Server clock, UTC `createdAt`; business date in `Asia/Taipei` | order |
 
-`customer_id` is nullable and **`ON DELETE SET NULL`**. Name and phone snapshots stay, matching the customer decision log. Stock locations stay the catalog four (`store`, `warehouse`, `company`, `other`). Both branches sell from that same `store` shelf. The branch on the order says where the sale happened. It does not pick a different stock row.
+`customer_id` is nullable and **`ON DELETE SET NULL`**. Name and phone snapshots stay, matching the customer decision log. A catalog product is not removed. `PUT /products/{productId}` sets `product.deleted`: `true` hides it, `false` shows it again. `checkout_order_item.product_id` stays set and is **`ON DELETE RESTRICT`**, so a return always compares the request `productId` with the original sale line's `product_id`. Stock locations stay the catalog four (`store`, `warehouse`, `company`, `other`). Both branches sell from that same `store` shelf. The branch on the order says where the sale happened. It does not pick a different stock row.
 
 ## Frontend alignment
 
@@ -122,6 +123,7 @@ Base URL: `/api/v1` (see [`../openapi.yaml`](../openapi.yaml) servers).
 5. Integer TWD only. No fractional currency.
 6. The NT$360 points reduction is already in the line `unitPrice` from the frontend. If that reduction would make a line `subtotal` negative, that line `subtotal` is **0**. `totalAmount` is the sum of line subtotals plus shipping. It does not floor the points discount again. A return line keeps a negative `subtotal` so the refund still reduces the total. A ticket may contain sale lines and return lines together.
 7. Walk-in sales omit `customerId`. Snapshots are null. `total_spent` is unchanged.
+8. The receipt is the order JSON. The server does not send HTML.
 
 ## Doc map
 
@@ -133,4 +135,4 @@ Base URL: `/api/v1` (see [`../openapi.yaml`](../openapi.yaml) servers).
 | `03-search-rules.md` | Autocomplete ranking and order history filters |
 | `04-open-questions.md` | Decision log |
 | `05-fe-changes.md` | Later FE checklist |
-| [`../openapi.yaml`](../openapi.yaml) | Merged HTTP contract (checkout tag is a later patch) |
+| [`../openapi.yaml`](../openapi.yaml) | Merged HTTP contract, including the checkout tag |

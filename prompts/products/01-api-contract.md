@@ -28,6 +28,7 @@ CamelCase JSON matching FE `Product` (`freds-pos-fe/src/types/product.ts`).
 | `preOrderPendingCount` | integer | Server-computed from `product_pre_order_pending` (no row → `0`) |
 | `note` | string? | |
 | `status` | `active` \| `discontinued` | |
+| `deleted` | boolean | Soft-delete flag. Create stores `false`. `PUT /products/{productId}` is the only way to change it. `true` hides the product. `false` shows it again. The row stays. `GET /products` omits `deleted: true`. `GET /products/{productId}` still returns it. |
 
 ### `LocationStock`
 
@@ -55,6 +56,7 @@ Not accepted on create or update request schemas:
 - `totalStock`
 - `preOrderPendingCount`
 - `stocks` (create: server initializes; update: not in contract)
+- `deleted` on create (server stores `false`). `PUT` is the only write for this flag. `true` hides the product. `false` shows it again. The row stays. There is no `DELETE /products/{productId}`.
 
 ---
 
@@ -159,7 +161,7 @@ Note: FE mock returns `null` for missing id; HTTP adapter should map `404` → t
 
 All fields optional / partial:
 
-`sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `costPrice`, `vipPrice`, `note`, `status`, `material`, `color`, `imageUrl`
+`sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `costPrice`, `vipPrice`, `note`, `status`, `material`, `color`, `imageUrl`, `deleted`
 
 **Excluded from OpenAPI schema (not part of the contract):**
 
@@ -170,6 +172,7 @@ Rules:
 - On `sku` change: recompute `normalizedSku`; duplicate → `409` `PRODUCT_SKU_DUPLICATE`.
 - Never mutate stock rows or `product_pre_order_pending` via this endpoint.
 - Prices: non-negative integers when provided.
+- `deleted: true` hides the product from `GET /products` and from a new sale. `deleted: false` shows it again. The row is not removed. `GET /products/{productId}` still returns a hidden product.
 
 ### Responses
 
@@ -222,7 +225,7 @@ This phase’s contract is [`../openapi.yaml`](../openapi.yaml) (products tag; m
 
 ### 3. `UpdateProductRequest`
 
-Replace opaque PUT body with named schema — **metadata fields only**; exclude stock/computed/id fields from the schema entirely.
+Replace opaque PUT body with named schema — **metadata fields only**; exclude stock/computed/id fields from the schema entirely. Optional `deleted` is how a product is hidden or restored. There is no `DELETE` route.
 
 ### 4. Errors
 
