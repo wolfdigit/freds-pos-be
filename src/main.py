@@ -1,4 +1,6 @@
-from typing import Dict
+import logging
+import traceback
+from typing import Any, Dict
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,6 +8,8 @@ from fastapi.responses import JSONResponse
 from src.core.config import settings
 from src.core.exceptions import BusinessException
 from src.api.v1.api import api_router
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -23,6 +27,25 @@ async def business_exception_handler(
         status_code=exc.status_code,
         content={"code": exc.code.value if hasattr(exc.code, "value") else exc.code, "message": exc.message},
     )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """未處理例外回 500。DEBUG 時把伺服器錯誤日誌一併放進 response。"""
+    error_log = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    logger.error(
+        "Unhandled exception on %s %s\n%s",
+        request.method,
+        request.url.path,
+        error_log,
+    )
+    content: Dict[str, Any] = {
+        "code": "INTERNAL_SERVER_ERROR",
+        "message": "Internal server error",
+    }
+    if settings.DEBUG:
+        content["error_log"] = error_log
+    return JSONResponse(status_code=500, content=content)
 
 # 設定 CORS 中間件 (支援本地 5173/3000、LAN / WSL IP，以及 Vercel 部署網域 *.vercel.app)
 # allow_private_network：Chrome / Edge 對 localhost、私有網段會先發 Private Network Access
