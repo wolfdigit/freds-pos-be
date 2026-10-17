@@ -27,7 +27,7 @@ The **product catalog** phase of Fred's POS backend. Companion docs in this fold
 
 Catalog responsibilities:
 
-- Product **metadata** CRUD (sku, barcode, brand, name, scale, list price, optional vip price, note, optional material/color/imageUrl). The catalog does not record `costPrice` or product `status`.
+- Product **metadata** CRUD (sku, barcode, brand, name, scale, list price, optional vip price, note, optional material/color/imageUrl). The catalog does not record `costPrice`. `status` records soft delete: `active` or `deleted`.
 - On create: always insert **four** `product_stock` rows at **`quantity: 0`** (`store`, `warehouse`, `company`, `other`). **No** client stock/quantity fields on `POST /products`.
 - Server-owned / response-only: `id`, `normalizedSku`, `totalStock`, `preOrderPendingCount`, `stocks` (assembled on read).
 - Search filters aligned with the FE mock (`keyword`, `scale`, `brand`, `inStockOnly`); default sort **`sku ASC`**. Filters run **in SQL**, not in Python after load.
@@ -94,7 +94,7 @@ Source of truth for shapes and catalog method signatures:
 ### Contract principles
 
 1. OpenAPI is the HTTP source of truth ([`../openapi.yaml`](../openapi.yaml)); where it **narrows** vs today’s FE (`Partial<Product>`, create `stocks`), FE adapts — see [`05-fe-changes.md`](./05-fe-changes.md).
-2. Response `Product` matches FE: camelCase, four locations in `stocks`, integer TWD `listPrice`. There is no `costPrice` and no product `status`.
+2. Response `Product` matches FE: camelCase, four locations in `stocks`, integer TWD `listPrice`. There is no `costPrice`. `status` is `active` or `deleted`, and `deleted` mirrors it.
 3. Create request has **no** `stocks` / quantities. Server assigns `id`, `normalizedSku`, zeros stocks, `preOrderPendingCount: 0`, and `totalStock: 0`.
 4. Search semantics mirror the mock (empty keyword = no keyword filter; `scale`/`brand` missing or `ALL` = no filter; `inStockOnly` → `totalStock > 0`). Sort: **`sku ASC`**. Filters run **in SQL**. Details in `03-search-rules.md`.
 5. Catalog `PUT` uses **`UpdateProductRequest`** (metadata only in OpenAPI); stock / preorder never part of that schema.

@@ -38,6 +38,9 @@ class Product(Base):
     image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     list_price: Mapped[int] = mapped_column(Integer, nullable=False)
     vip_price: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="active", server_default="active"
+    )
     deleted: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )

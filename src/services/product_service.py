@@ -97,6 +97,7 @@ def _to_product_schema(product: Product, locations: Sequence[StockLocation]) -> 
         totalStock=total_stock,
         preOrderPendingCount=pending,
         note=product.note,
+        status=product.status,
         deleted=product.deleted,
         createdAt=product.created_at,
         createdBy=product.created_by,
@@ -171,7 +172,8 @@ class ProductService:
             image_url=data.image_url,
             list_price=data.list_price,
             vip_price=data.vip_price,
-            deleted=False,
+            status=(data.status.value if data.status is not None else "active"),
+            deleted=(data.status is not None and data.status.value == "deleted"),
             note=data.note,
             created_at=now,
             updated_at=now,
@@ -239,6 +241,11 @@ class ProductService:
             product.scale = scale.value if hasattr(scale, "value") else scale
         if "deleted" in updates and updates["deleted"] is not None:
             product.deleted = bool(updates["deleted"])
+            product.status = "deleted" if product.deleted else "active"
+        if "status" in updates and updates["status"] is not None:
+            status = updates["status"]
+            product.status = status.value if hasattr(status, "value") else status
+            product.deleted = product.status == "deleted"
 
         product.updated_at = datetime.now(timezone.utc)
         product.updated_by = _actor_name(actor_name)
@@ -260,7 +267,7 @@ class ProductService:
     ) -> List[ProductSchema]:
         stmt = (
             select(Product)
-            .where(Product.deleted.is_(False))
+            .where(Product.status != "deleted")
             .options(
                 selectinload(Product.stocks),
                 selectinload(Product.pre_order_pending),

@@ -372,7 +372,7 @@ class CheckoutService:
                     BusinessErrorCode.PRODUCT_NOT_FOUND,
                     f"找不到商品 (ID: {raw.product_id})",
                 )
-            if raw.quantity > 0 and product.deleted:
+            if raw.quantity > 0 and (product.deleted or product.status == "deleted"):
                 _raise(
                     404,
                     BusinessErrorCode.PRODUCT_NOT_FOUND,

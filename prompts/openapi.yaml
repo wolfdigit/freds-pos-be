@@ -21,7 +21,7 @@ info:
     - Business failures use HTTP 4xx with `BusinessError` body (`code` + `message`).
 
     **Kept on top of the frontend contract**
-    - Products use `deleted` for soft delete. `GET /products` omits `deleted: true`. There is no product `costPrice` or product `status`.
+    - Products use `status` (`active` or `deleted`) to record soft delete. `deleted` mirrors that state. `GET /products` omits `status: deleted`. There is no product `costPrice`.
     - Checkout keeps `branchId` / `branchName`, points-discount fields, order number `SO-YYYYMMDD-HHMMSS-####` in Asia/Taipei, and a paged `GET /checkout/orders`.
     - `POST /checkout/orders` returns `receiptPrintHtml`.
     - Payment types are `cash`, `credit_card`, `line_pay`, `bank_transfer`, and `cod`. `cod` is accepted.
@@ -56,7 +56,7 @@ paths:
         Fuzzy search by barcode, SKU without dashes (normalized), product name, or brand.
         Maps to `IProductService.searchProducts`.
         Default sort: `sku ASC`.
-        Omits products with `deleted: true`. `GET /products/{productId}` still returns a hidden row.
+        Omits products with `status: deleted`. `GET /products/{productId}` still returns a hidden row.
       parameters:
         - name: keyword
           in: query
@@ -95,7 +95,7 @@ paths:
         and always creates four stock rows at quantity `0` with fixed location names.
         Does not write `product_pre_order_pending` (response `preOrderPendingCount` is `0`).
         Initial / ongoing stock quantities use the inventory APIs.
-        Create stores `deleted: false`. The body has no `costPrice` and no product `status`.
+        `status` is optional. When omitted, the server stores `active` and `deleted: false`. The body has no `costPrice`.
       requestBody:
         required: true
         content:
@@ -143,7 +143,7 @@ paths:
         Maps to `IProductService.updateProduct`.
         Metadata only — does not mutate stock rows or `product_pre_order_pending`.
         On SKU change, server recomputes `normalizedSku`; duplicate SKU returns 409.
-        `deleted: true` hides the product. `deleted: false` shows it again. The row is not removed.
+        `status: deleted` or `deleted: true` hides the product. `status: active` or `deleted: false` shows it again. The row is not removed. If both are sent, `status` wins.
       parameters:
         - $ref: '#/components/parameters/ProductId'
       requestBody:
@@ -1233,6 +1233,7 @@ components:
         - stocks
         - totalStock
         - deleted
+        - status
       properties:
         id:
           type: string
@@ -1290,12 +1291,18 @@ components:
           type: string
           readOnly: true
           description: 更新人員 (後端由 Auth 取得)
+        status:
+          type: string
+          enum: [active, deleted]
+          description: |
+            Soft-delete record. Create stores `active`.
+            `deleted` hides the product from `GET /products` and from a new sale.
+            `active` shows it again. The row is not removed.
+            `GET /products/{productId}` still returns a hidden product.
         deleted:
           type: boolean
           description: |
-            Soft-delete flag. Create stores `false`.
-            `PUT /products/{productId}` sets `true` to hide and `false` to show it again.
-            The row is not removed. `GET /products` omits `deleted: true`.
+            Mirrors `status`. `true` when `status` is `deleted`, otherwise `false`.
 
     CreateProductRequest:
       type: object
@@ -1336,6 +1343,10 @@ components:
           minimum: 0
         note:
           type: string
+        status:
+          type: string
+          enum: [active, deleted]
+          description: Soft-delete record. Omit it and the server stores `active`.
 
     UpdateProductRequest:
       type: object
@@ -1371,11 +1382,16 @@ components:
           minimum: 0
         note:
           type: string
+        status:
+          type: string
+          enum: [active, deleted]
+          description: |
+            `deleted` hides the product. `active` shows it again. Does not remove the row.
         deleted:
           type: boolean
           description: |
-            `true` hides the product from search and from a new sale.
-            `false` shows it again. Does not remove the row.
+            Same meaning as `status`. `true` hides the product. `false` shows it again.
+            If `status` is also sent, `status` wins.
 
     InventoryTransferRequest:
       type: object

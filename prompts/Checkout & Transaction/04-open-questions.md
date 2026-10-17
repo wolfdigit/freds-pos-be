@@ -17,7 +17,7 @@ Added the same day, then corrected: the NT$360 points exchange is **per product 
 | 3 | Immutability | Prices, buyer, cashier, branch, lines, and tenders do not change after commit. Returns are new orders. |
 | 4 | Product search | **Reuse `GET /products`.** No autocomplete endpoint, no separate rank, no separate limit. |
 | 5 | Suggestion size | **Removed.** The catalog list is the counter list. |
-| 6 | Discontinued products | **Removed.** The catalog does not record product `status`. |
+| 6 | Discontinued products | **Soft delete only.** Product `status` is `active` or `deleted`. There is no discontinued state. |
 | 7 | Charged price | Manual price only when `isManualPrice` is true. Otherwise **list price**, including a preorder pickup. Client `unitPrice` is ignored when the line is not manual. |
 | 8 | VIP auto-price | **Deferred.** Current `attachCustomer` does not reprice the cart. Do not apply `vipPrice` or tier percent in this phase. |
 | 9 | `originalPrice` | Always the list price at commit, so discount is list minus charged. |

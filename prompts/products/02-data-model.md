@@ -21,6 +21,7 @@ erDiagram
     string image_url
     int list_price
     int vip_price
+    string status
     boolean deleted
     string note
     datetime created_at
@@ -60,7 +61,8 @@ Catalog metadata only. **Does not** store `total_stock` or `pre_order_pending_co
 | `image_url` | `String` nullable | → JSON `imageUrl` |
 | `list_price` | `Integer` | TWD ≥ 0 → `listPrice` |
 | `vip_price` | `Integer` nullable | TWD ≥ 0 → `vipPrice` |
-| `deleted` | `Boolean` | Not null. Default `false`. `PUT /products/{productId}` sets it. `true` hides the product. `false` restores it. The row is never removed, so checkout lines keep `product_id` and a return can still require the same product id. |
+| `status` | `String` | Not null. `active` or `deleted`. Default `active`. This is the soft-delete record. `deleted` hides the product. `active` restores it. The row is never removed. |
+| `deleted` | `Boolean` | Not null. Default `false`. Mirrors `status`: `true` only when `status` is `deleted`. |
 | `note` | `Text` / `String` nullable | |
 | `created_at` | `DateTime` TZ | Server set on insert |
 | `updated_at` | `DateTime` TZ | Server set on insert/update |

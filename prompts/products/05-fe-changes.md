@@ -12,15 +12,15 @@ BE contract lives in the merged [`../openapi.yaml`](../openapi.yaml). FE `docs/o
 
 | Change | Detail |
 |--------|--------|
-| `CreateProductRequest.required` | Remove `normalizedSku`, `totalStock`, `preOrderPendingCount`, **`stocks`**. Keep: `sku`, `barcode`, `brand`, `name`, `listPrice`. `scale` is optional. The catalog does not record `costPrice` or product `status`. |
+| `CreateProductRequest.required` | Remove `normalizedSku`, `totalStock`, `preOrderPendingCount`, **`stocks`**. Keep: `sku`, `barcode`, `brand`, `name`, `listPrice`. `scale` is optional. The catalog does not record `costPrice`. `status` is optional on create; omit it and the server stores `active`. |
 | `CreateProductRequest` properties | Remove or stop documenting client `stocks` / any quantity fields. Optional metadata only: `material`, `color`, `imageUrl`, `vipPrice`, `note`. Do not include `costPrice` or `status`. Server-owned fields (`normalizedSku`, `totalStock`, `preOrderPendingCount`, `id`) must not be required; if listed, mark as response-only / ignore on create. |
 | `POST /products` description | Server assigns `id` (`prod-{uuid4}` no dashes); always creates four stock rows at qty `0`; does not write `product_pre_order_pending`; real stock qty via future inventory APIs. |
-| New `UpdateProductRequest` | Replace opaque PUT `type: object` with named schema: metadata fields only (`sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `vipPrice`, `note`, `material`, `color`, `imageUrl`, `deleted`). **Exclude** `stocks`, `totalStock`, `id`, `normalizedSku`, `preOrderPendingCount`, `costPrice`, and product `status`. |
+| New `UpdateProductRequest` | Replace opaque PUT `type: object` with named schema: metadata fields only (`sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `vipPrice`, `note`, `material`, `color`, `imageUrl`, `status`, `deleted`). **Exclude** `stocks`, `totalStock`, `id`, `normalizedSku`, `preOrderPendingCount`, and `costPrice`. `status` is `active` or `deleted`. |
 | `PUT` description | Metadata only; stock / pending never mutated here. |
 | `BusinessErrorCode` | Add `PRODUCT_SKU_DUPLICATE`. |
 | Create/update responses | Document `409` + example `{ code: PRODUCT_SKU_DUPLICATE, message: 貨號已存在 }`. |
-| `GET /products` | Note default sort `sku ASC`; keep search param semantics (`keyword`, `scale`/`ALL`, `brand`/`ALL`, `inStockOnly`). Omit `deleted: true`. |
-| `Product.deleted` | Boolean on the response. Create stores `false`. `PUT` sets `true` to hide and `false` to restore. There is no `DELETE /products/{productId}` and no hard delete. |
+| `GET /products` | Note default sort `sku ASC`; keep search param semantics (`keyword`, `scale`/`ALL`, `brand`/`ALL`, `inStockOnly`). Omit `status: deleted`. |
+| `Product.status` | `active` or `deleted`. Create stores `active`. `PUT` sets `deleted` to hide and `active` to restore. `deleted` mirrors it. There is no `DELETE /products/{productId}` and no hard delete. |
 | Inventory paths | Inventory, pre-order, store, and OAuth paths are in [`../openapi.yaml`](../openapi.yaml), copied from the frontend OpenAPI. |
 
 ---

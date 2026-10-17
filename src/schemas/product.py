@@ -14,6 +14,11 @@ class ModelScale(str, Enum):
     ACCESSORIES = "配件周邊"
 
 
+class ProductStatus(str, Enum):
+    ACTIVE = "active"
+    DELETED = "deleted"
+
+
 class LocationStock(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
@@ -44,6 +49,7 @@ class Product(BaseModel):
     total_stock: int = Field(..., alias="totalStock")
     pre_order_pending_count: int = Field(..., alias="preOrderPendingCount", ge=0)
     note: Optional[str] = None
+    status: ProductStatus = ProductStatus.ACTIVE
     deleted: bool = False
     created_at: Optional[datetime] = Field(None, alias="createdAt")
     created_by: Optional[str] = Field(None, alias="createdBy")
@@ -68,6 +74,7 @@ class CreateProductRequest(BaseModel):
     image_url: Optional[str] = Field(None, alias="imageUrl")
     vip_price: Optional[int] = Field(None, alias="vipPrice", ge=0)
     note: Optional[str] = None
+    status: Optional[ProductStatus] = None
 
     @field_validator("sku", "barcode", "brand", "name")
     @classmethod
@@ -91,6 +98,7 @@ class UpdateProductRequest(BaseModel):
     list_price: Optional[int] = Field(None, alias="listPrice", ge=0)
     vip_price: Optional[int] = Field(None, alias="vipPrice", ge=0)
     note: Optional[str] = None
+    status: Optional[ProductStatus] = None
     deleted: Optional[bool] = None
     material: Optional[str] = None
     color: Optional[str] = None

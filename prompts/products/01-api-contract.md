@@ -26,7 +26,8 @@ CamelCase JSON matching FE `Product` (`freds-pos-fe/src/types/product.ts`).
 | `totalStock` | integer | Server-computed: sum of `stocks[].quantity` |
 | `preOrderPendingCount` | integer | Server-computed from `product_pre_order_pending` (no row → `0`) |
 | `note` | string? | |
-| `deleted` | boolean | Soft-delete flag. Create stores `false`. `PUT /products/{productId}` is the only way to change it. `true` hides the product. `false` shows it again. The row stays. `GET /products` omits `deleted: true`. `GET /products/{productId}` still returns it. |
+| `status` | `active` \| `deleted` | Soft-delete record. Create stores `active`. `PUT` sets `deleted` to hide the product and `active` to show it again. The row stays. `GET /products` omits `deleted`. `GET /products/{productId}` still returns it. |
+| `deleted` | boolean | Mirrors `status`. `true` when `status` is `deleted`. |
 
 ### `LocationStock`
 
@@ -54,8 +55,8 @@ Not accepted on create or update request schemas:
 - `totalStock`
 - `preOrderPendingCount`
 - `stocks` (create: server initializes; update: not in contract)
-- `deleted` on create (server stores `false`). `PUT` is the only write for this flag. `true` hides the product. `false` shows it again. The row stays. There is no `DELETE /products/{productId}`.
-- `costPrice` and product `status`. The catalog does not record them.
+- `deleted` on create (server stores `false`). `status` may be sent on create; when omitted the server stores `active`. `status: deleted` hides the product. `status: active` shows it again. The row stays. There is no `DELETE /products/{productId}`.
+- `costPrice`. The catalog does not record it.
 
 ---
 
@@ -162,7 +163,7 @@ Note: FE mock returns `null` for missing id; HTTP adapter should map `404` → t
 
 All fields optional / partial:
 
-`sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `vipPrice`, `note`, `material`, `color`, `imageUrl`, `deleted`
+`sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `vipPrice`, `note`, `material`, `color`, `imageUrl`, `status`, `deleted`
 
 **Excluded from OpenAPI schema (not part of the contract):**
 
@@ -173,7 +174,7 @@ Rules:
 - On `sku` change: recompute `normalizedSku`; duplicate → `409` `PRODUCT_SKU_DUPLICATE`.
 - Never mutate stock rows or `product_pre_order_pending` via this endpoint.
 - Prices: non-negative integers when provided.
-- `deleted: true` hides the product from `GET /products` and from a new sale. `deleted: false` shows it again. The row is not removed. `GET /products/{productId}` still returns a hidden product.
+- `status: deleted` or `deleted: true` hides the product from `GET /products` and from a new sale. `status: active` or `deleted: false` shows it again. If both are sent, `status` wins. The row is not removed. `GET /products/{productId}` still returns a hidden product.
 
 ### Responses
 
@@ -215,8 +216,8 @@ This phase’s contract is [`../openapi.yaml`](../openapi.yaml) (products tag; m
 - **Remove from `required`:** `normalizedSku`, `totalStock`, `preOrderPendingCount`, `stocks`
 - **Remove `stocks` (and any quantity)** from the create request schema
 - Required: `sku`, `barcode`, `brand`, `name`, `listPrice`
-- Optional: `scale`, `material`, `color`, `imageUrl`, `vipPrice`, `note`
-- The catalog does not record `costPrice` or product `status` on the request, the response, or the row.
+- Optional: `scale`, `material`, `color`, `imageUrl`, `vipPrice`, `note`, `status`
+- The catalog does not record `costPrice`. Create may send `status`; when omitted the server stores `active`. The response includes `status`.
 
 ### 2. `POST /products` description
 
