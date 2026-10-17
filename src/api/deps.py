@@ -11,6 +11,15 @@ from src.db.session import SessionFactory
 # OAuth2 / JWT 預留 (開發階段先不啟用，未來開啟 PyJWT 或 python-jose 即可啟用)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
+# 登入尚未完成。結帳把這位使用者的 id / name 寫成收銀員快照。
+# 真正的員工登入上線後，只替換這個回傳值，不要再從結帳 body 收收銀員。
+DEMO_CASHIER: Dict[str, Any] = {
+    "id": "staff-001",
+    "name": "店長 Fred",
+    "username": "fred",
+    "role": "admin",
+}
+
 
 def get_db() -> Generator[Session, None, None]:
     """
@@ -25,15 +34,11 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def get_current_user_optional(
-    token: Optional[str] = Depends(oauth2_scheme),
+    _token: Optional[str] = Depends(oauth2_scheme),
 ) -> Dict[str, Any]:
     """
-    JWT 身分驗證範例 (開發階段先回傳 Dummy User，未來啟用 JWT 解析驗證)
+    目前操作的員工。結帳的收銀員快照只讀這裡的 `id` 與 `name`。
+    登入尚未完成，有沒有 token 都回傳示範收銀員。之後改成 jwt.decode。
     """
-    if not token:
-        # 開發階段預設不強制要求 Token
-        return {"id": 1, "username": "dev_user", "role": "admin"}
-
-    # 未來在此加入 jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM]) 驗證邏輯
-    return {"id": 1, "username": "dev_user", "role": "admin"}
+    return DEMO_CASHIER
 

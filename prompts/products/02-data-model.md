@@ -20,9 +20,9 @@ erDiagram
     string color
     string image_url
     int list_price
-    int cost_price
     int vip_price
     string status
+    boolean deleted
     string note
     datetime created_at
     datetime updated_at
@@ -60,9 +60,9 @@ Catalog metadata only. **Does not** store `total_stock` or `pre_order_pending_co
 | `color` | `String` nullable | |
 | `image_url` | `String` nullable | → JSON `imageUrl` |
 | `list_price` | `Integer` | TWD ≥ 0 → `listPrice` |
-| `cost_price` | `Integer` | TWD ≥ 0 → `costPrice` |
 | `vip_price` | `Integer` nullable | TWD ≥ 0 → `vipPrice` |
-| `status` | `String` | `active` \| `discontinued` |
+| `status` | `String` | Not null. `active` or `deleted`. Default `active`. This is the soft-delete record. `deleted` hides the product. `active` restores it. The row is never removed. |
+| `deleted` | `Boolean` | Not null. Default `false`. Mirrors `status`: `true` only when `status` is `deleted`. |
 | `note` | `Text` / `String` nullable | |
 | `created_at` | `DateTime` TZ | Server set on insert |
 | `updated_at` | `DateTime` TZ | Server set on insert/update |
@@ -89,7 +89,7 @@ One row per product per location. Catalog create **always inserts** all four loc
 | Column | Type (suggested) | Constraints / notes |
 |--------|------------------|---------------------|
 | `id` | `Integer` PK / serial | Surrogate key |
-| `product_id` | `String` FK → `product.id` | `ON DELETE CASCADE` recommended |
+| `product_id` | `String` FK → `product.id` | `ON DELETE RESTRICT`. Product rows are not deleted. |
 | `location` | `String` | `store` \| `warehouse` \| `company` \| `other` |
 | `location_name` | `String` | Fixed display map (門市現貨 / 後方倉庫 / 公司總倉 / 調度暫存) |
 | `quantity` | `Integer` | ≥ 0; default `0` |
@@ -112,7 +112,7 @@ Separate from catalog columns. Holds pending preorder quantity for API field `pr
 | Column | Type (suggested) | Constraints / notes |
 |--------|------------------|---------------------|
 | `id` | `Integer` PK / serial | |
-| `product_id` | `String` FK → `product.id` | **UNIQUE** (default **1:1** with product) |
+| `product_id` | `String` FK → `product.id` | **UNIQUE** (default **1:1** with product). `ON DELETE RESTRICT`. |
 | `quantity` | `Integer` | ≥ 0; pending count source |
 
 ### Behavior
@@ -171,7 +171,6 @@ Register models in `src/models/__init__.py` / `src/db/base.py` so Alembic autoge
 | `normalized_sku` | `normalizedSku` |
 | `image_url` | `imageUrl` |
 | `list_price` | `listPrice` |
-| `cost_price` | `costPrice` |
 | `vip_price` | `vipPrice` |
 | `location_name` | `locationName` |
 | (computed) | `totalStock`, `preOrderPendingCount` |

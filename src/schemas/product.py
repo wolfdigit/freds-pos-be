@@ -1,3 +1,4 @@
+from datetime import datetime
 from enum import Enum
 from typing import List, Optional
 
@@ -15,22 +16,15 @@ class ModelScale(str, Enum):
 
 class ProductStatus(str, Enum):
     ACTIVE = "active"
-    DISCONTINUED = "discontinued"
-
-
-class StockLocation(str, Enum):
-    STORE = "store"
-    WAREHOUSE = "warehouse"
-    COMPANY = "company"
-    OTHER = "other"
+    DELETED = "deleted"
 
 
 class LocationStock(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    location: StockLocation
+    location: str
     location_name: str = Field(..., alias="locationName")
-    quantity: int = Field(..., ge=0)
+    quantity: int
 
 
 class Product(BaseModel):
@@ -44,18 +38,23 @@ class Product(BaseModel):
     barcode: str
     brand: str
     name: str
-    scale: ModelScale
+    scale: Optional[str] = None
+    spec: Optional[str] = None
     material: Optional[str] = None
     color: Optional[str] = None
     image_url: Optional[str] = Field(None, alias="imageUrl")
     list_price: int = Field(..., alias="listPrice", ge=0)
-    cost_price: int = Field(..., alias="costPrice", ge=0)
     vip_price: Optional[int] = Field(None, alias="vipPrice", ge=0)
     stocks: List[LocationStock]
-    total_stock: int = Field(..., alias="totalStock", ge=0)
+    total_stock: int = Field(..., alias="totalStock")
     pre_order_pending_count: int = Field(..., alias="preOrderPendingCount", ge=0)
     note: Optional[str] = None
-    status: ProductStatus
+    status: ProductStatus = ProductStatus.ACTIVE
+    deleted: bool = False
+    created_at: Optional[datetime] = Field(None, alias="createdAt")
+    created_by: Optional[str] = Field(None, alias="createdBy")
+    updated_at: Optional[datetime] = Field(None, alias="updatedAt")
+    updated_by: Optional[str] = Field(None, alias="updatedBy")
 
 
 class CreateProductRequest(BaseModel):
@@ -67,15 +66,15 @@ class CreateProductRequest(BaseModel):
     barcode: str
     brand: str
     name: str
-    scale: ModelScale
+    scale: Optional[ModelScale] = None
+    spec: Optional[str] = None
     list_price: int = Field(..., alias="listPrice", ge=0)
-    cost_price: int = Field(..., alias="costPrice", ge=0)
-    status: ProductStatus
     material: Optional[str] = None
     color: Optional[str] = None
     image_url: Optional[str] = Field(None, alias="imageUrl")
     vip_price: Optional[int] = Field(None, alias="vipPrice", ge=0)
     note: Optional[str] = None
+    status: Optional[ProductStatus] = None
 
     @field_validator("sku", "barcode", "brand", "name")
     @classmethod
@@ -95,11 +94,12 @@ class UpdateProductRequest(BaseModel):
     brand: Optional[str] = None
     name: Optional[str] = None
     scale: Optional[ModelScale] = None
+    spec: Optional[str] = None
     list_price: Optional[int] = Field(None, alias="listPrice", ge=0)
-    cost_price: Optional[int] = Field(None, alias="costPrice", ge=0)
     vip_price: Optional[int] = Field(None, alias="vipPrice", ge=0)
     note: Optional[str] = None
     status: Optional[ProductStatus] = None
+    deleted: Optional[bool] = None
     material: Optional[str] = None
     color: Optional[str] = None
     image_url: Optional[str] = Field(None, alias="imageUrl")

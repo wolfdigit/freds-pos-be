@@ -22,4 +22,5 @@ echo "  - API 文件 (Swagger): http://localhost:${PORT}/docs"
 echo "=================================================="
 
 # 使用 exec 直接將行程替換為 uvicorn，確保 Ctrl+C / 系統信號能直接中斷服務釋放 Port
-exec uvicorn src.main:app --host "$HOST" --port "$PORT" --reload
+# 使用 venv 裡的 Python 啟動 uvicorn。
+exec .venv/bin/python3 -m uvicorn src.main:app --host "$HOST" --port "$PORT" --reload

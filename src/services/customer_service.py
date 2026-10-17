@@ -10,22 +10,24 @@ from sqlalchemy.orm import Session
 from sqlalchemy.sql.elements import ColumnElement
 
 from src.core.exceptions import BusinessException
+from src.models.checkout import CheckoutOrder
 from src.models.customer import Customer
+from src.models.preorder import PreOrder
 from src.schemas.common import BusinessErrorCode
 from src.schemas.customer import (
     CreateCustomerRequest,
     Customer as CustomerSchema,
     CustomerSearchResponse,
     UpdateCustomerRequest,
-    VipTier,
+    VipTier, 
 )
 
 # VIP 等級對應的顯示名稱（與前端 getVipTierName 相同）。
 VIP_TIER_NAME_MAP = {
-    VipTier.PLATINUM: "白金黑卡 (9折)",
-    VipTier.GOLD: "金卡會員 (95折)",
-    VipTier.SILVER: "銀卡會員 (98折)",
-    VipTier.REGULAR: "一般會員",
+    VipTier.S: "S 級特約經銷",
+    VipTier.A: "A 級批發經銷",
+    VipTier.B: "B 級批發經銷",
+    VipTier.RETAIL: "零售客戶 (Retail)",
 }
 
 _PHONE_STRIP = re.compile(r"[\s\-()]")
@@ -57,7 +59,7 @@ def _vip_tier_name(vip_tier: str) -> str:
     try:
         return VIP_TIER_NAME_MAP[VipTier(vip_tier)]
     except ValueError:
-        return VIP_TIER_NAME_MAP[VipTier.REGULAR]
+        return VIP_TIER_NAME_MAP[VipTier.RETAIL]
 
 
 # 將 ORM Customer 轉成 API 的 CustomerSchema（含衍生 vipTierName）。
@@ -65,14 +67,16 @@ def _to_customer_schema(customer: Customer) -> CustomerSchema:
     return CustomerSchema(
         id=customer.id,
         name=customer.name,
-        phone=customer.phone,
+        phone=customer.phone or "",
         email=customer.email,
         vipTier=customer.vip_tier,
         vipTierName=_vip_tier_name(customer.vip_tier),
         totalSpent=customer.total_spent,
         note=customer.note if customer.note is not None else "",
         createdAt=customer.created_at,
+        createdBy=customer.created_by,
         updatedAt=customer.updated_at,
+        updatedBy=customer.updated_by,
     )
 
 
@@ -159,20 +163,25 @@ class CustomerService:
         )
         return stmt.where(or_(name_match, phone_match, email_match))
 
-    # 新增會員：伺服器發 id、createdAt、updatedAt；totalSpent 固定 0；缺 vipTier 則 regular。
-    # phone / email 可省略或 null，空白與 canonicalize 後為空則存 NULL。
-    def create(self, data: CreateCustomerRequest) -> CustomerSchema:
+    # 新增會員：電話必填。缺 vipTier 則 Retail。email 可省略。
+    def create(self, data: CreateCustomerRequest, *, actor_name: Optional[str] = None) -> CustomerSchema:
         phone = canonicalize_phone(data.phone)
         email = _normalize_email(data.email)
-        if phone is not None:
-            self._ensure_phone_unique(phone)
+        if not phone:
+            raise BusinessException(
+                status_code=422,
+                code=BusinessErrorCode.CUSTOMER_PHONE_DUPLICATE,
+                message="電話為必填",
+            )
+        self._ensure_phone_unique(phone)
         if email is not None:
             self._ensure_email_unique(email)
 
         vip_tier = (
-            data.vip_tier.value if data.vip_tier is not None else VipTier.REGULAR.value
+            data.vip_tier.value if data.vip_tier is not None else VipTier.RETAIL.value
         )
         now = datetime.now(timezone.utc)
+        actor = (actor_name or "").strip() or None
         customer = Customer(
             id=_new_customer_id(),
             name=data.name.strip(),
@@ -183,6 +192,8 @@ class CustomerService:
             note=data.note,
             created_at=now,
             updated_at=now,
+            created_by=actor,
+            updated_by=actor,
         )
         self.db.add(customer)
         self.db.commit()
@@ -193,13 +204,25 @@ class CustomerService:
         return _to_customer_schema(self._get_by_id_or_raise(customer_id))
 
     # 部分更新會員基本資料。不接受 id / createdAt / vipTierName / totalSpent。
-    # phone / email 傳 null 或空白則清成 NULL。
-    def update(self, customer_id: str, data: UpdateCustomerRequest) -> CustomerSchema:
+    # 電話不可清空；email 傳 null 或空白則清成 NULL。
+    def update(
+        self,
+        customer_id: str,
+        data: UpdateCustomerRequest,
+        *,
+        actor_name: Optional[str] = None,
+    ) -> CustomerSchema:
         customer = self._get_by_id_or_raise(customer_id)
         updates = data.model_dump(exclude_unset=True)
 
         if "phone" in updates:
             new_phone = canonicalize_phone(updates["phone"])
+            if not new_phone:
+                raise BusinessException(
+                    status_code=422,
+                    code=BusinessErrorCode.CUSTOMER_PHONE_DUPLICATE,
+                    message="電話不可清空",
+                )
             if new_phone != customer.phone:
                 if new_phone is not None:
                     self._ensure_phone_unique(new_phone, exclude_id=customer.id)
@@ -221,14 +244,44 @@ class CustomerService:
             customer.vip_tier = vip_tier.value if hasattr(vip_tier, "value") else vip_tier
 
         customer.updated_at = datetime.now(timezone.utc)
+        customer.updated_by = (actor_name or "").strip() or None
         self.db.add(customer)
         self.db.commit()
         return _to_customer_schema(self._get_by_id_or_raise(customer_id))
 
-    # 硬刪除會員列。此階段尚無訂單／預購表，未完成訂單的 409 不會觸發。
+    # 硬刪除會員列。未完成的結帳（部分退貨）或未結案預購會回 409。
     def delete(self, customer_id: str) -> None:
         customer = self._get_by_id_or_raise(customer_id)
+        unfinished_sale = self.db.scalar(
+            select(CheckoutOrder.id)
+            .where(
+                CheckoutOrder.customer_id == customer_id,
+                CheckoutOrder.status == "partially_refunded",
+            )
+            .limit(1)
+        )
+        unfinished_preorder = self.db.scalar(
+            select(PreOrder.id)
+            .where(
+                PreOrder.customer_id == customer_id,
+                PreOrder.status.notin_(("completed", "cancelled")),
+            )
+            .limit(1)
+        )
+        if unfinished_sale is not None or unfinished_preorder is not None:
+            raise BusinessException(
+                status_code=409,
+                code=BusinessErrorCode.CUSTOMER_HAS_UNFINISHED_ORDERS,
+                message="此會員仍有未完成的訂單",
+            )
         self.db.delete(customer)
+        self.db.commit()
+
+    def add_spending(self, customer_id: str, amount: int) -> None:
+        customer = self._get_by_id_or_raise(customer_id)
+        customer.total_spent = max(0, customer.total_spent + amount)
+        customer.updated_at = datetime.now(timezone.utc)
+        self.db.add(customer)
         self.db.commit()
 
     # 依條件搜尋會員：SQL WHERE + ORDER BY name ASC, id ASC + LIMIT/OFFSET。

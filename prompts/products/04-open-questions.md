@@ -16,6 +16,7 @@ Decisions from the planning discussion are recorded below. Items marked **Decide
 | 6 | Search sort | **`sku ASC`**; still add `created_at` / `updated_at` for audit. | 2026-09-07 |
 | 7 | Auth | Keep **optional/dummy** for this phase. | 2026-09-07 |
 | 8 | FE / OpenAPI sync | Track all FE + contract changes in [`05-fe-changes.md`](./05-fe-changes.md). | 2026-09-07 |
+| 9 | Product delete | **Soft delete through update.** `status` records it: `active` or `deleted`. `deleted` mirrors `status`. No `DELETE` route and no row removal. Search omits `status = deleted`. `GET /products/{productId}` still returns the row. | 2026-10-17 |
 
 ---
 
@@ -30,7 +31,7 @@ Decisions from the planning discussion are recorded below. Items marked **Decide
 
 ### 2. PUT body — contract excludes non-metadata fields
 
-- Named schema `UpdateProductRequest`: only `sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `costPrice`, `vipPrice`, `note`, `status`, `material`, `color`, `imageUrl`
+- Named schema `UpdateProductRequest`: only `sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `vipPrice`, `note`, `material`, `color`, `imageUrl`, `status`, `deleted`. `status` is `active` or `deleted`. The catalog does not record `costPrice`.
 - **Do not** document `stocks`, `totalStock`, `id`, `normalizedSku`, `preOrderPendingCount` on update
 - FE: replace `Partial<Product>` update payload with a dedicated update type aligned to OpenAPI
 - Implementation may use Pydantic `extra='ignore'` as a safety net; the **source of truth** is the narrowed OpenAPI schema

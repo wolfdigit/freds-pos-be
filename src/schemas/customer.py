@@ -6,10 +6,10 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class VipTier(str, Enum):
-    REGULAR = "regular"
-    SILVER = "silver"
-    GOLD = "gold"
-    PLATINUM = "platinum"
+    S = "S"
+    A = "A"
+    B = "B"
+    RETAIL = "Retail"
 
 
 def _blank_to_none(value: object) -> object:
@@ -27,14 +27,16 @@ class Customer(BaseModel):
 
     id: str
     name: str
-    phone: Optional[str] = None
+    phone: str
     email: Optional[EmailStr] = None
     vip_tier: VipTier = Field(..., alias="vipTier")
     vip_tier_name: str = Field(..., alias="vipTierName")
     total_spent: int = Field(..., alias="totalSpent", ge=0)
     note: str = ""
     created_at: datetime = Field(..., alias="createdAt")
+    created_by: Optional[str] = Field(None, alias="createdBy")
     updated_at: datetime = Field(..., alias="updatedAt")
+    updated_by: Optional[str] = Field(None, alias="updatedBy")
 
 
 class CreateCustomerRequest(BaseModel):
@@ -43,7 +45,7 @@ class CreateCustomerRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     name: str
-    phone: Optional[str] = None
+    phone: str
     email: Optional[EmailStr] = None
     vip_tier: Optional[VipTier] = Field(None, alias="vipTier")
     note: Optional[str] = None
@@ -55,10 +57,12 @@ class CreateCustomerRequest(BaseModel):
             raise ValueError("must not be empty")
         return v.strip()
 
-    @field_validator("phone", mode="before")
+    @field_validator("phone")
     @classmethod
-    def blank_phone_to_none(cls, v: object) -> object:
-        return _blank_to_none(v)
+    def require_phone(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("must not be empty")
+        return v.strip()
 
     @field_validator("email", mode="before")
     @classmethod

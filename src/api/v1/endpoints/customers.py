@@ -1,7 +1,8 @@
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from src.api.deps import get_current_user_optional, get_db
@@ -11,17 +12,20 @@ from src.schemas.customer import (
     CustomerSearchResponse,
     UpdateCustomerRequest,
 )
+from src.schemas.inventory import OkResponse
+from src.schemas.preorder import PreOrder
 from src.services.customer_service import CustomerService
+from src.services.preorder_service import PreOrderService
 
 router = APIRouter()
 
 
 class VipTierQuery(str, Enum):
     ALL = "ALL"
-    regular = "regular"
-    silver = "silver"
-    gold = "gold"
-    platinum = "platinum"
+    S = "S"
+    A = "A"
+    B = "B"
+    Retail = "Retail"
 
 
 @router.get(
@@ -58,9 +62,9 @@ def search_customers(
 def create_customer(
     body: CreateCustomerRequest,
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_optional),
+    user=Depends(get_current_user_optional),
 ) -> Customer:
-    return CustomerService(db).create(body)
+    return CustomerService(db).create(body, actor_name=str(user["name"]))
 
 
 @router.get(
@@ -87,9 +91,9 @@ def update_customer(
     body: UpdateCustomerRequest,
     customerId: str = Path(..., description="Customer id"),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_optional),
+    user=Depends(get_current_user_optional),
 ) -> Customer:
-    return CustomerService(db).update(customerId, body)
+    return CustomerService(db).update(customerId, body, actor_name=str(user["name"]))
 
 
 @router.delete(
@@ -104,3 +108,36 @@ def delete_customer(
 ) -> Response:
     CustomerService(db).delete(customerId)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+class UpdateSpendingRequest(BaseModel):
+    amount: int
+
+
+@router.post(
+    "/{customerId}/spending",
+    response_model=OkResponse,
+    summary="Update customer total spending",
+)
+def update_customer_spending(
+    body: UpdateSpendingRequest,
+    customerId: str = Path(..., description="Customer id"),
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_optional),
+) -> OkResponse:
+    CustomerService(db).add_spending(customerId, body.amount)
+    return OkResponse()
+
+
+@router.get(
+    "/{customerId}/preorders",
+    response_model=List[PreOrder],
+    response_model_by_alias=True,
+    summary="List pre-orders for a customer",
+)
+def customer_preorders(
+    customerId: str = Path(..., description="Customer id"),
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_optional),
+) -> List[PreOrder]:
+    return PreOrderService(db).by_customer(customerId)

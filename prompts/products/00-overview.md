@@ -27,17 +27,17 @@ The **product catalog** phase of Fred's POS backend. Companion docs in this fold
 
 Catalog responsibilities:
 
-- Product **metadata** CRUD (sku, barcode, brand, name, scale, prices, note, status, optional material/color/imageUrl).
+- Product **metadata** CRUD (sku, barcode, brand, name, scale, list price, optional vip price, note, optional material/color/imageUrl). The catalog does not record `costPrice`. `status` records soft delete: `active` or `deleted`.
 - On create: always insert **four** `product_stock` rows at **`quantity: 0`** (`store`, `warehouse`, `company`, `other`). **No** client stock/quantity fields on `POST /products`.
 - Server-owned / response-only: `id`, `normalizedSku`, `totalStock`, `preOrderPendingCount`, `stocks` (assembled on read).
 - Search filters aligned with the FE mock (`keyword`, `scale`, `brand`, `inStockOnly`); default sort **`sku ASC`**. Filters run **in SQL**, not in Python after load.
 
-### Out of scope (future follow-up)
+### Also in the OpenAPI
 
-Inventory and stock mutation APIs are **not** part of this phase; mention only as later work:
+Inventory transfers, stock adjustments, stock locations, pre-orders, store branches, and OAuth accounts are in [`../openapi.yaml`](../openapi.yaml), taken from the frontend OpenAPI. Catalog create still inserts four stock rows at quantity `0`.
 
-- `transferStock` / `adjustStock` / `batchAdjustStock` / `getStockAdjustmentLogs` (planned under `/inventory/*` or equivalent) — **including initial qty after create**.
-- Writes to `product_pre_order_pending` (belong to a future preorder module).
+Out of this catalog write-up:
+
 - Seeding mock products via Alembic data migration / management script (**decision B**, later phase; see `04-open-questions.md`).
 
 Auth stays optional/dummy for this phase (`src/api/deps.py`).
@@ -75,7 +75,7 @@ Base URL (planned): `/api/v1` (see [`../openapi.yaml`](../openapi.yaml) servers)
 
 ### Storage sketch (detail in `02-data-model.md`)
 
-- **`product`** — catalog metadata; unique `sku`; `barcode` indexed but **not** unique; timestamps `created_at` / `updated_at`.
+- **`product`** — catalog metadata; unique `sku`; `barcode` indexed but **not** unique; timestamps `created_at` / `updated_at`. Rows are not deleted. `PUT` sets `deleted` to hide or restore a product and leaves the id in place for checkout history and returns.
 - **`product_stock`** — one row per location; unique `(product_id, location)`.
 - **`product_pre_order_pending`** — separate table (not a column on `product`); default 1:1 via unique `product_id`; no row ⇒ API returns `preOrderPendingCount: 0`.
 
@@ -94,8 +94,8 @@ Source of truth for shapes and catalog method signatures:
 ### Contract principles
 
 1. OpenAPI is the HTTP source of truth ([`../openapi.yaml`](../openapi.yaml)); where it **narrows** vs today’s FE (`Partial<Product>`, create `stocks`), FE adapts — see [`05-fe-changes.md`](./05-fe-changes.md).
-2. Response `Product` matches FE: camelCase, four locations in `stocks`, integer TWD prices, `status` ∈ `active` \| `discontinued`.
-3. Create request has **no** `stocks` / quantities; server assigns `id`, `normalizedSku`, zeros stocks, `preOrderPendingCount: 0`, `totalStock: 0`.
+2. Response `Product` matches FE: camelCase, four locations in `stocks`, integer TWD `listPrice`. There is no `costPrice`. `status` is `active` or `deleted`, and `deleted` mirrors it.
+3. Create request has **no** `stocks` / quantities. Server assigns `id`, `normalizedSku`, zeros stocks, `preOrderPendingCount: 0`, and `totalStock: 0`.
 4. Search semantics mirror the mock (empty keyword = no keyword filter; `scale`/`brand` missing or `ALL` = no filter; `inStockOnly` → `totalStock > 0`). Sort: **`sku ASC`**. Filters run **in SQL**. Details in `03-search-rules.md`.
 5. Catalog `PUT` uses **`UpdateProductRequest`** (metadata only in OpenAPI); stock / preorder never part of that schema.
 

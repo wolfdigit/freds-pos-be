@@ -18,9 +18,9 @@ class Customer(Base):
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
-    phone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, unique=True)
+    phone: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     email: Mapped[Optional[str]] = mapped_column(String(256), nullable=True, unique=True)
-    vip_tier: Mapped[str] = mapped_column(String(32), nullable=False, default="regular")
+    vip_tier: Mapped[str] = mapped_column(String(32), nullable=False, default="Retail")
     total_spent: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -29,6 +29,8 @@ class Customer(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utc_now, onupdate=_utc_now
     )
+    created_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     __table_args__ = (
         Index("ix_customer_name", "name"),

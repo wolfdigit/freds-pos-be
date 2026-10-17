@@ -10,9 +10,9 @@ Base path: `/api/v1`.
 |-------|------|--------|
 | `id` | string | Server-assigned PK; `cust-{uuid4}` without dashes |
 | `name` | string | Required |
-| `phone` | string \| `null` | **Optional.** Unique among non-null after canonicalize. Always present on the response; JSON `null` when unset |
+| `phone` | string | **Required.** Unique after canonicalize. |
 | `email` | string \| `null` | **Optional.** Unique among non-null values after trim + lowercase. Valid email when set. Always present on the response; JSON `null` when unset |
-| `vipTier` | `VipTier` | `regular` \| `silver` \| `gold` \| `platinum` |
+| `vipTier` | `VipTier` | `Retail` \| `B` \| `A` \| `S` |
 | `vipTierName` | string | Derived map from `vipTier` |
 | `totalSpent` | integer | TWD ≥ 0; server-owned after create (always `0` on create) |
 | `note` | string | **Optional string.** Omit or `""`. Not OpenAPI `nullable` |
@@ -25,10 +25,10 @@ Base path: `/api/v1`.
 
 | `vipTier` | `vipTierName` |
 |-----------|----------------|
-| `platinum` | 白金黑卡 (9折) |
-| `gold` | 金卡會員 (95折) |
-| `silver` | 銀卡會員 (98折) |
-| `regular` | 一般會員 |
+| `S` | S 級特約經銷 |
+| `A` | A 級批發經銷 |
+| `B` | B 級批發經銷 |
+| `Retail` | 零售客戶 (Retail) |
 
 ### Server-owned / response-only
 
@@ -68,16 +68,16 @@ Empty page: `items: []`, `total` still set.
 
 ## `POST /customers` — `createCustomer`
 
-**Required:** `name`
+**Required:** `name`, `phone`
 
-**Optional:** `phone` (omit / `null` → `NULL`), `email` (omit / `null` → `NULL`), `vipTier` (default `regular`), `note`
+**Optional:** `email` (omit / `null` → `NULL`), `vipTier` (default `Retail`), `note`
 
 **Not in request schema:** `id`, `createdAt`, `updatedAt`, `vipTierName`, `totalSpent`, `rewardPoints`
 
 ### Create-time defaults
 
 - `totalSpent: 0`
-- `vipTierName` from the map; missing `vipTier` → `regular`
+- `vipTierName` from the map; missing `vipTier` → `Retail`
 - `createdAt` / `updatedAt` = UTC now
 - `id` = `cust-{uuid4}` no dashes
 

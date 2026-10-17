@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     ForeignKey,
     Integer,
@@ -31,13 +32,18 @@ class Product(Base):
     brand: Mapped[str] = mapped_column(String(128), nullable=False)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     scale: Mapped[str] = mapped_column(String(32), nullable=False)
+    spec: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     material: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     color: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     image_url: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     list_price: Mapped[int] = mapped_column(Integer, nullable=False)
-    cost_price: Mapped[int] = mapped_column(Integer, nullable=False)
     vip_price: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="active", server_default="active"
+    )
+    deleted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utc_now
@@ -45,6 +51,8 @@ class Product(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utc_now, onupdate=_utc_now
     )
+    created_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     stocks: Mapped[List["ProductStock"]] = relationship(
         "ProductStock",
@@ -72,11 +80,11 @@ class ProductStock(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     product_id: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("product.id", ondelete="CASCADE"),
+        ForeignKey("product.id", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
-    location: Mapped[str] = mapped_column(String(32), nullable=False)
+    location: Mapped[str] = mapped_column(String(64), nullable=False)
     location_name: Mapped[str] = mapped_column(String(64), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
@@ -93,7 +101,7 @@ class ProductPreOrderPending(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     product_id: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("product.id", ondelete="CASCADE"),
+        ForeignKey("product.id", ondelete="RESTRICT"),
         nullable=False,
         unique=True,
     )

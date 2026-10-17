@@ -25,7 +25,7 @@ erDiagram
 
 ## Table: `customer`
 
-No `vip_tier_name` (derived). No `reward_points`.
+No `vip_tier_name` (derived). No `reward_points`. The NT$360 exchange is a flag on the checkout line, not a member balance.
 
 | Column | Type (suggested) | Constraints / notes |
 |--------|------------------|---------------------|
@@ -33,7 +33,7 @@ No `vip_tier_name` (derived). No `reward_points`.
 | `name` | `String` | Required |
 | `phone` | `String` nullable | **UNIQUE** among non-null; canonical when set |
 | `email` | `String` nullable | **UNIQUE** among non-null; trim + lowercase when set |
-| `vip_tier` | `String` | default `regular` |
+| `vip_tier` | `String` | `Retail` \| `B` \| `A` \| `S`. Default `Retail`. |
 | `total_spent` | `Integer` | default `0`; catalog PUT must not change |
 | `note` | `Text` / `String` | Optional **string**. Omit or `""`. JSON type is `string`, not `nullable` |
 | `created_at` | `DateTime` TZ | JSON `createdAt` |
