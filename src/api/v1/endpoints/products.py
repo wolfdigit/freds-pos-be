@@ -43,9 +43,9 @@ def search_products(
 def create_product(
     body: CreateProductRequest,
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_optional),
+    user=Depends(get_current_user_optional),
 ) -> Product:
-    return ProductService(db).create(body)
+    return ProductService(db).create(body, actor_name=str(user["name"]))
 
 
 @router.get(
@@ -72,6 +72,6 @@ def update_product(
     body: UpdateProductRequest,
     productId: str = Path(..., description="Product id"),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_optional),
+    user=Depends(get_current_user_optional),
 ) -> Product:
-    return ProductService(db).update(productId, body)
+    return ProductService(db).update(productId, body, actor_name=str(user["name"]))

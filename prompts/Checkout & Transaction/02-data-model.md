@@ -85,7 +85,7 @@ A return line and a sale line for the same product are different rows. Matching 
 | `id` | `String` PK | `pay-{uuid4}` no dashes |
 | `order_id` | `String` FK | `ON DELETE CASCADE` |
 | `line_no` | `Integer` | 1-based |
-| `type` | `String` | `cash`, `credit_card`, `line_pay`, `bank_transfer`, or `cod`. `cod` is not inserted. |
+| `type` | `String` | `cash`, `credit_card`, `line_pay`, `bank_transfer`, or `cod`. `cod` is stored. |
 | `name` | `String` | Display name from the tender. |
 | `amount` | `Integer` | |
 | `tendered_cash` | `Integer` nullable | Cash notes received. |

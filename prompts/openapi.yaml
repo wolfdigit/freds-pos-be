@@ -1,54 +1,62 @@
 openapi: 3.1.0
 info:
   title: Fred's POS API
-  version: 1.0.0
+  version: 1.1.0
   description: |
-    HTTP contract for Fred's POS, matching the frontend Service Adapter
-    (`src/services/interfaces/`). Mockup currently uses localStorage adapters;
-    the FastAPI backend implements these paths without changing UI.
+    HTTP contract for Fred's POS, matching the frontend Service Adapter (`src/services/interfaces/`).
+    Designed for high-performance model car specialty stores with unified checkout, multi-location stock,
+    item-level returns/exchanges, pre-order partial fulfillment, and cash drawer management.
 
-    This file is the merged contract for implemented phases
-    (products catalog, member catalog, and checkout). Inventory stays out.
-    Preorder rows exist so checkout can record a pickup; there is no preorder authoring API.
-    
+    **Core Architectural Principles**
+    - **Single Transaction Pipeline**: All sales, returns, and defect exchanges are unified under `POST /checkout/orders`.
+    - **Backend Pricing & Calculation Authority**: Frontend transmits purchase/return intents and cashier-adjusted `unitPrice`; backend calculates all line subtotals, discounts, taxes, and total amounts.
+    - **Line-Item Return Traceability**: Returns/exchanges (negative quantities) must reference `originalOrderId` and `originalOrderItemId`, with cumulative `returnedQuantity` tracking.
+    - **ACID Atomicity**: Checkout/return operations execute inside a single database transaction (locking store stock, updating pre-orders, updating customer spending, and creating orders).
+    - **Idempotency**: `POST /checkout/orders` supports `X-Idempotency-Key` to prevent double-charging or double stock deduction.
+    - **Authentication**: Cashier and branch identity are resolved from JWT Bearer tokens, bound at cashier login.
+
     **Conventions**
     - Amounts are TWD integers (no cents).
     - Timestamps are ISO 8601 strings.
-    - JSON is camelCase.
     - Business failures use HTTP 4xx with `BusinessError` body (`code` + `message`).
-    - Auth is optional/dummy for this phase.
 
-    Customer spending increments, nested preorders/orders, seed data,
-    and delete UI are out of the current customer pass. Member reward
-    points are not part of the catalog.
-  contact:
-    name: Fred's POS
+    **Kept on top of the frontend contract**
+    - Products use `deleted` for soft delete. `GET /products` omits `deleted: true`. There is no product `costPrice` or product `status`.
+    - Checkout keeps `branchId` / `branchName`, points-discount fields, order number `SO-YYYYMMDD-HHMMSS-####` in Asia/Taipei, and a paged `GET /checkout/orders`.
+    - `POST /checkout/orders` returns `receiptPrintHtml`.
+    - Payment types are `cash`, `credit_card`, `line_pay`, `bank_transfer`, and `cod`. `cod` is accepted.
+
 servers:
   - url: http://localhost:8000/api/v1
-    description: Local FastAPI (planned)
+    description: Local FastAPI Backend
   - url: /api/v1
     description: Relative (same origin)
 
+security:
+  - BearerAuth: []
+
 tags:
   - name: products
-    description: Product catalog and multi-location stock
-  - name: customers
-    description: Member catalog (profile CRUD, paged search)
+    description: Product catalog, multi-location stock, and transfers
   - name: checkout
-    description: Recorded sales, stock movement, and preorder pickup
+    description: Sales orders, receipts, item-level returns and exchanges
+  - name: preorders
+    description: Customer pre-orders and arrival management
+  - name: customers
+    description: Members and VIP tiers
+  - name: system
+    description: System configurations, store branches, and Google OAuth access control whitelist
 
 paths:
   /products:
     get:
       tags: [products]
       operationId: searchProducts
-      summary: Search products
       description: |
-        Fuzzy search by barcode, SKU without dashes, product name, or brand.
+        Fuzzy search by barcode, SKU without dashes (normalized), product name, or brand.
         Maps to `IProductService.searchProducts`.
         Default sort: `sku ASC`.
-        Keyword, scale, brand, and inStockOnly filters run in SQL (`WHERE`),
-        not in Python after load.
+        Omits products with `deleted: true`. `GET /products/{productId}` still returns a hidden row.
       parameters:
         - name: keyword
           in: query
@@ -81,13 +89,13 @@ paths:
     post:
       tags: [products]
       operationId: createProduct
-      summary: Create product
       description: |
         Maps to `IProductService.createProduct`.
         Server assigns `id` as `prod-{uuid4}` (no dashes), computes `normalizedSku`,
         and always creates four stock rows at quantity `0` with fixed location names.
         Does not write `product_pre_order_pending` (response `preOrderPendingCount` is `0`).
-        Initial / ongoing stock quantities use future inventory APIs.
+        Initial / ongoing stock quantities use the inventory APIs.
+        Create stores `deleted: false`. The body has no `costPrice` and no product `status`.
       requestBody:
         required: true
         content:
@@ -126,7 +134,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Product'
         '404':
-          $ref: '#/components/responses/ProductNotFound'
+          $ref: '#/components/responses/NotFound'
     put:
       tags: [products]
       operationId: updateProduct
@@ -135,6 +143,7 @@ paths:
         Maps to `IProductService.updateProduct`.
         Metadata only — does not mutate stock rows or `product_pre_order_pending`.
         On SKU change, server recomputes `normalizedSku`; duplicate SKU returns 409.
+        `deleted: true` hides the product. `deleted: false` shows it again. The row is not removed.
       parameters:
         - $ref: '#/components/parameters/ProductId'
       requestBody:
@@ -151,7 +160,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Product'
         '404':
-          $ref: '#/components/responses/ProductNotFound'
+          $ref: '#/components/responses/NotFound'
         '409':
           description: Duplicate SKU
           content:
@@ -162,39 +171,255 @@ paths:
                 code: PRODUCT_SKU_DUPLICATE
                 message: 貨號已存在
 
-  /customers:
-    get:
-      tags: [customers]
-      operationId: searchCustomers
-      summary: Search customers
+  /inventory/transfers:
+    post:
+      tags: [products]
+      operationId: transferStock
+      summary: Transfer stock between locations
       description: |
-        Maps to `ICustomerService.searchCustomers`.
-        Also used for checkout phone bind (no `/customers/by-phone/{phone}`).
-        Missing / empty `keyword` = no keyword filter.
-        Keyword matches name (case-insensitive contains), non-null phone
-        (substring, also against canonicalized query), or non-null email
-        (case-insensitive contains).
-        `vipTier` missing or `ALL` = no VIP filter; otherwise exact match.
-        Filters, sort, and paging run in SQL (`WHERE` / `ORDER BY` / `LIMIT` /
-        `OFFSET`), not in Python after load. Default sort: `name ASC`, then `id ASC`.
+        Maps to `IProductService.transferStock`. Executes atomically: deducts from `fromLocation` and adds to `toLocation`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InventoryTransferRequest'
+      responses:
+        '200':
+          description: Transfer succeeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          $ref: '#/components/responses/BusinessError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /inventory/adjustments:
+    post:
+      tags: [products]
+      operationId: adjustStock
+      summary: Manually set quantity at a location
+      description: Maps to `IProductService.adjustStock`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StockAdjustRequest'
+      responses:
+        '200':
+          description: Adjustment succeeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /inventory/batch-adjustments:
+    post:
+      tags: [products]
+      operationId: batchAdjustStock
+      summary: Batch adjust stock quantities and log operation history
+      description: Maps to `IProductService.batchAdjustStock`. Writes inventory updates and audit log atomically.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchStockAdjustRequest'
+      responses:
+        '200':
+          description: Batch adjustment succeeded and logged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          $ref: '#/components/responses/BusinessError'
+
+  /inventory/adjustments/logs:
+    get:
+      tags: [products]
+      operationId: getStockAdjustmentLogs
+      summary: Get stock adjustment history logs
+      description: Maps to `IProductService.getStockAdjustmentLogs`.
+      responses:
+        '200':
+          description: Stock adjustment logs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StockAdjustmentLog'
+
+  /inventory/locations:
+    get:
+      tags: [products]
+      operationId: getLocations
+      summary: Get all stock locations
+      description: |
+        Maps to `ILocationService.getLocations`. Retrieves all active stock locations in the system.
+      responses:
+        '200':
+          description: List of stock locations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StockLocationDto'
+    post:
+      tags: [products]
+      operationId: createLocation
+      summary: Create a new stock location
+      description: |
+        Maps to `ILocationService.createLocation`. Adds a new custom inventory location to the system.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateStockLocationRequest'
+      responses:
+        '201':
+          description: Created stock location
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockLocationDto'
+
+  /inventory/locations/{locationId}:
+    put:
+      tags: [products]
+      operationId: updateLocation
+      summary: Update a stock location
+      description: |
+        Maps to `ILocationService.updateLocation`. Updates name, icon, display order, or active state of a location.
       parameters:
+        - name: locationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Unique Primary Key (UUID) of the location to update
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStockLocationRequest'
+      responses:
+        '200':
+          description: Updated stock location
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockLocationDto'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      tags: [products]
+      operationId: deleteLocation
+      summary: Delete a stock location and migrate its inventory
+      description: |
+        Maps to `ILocationService.deleteLocation`. Removes the specified location from active stock locations
+        and atomically transfers all existing inventory quantities from this location to `transferToLocation`.
+      parameters:
+        - name: locationId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Unique Primary Key (UUID) of the location to delete
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeleteStockLocationRequest'
+      responses:
+        '200':
+          description: Location deleted and stock migrated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteStockLocationResponse'
+        '400':
+          $ref: '#/components/responses/BusinessError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /checkout/orders:
+    get:
+      tags: [checkout]
+      operationId: getOrderHistory
+      summary: List checkout orders
+      description: |
+        Maps to `ICheckoutService.getOrderHistory`. Supports searching by customer, order number,
+        product ID (for finding original sales order during return), date range, or keyword.
+      parameters:
+        - name: customerId
+          in: query
+          schema:
+            type: string
+          description: Filter by customer ID
+        - name: orderNumber
+          in: query
+          schema:
+            type: string
+          description: Filter by exact or partial order number
+        - name: productId
+          in: query
+          schema:
+            type: string
+          description: Filter orders containing this product (used for counter return lookup)
         - name: keyword
           in: query
           schema:
             type: string
-          description: Name / phone / email fragment
-        - name: vipTier
+          description: Search by customer phone, name, or order number
+        - name: startDate
           in: query
           schema:
-            $ref: '#/components/schemas/VipTierOrAll'
-          description: Exact VIP filter, or `ALL`
+            type: string
+            format: date
+          description: Start date (YYYY-MM-DD)
+        - name: endDate
+          in: query
+          schema:
+            type: string
+            format: date
+          description: End date (YYYY-MM-DD)
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [all, completed, partially_refunded, refunded]
+        - name: productKeyword
+          in: query
+          schema:
+            type: string
+        - name: minAmount
+          in: query
+          schema:
+            type: integer
+        - name: maxAmount
+          in: query
+          schema:
+            type: integer
         - name: page
           in: query
           schema:
             type: integer
             minimum: 1
             default: 1
-          description: 1-based page index
         - name: pageSize
           in: query
           schema:
@@ -202,29 +427,296 @@ paths:
             minimum: 1
             maximum: 100
             default: 20
-          description: Page length (max 100)
       responses:
         '200':
-          description: Paged matching customers
+          description: Paged order list (newest-first)
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CustomerSearchResponse'
+                $ref: '#/components/schemas/CheckoutOrderSearchResponse'
+    post:
+      tags: [checkout]
+      operationId: createCheckoutOrder
+      summary: Create checkout order (Sales, Exchanges, and Returns)
+      description: |
+        Maps to `ICheckoutService.createCheckoutOrder`.
+
+        **Backend Atomic Lifecycle (Single DB Transaction)**:
+        1. **Identity & Branch Resolution**: Extract `cashierId`, `cashierName`, and active `storeId` from `BearerAuth` JWT token.
+        2. **Item Pricing & Subtotals**:
+           - For positive purchases: verify `unitPrice` against `listPrice` or customer `vipPrice` unless `isManualPrice: true` (which requires `priceDiffReason`).
+           - For pre-order items: verify `unitPrice` matches `quotedPrice` and `quantity <= qtyArrived - qtyDelivered`.
+           - For return/exchange items (`quantity < 0`): verify `originalOrderId` & `originalOrderItemId`, ensuring `abs(quantity) <= (qtySold - qtyReturned)`. Also enforce member ownership: if the checkout is bound to customer A, the original order cannot belong to customer B (`customerId` mismatch raises `INVALID_RETURN_CUSTOMER`; unattached guest original orders are permitted).
+           - Compute `subtotal = unitPrice * quantity` for each line.
+        3. **Order Total**:
+           - `itemsSubtotal = sum(subtotals)`
+           - `discountAmount = sum((originalPrice - unitPrice) * quantity)`
+           - Calculate final `totalAmount = itemsSubtotal + shippingFee`.
+           - Validate `sum(payments.amount) == totalAmount` (or `payments >= totalAmount` with cash change).
+        4. **Inventory & Pre-Order Atomicity**:
+           - Positive items: lock and deduct `store` stock with row lock (`WHERE quantity >= :qty`).
+           - Negative items: if `restock: true`, increment `store` stock; increment `returnedQuantity` on original order.
+           - Pre-order items: increment `qtyDelivered` and update pre-order status.
+        5. **Member Asset Update**:
+           - Update `customer.totalSpent += totalAmount`
+        6. **Receipt & Persistence**:
+           - Persist `CheckoutOrder` and return `CheckoutReceipt` with thermal print HTML.
+           - `orderNumber` is `SO-YYYYMMDD-HHMMSS-####` in Asia/Taipei. `####` is the max suffix for that second, plus 1. There is no retry when two sales share a second.
+           - Points discount is already inside the line `unitPrice`. The server also stores `pointsDiscountApplied` and `pointsDiscountAmount` (360). It does not subtract 360 again.
+           - A positive line rejects `deleted: true` with `PRODUCT_NOT_FOUND`. A return may still use that product id.
+           - On an idempotency unique conflict, catch it, re-select, and replay. Do not rely on a lookup before insert.
+      parameters:
+        - name: X-Idempotency-Key
+          in: header
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: |
+            Optional. Same key, same cashier, and same body replays the stored receipt.
+            A different body or cashier is `409` `IDEMPOTENCY_CONFLICT`.
+            On unique conflict, re-select and replay.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderPayload'
+      responses:
+        '201':
+          description: Order created with receipt HTML
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckoutReceipt'
+        '400':
+          $ref: '#/components/responses/BusinessError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /checkout/orders/{orderId}:
+    get:
+      tags: [checkout]
+      operationId: getOrderById
+      summary: Get order by ID (reprint receipt / check return status)
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckoutOrder'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /preorders:
+    get:
+      tags: [preorders]
+      operationId: getPendingPreOrders
+      summary: Search open pre-orders
+      description: |
+        Maps to `IPreOrderService.getPendingPreOrders`.
+        Matches customer phone, name, or order number. Excludes `completed` and `cancelled`.
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Phone fragment, name, or order number (e.g. `0912`)
+      responses:
+        '200':
+          description: Matching open pre-orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PreOrder'
+    post:
+      tags: [preorders]
+      operationId: createPreOrder
+      summary: Create pre-order
+      description: Maps to `IPreOrderService.createPreOrder`. Server assigns `id`, `orderNumber`, `status`, and `updatedAt`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePreOrderRequest'
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreOrder'
+
+  /customers/{customerId}/preorders:
+    get:
+      tags: [preorders]
+      operationId: getPreOrdersByCustomerId
+      summary: List pre-orders for a customer
+      description: Maps to `IPreOrderService.getPreOrdersByCustomerId` (all statuses).
+      parameters:
+        - $ref: '#/components/parameters/CustomerId'
+      responses:
+        '200':
+          description: Pre-orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PreOrder'
+
+  /preorders/{preOrderId}:
+    get:
+      tags: [preorders]
+      operationId: getPreOrderById
+      summary: Get pre-order by ID
+      parameters:
+        - $ref: '#/components/parameters/PreOrderId'
+      responses:
+        '200':
+          description: Pre-order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreOrder'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [preorders]
+      operationId: updatePreOrder
+      summary: Update pre-order information
+      description: Maps to `IPreOrderService.updatePreOrder`.
+      parameters:
+        - $ref: '#/components/parameters/PreOrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePreOrderRequest'
+      responses:
+        '200':
+          description: Updated pre-order
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreOrder'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /preorders/{preOrderId}/arrived:
+    post:
+      tags: [preorders]
+      operationId: markItemsArrived
+      summary: Mark pre-order items arrived (Phase 2)
+      description: Updates `qtyArrived` for specified products and re-derives pre-order status.
+      parameters:
+        - $ref: '#/components/parameters/PreOrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkItemsArrivedRequest'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /preorders/{preOrderId}/fulfill:
+    post:
+      tags: [preorders]
+      operationId: fulfillPreOrderItems
+      summary: Fulfill pre-order items
+      description: Deducts fulfilled quantities for specific items in a pre-order.
+      parameters:
+        - $ref: '#/components/parameters/PreOrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fulfilledItems]
+              properties:
+                fulfilledItems:
+                  type: array
+                  items:
+                    type: object
+                    required: [preOrderItemId, qty]
+                    properties:
+                      preOrderItemId:
+                        type: string
+                      qty:
+                        type: integer
+      responses:
+        '200':
+          description: Fulfill succeeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /customers:
+    get:
+      tags: [customers]
+      operationId: searchCustomers
+      summary: Search customers
+      description: Maps to `ICustomerService.searchCustomers`. Empty query returns all with pagination.
+      parameters:
+        - name: keyword
+          in: query
+          schema:
+            type: string
+          description: Phone, name, or email for fuzzy matching
+        - name: vipTier
+          in: query
+          schema:
+            type: string
+            enum: [ALL, Retail, B, A, S]
+          description: Filter by VIP tier or ALL
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+          description: Page number
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            default: 20
+          description: Items per page
+      responses:
+        '200':
+          description: Customers list or paginated response
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/CustomerSearchResponse'
+                  - type: array
+                    items:
+                      $ref: '#/components/schemas/Customer'
     post:
       tags: [customers]
       operationId: createCustomer
       summary: Create customer
-      description: |
-        Maps to `ICustomerService.createCustomer`.
-        Server assigns `id` as `cust-{uuid4}` (no dashes) stored as PK `id`,
-        plus `createdAt` and `updatedAt` (ISO 8601). Always sets `totalSpent: 0`.
-        Missing `vipTier` → `regular`. Derives `vipTierName` from `vipTier`.
-        Does not accept client `id` / `createdAt` / `updatedAt` / `vipTierName` /
-        `totalSpent`. Phone is optional: omit / `null` / whitespace / empty after
-        canonicalize → SQL NULL. Non-null phone is stored canonical (strip spaces
-        / hyphens / parentheses) and unique among non-null values. Email is
-        optional: omit / `null` / whitespace → SQL NULL. Non-null email is
-        trimmed, lowercased, validated, and unique among non-null values.
+      description: Maps to `ICustomerService.createCustomer`. Server assigns `id` and `createdAt`.
       requestBody:
         required: true
         content:
@@ -238,21 +730,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Customer'
-        '409':
-          description: Duplicate phone or email
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BusinessError'
-              examples:
-                duplicatePhone:
-                  value:
-                    code: CUSTOMER_PHONE_DUPLICATE
-                    message: 手機號碼已存在
-                duplicateEmail:
-                  value:
-                    code: CUSTOMER_EMAIL_DUPLICATE
-                    message: 電子信箱已存在
 
   /customers/{customerId}:
     get:
@@ -269,17 +746,12 @@ paths:
               schema:
                 $ref: '#/components/schemas/Customer'
         '404':
-          $ref: '#/components/responses/CustomerNotFound'
+          $ref: '#/components/responses/NotFound'
     put:
       tags: [customers]
       operationId: updateCustomer
-      summary: Update customer profile
-      description: |
-        Maps to `ICustomerService.updateCustomer`.
-        Profile only. Never mutates `totalSpent`. Bumps `updatedAt`.
-        On `vipTier` change, response `vipTierName` follows the server map.
-        `phone` and `email` may be `null` to clear. Duplicate non-null phone /
-        non-null email → 409.
+      summary: Update customer information
+      description: Maps to `ICustomerService.updateCustomer`.
       parameters:
         - $ref: '#/components/parameters/CustomerId'
       requestBody:
@@ -296,193 +768,236 @@ paths:
               schema:
                 $ref: '#/components/schemas/Customer'
         '404':
-          $ref: '#/components/responses/CustomerNotFound'
-        '409':
-          description: Duplicate phone or email
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BusinessError'
-              examples:
-                duplicatePhone:
-                  value:
-                    code: CUSTOMER_PHONE_DUPLICATE
-                    message: 手機號碼已存在
-                duplicateEmail:
-                  value:
-                    code: CUSTOMER_EMAIL_DUPLICATE
-                    message: 電子信箱已存在
+          $ref: '#/components/responses/NotFound'
     delete:
       tags: [customers]
       operationId: deleteCustomer
-      summary: Delete customer
-      description: |
-        Maps to `ICustomerService.deleteCustomer`. Hard-delete. API-only this
-        phase (no FE delete control).
-        `409` when a related order/preorder is unfinished (status is not
-        `completed`, `refunded`, or `cancelled`). This catalog phase has no
-        order/preorder tables, so `409` cannot fire yet.
-        Terminal history is kept; later `customer_id` FKs `ON DELETE SET NULL`
-        and must retain `customerName` / `customerPhone` snapshots.
+      summary: Delete a customer
+      description: Maps to `ICustomerService.deleteCustomer`.
       parameters:
         - $ref: '#/components/parameters/CustomerId'
       responses:
         '204':
-          description: Deleted
+          description: Customer deleted
         '404':
-          $ref: '#/components/responses/CustomerNotFound'
-        '409':
-          description: Unfinished order or preorder
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BusinessError'
-              example:
-                code: CUSTOMER_HAS_UNFINISHED_ORDERS
-                message: 該會員尚有未完成訂單，無法刪除
+          $ref: '#/components/responses/NotFound'
 
-  /checkout/orders:
+  /customers/{customerId}/spending:
     post:
-      tags: [checkout]
-      operationId: createCheckoutOrder
-      summary: Record a checkout sale
-      description: |
-        Cashier id and name are copied from the current user.
-        The client does not send them. Until staff login exists,
-        that user is the demo cashier `staff-001` / `店長 Fred`.
-        There is no invoice on the request or the response.
-        Checkout does not accept `preOrderId` or `preOrderItemId`.
-        Each tender uses the frontend fields: `type`, `name`, `amount`,
-        `tenderedCash`, `changeAmount`, and `transactionRef`.
-        `type` is `cash`, `credit_card`, `line_pay`, `bank_transfer`, or `cod`.
-        `cod` is rejected with `422`.
-        The `201` body is the order JSON. The server does not return HTML.
-        The client composes the slip from those fields.
-
-        `orderNumber` is `SO-YYYYMMDD-HHMMSS-####` in `Asia/Taipei`.
-        `####` is the max suffix already stored for that second, plus 1.
-        The per-second prefix is the concurrency control. There is no retry when two sales share a second.
-
-        `X-Idempotency-Key` replays the stored order when the cashier and body match.
-        A lookup before insert is not enough. On a unique conflict for that key,
-        catch it, re-select the stored order, and apply the same replay rules.
-
-        A return line's `productId` must equal the original sale line's `productId`.
-        That check always runs. Catalog products are soft-deleted (`deleted`),
-        so the sale line's product id is never cleared.
+      tags: [customers]
+      operationId: updateCustomerSpending
+      summary: Update customer total spending
+      description: Maps to `ICustomerService.updateCustomerSpending`.
       parameters:
-        - in: header
-          name: X-Idempotency-Key
-          required: false
-          schema:
-            type: string
-          description: |
-            Optional. Same key, same cashier, and same body replays the stored order JSON.
-            A different body or cashier is `409` `IDEMPOTENCY_CONFLICT`.
-            On unique conflict, re-select and replay. Do not rely on a prior SELECT alone.
+        - $ref: '#/components/parameters/CustomerId'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/CreateOrderRequest'
+              type: object
+              required: [amount]
+              properties:
+                amount:
+                  type: integer
+                  description: Spent amount in TWD
       responses:
-        '201':
-          description: Recorded order JSON. No HTML.
+        '200':
+          description: Customer spending updated
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CheckoutReceipt'
+                $ref: '#/components/schemas/OkResponse'
         '404':
           $ref: '#/components/responses/NotFound'
-        '409':
-          description: Return quantity, return customer, payment, or idempotency conflict
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BusinessError'
-        '422':
-          description: Invalid tender, branch, or points-discount flag
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BusinessError'
+
+  /system/stores:
     get:
-      tags: [checkout]
-      operationId: getOrderHistory
-      summary: Search recorded sales
+      tags: [system]
+      operationId: getStores
+      summary: Get all store branches
+      description: |
+        Retrieves all configured store branches (登入門市清單).
+      responses:
+        '200':
+          description: List of store branches
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StoreDto'
+    post:
+      tags: [system]
+      operationId: createStore
+      summary: Add a new store branch
+      description: |
+        Adds a new store branch to the system.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateStoreRequest'
+      responses:
+        '201':
+          description: Created store branch
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoreDto'
+        '400':
+          $ref: '#/components/responses/BusinessError'
+
+  /system/stores/{storeName}:
+    delete:
+      tags: [system]
+      operationId: deleteStore
+      summary: Delete a store branch
+      description: |
+        Removes a store branch from the system. System requires at least one store branch to remain active.
       parameters:
-        - in: query
-          name: customerId
-          schema: {type: string}
-        - in: query
-          name: orderNumber
-          schema: {type: string}
-          description: Exact `SO-YYYYMMDD-HHMMSS-####`
-        - in: query
-          name: productId
-          schema: {type: string}
-        - in: query
-          name: keyword
-          schema: {type: string}
-        - in: query
-          name: productKeyword
-          schema: {type: string}
-        - in: query
-          name: startDate
-          schema: {type: string, format: date-time}
-        - in: query
-          name: endDate
-          schema: {type: string, format: date-time}
-        - in: query
-          name: minAmount
-          schema: {type: integer}
-        - in: query
-          name: maxAmount
-          schema: {type: integer}
-        - in: query
-          name: status
+        - name: storeName
+          in: path
+          required: true
           schema:
             type: string
-            enum: [completed, partially_refunded, refunded, all]
-        - in: query
-          name: page
-          schema: {type: integer, minimum: 1, default: 1}
-        - in: query
-          name: pageSize
-          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+          description: Name of the store branch to delete
       responses:
         '200':
-          description: Page of sales
+          description: Store branch deleted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CheckoutOrderSearchResponse'
-  /checkout/orders/{orderId}:
-    get:
-      tags: [checkout]
-      operationId: getOrderById
-      summary: Get one recorded sale
-      parameters:
-        - in: path
-          name: orderId
-          required: true
-          schema: {type: string}
-      responses:
-        '200':
-          description: Sale
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CheckoutOrder'
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  deletedStore:
+                    type: string
+                    example: 台中一中店
+        '400':
+          $ref: '#/components/responses/BusinessError'
         '404':
-          description: Order not found
+          $ref: '#/components/responses/NotFound'
+
+  /system/oauth/accounts:
+    get:
+      tags: [system]
+      operationId: getOAuthAccounts
+      summary: Get Google OAuth authorized accounts whitelist
+      description: |
+        Retrieves all authorized Google accounts for admin and staff roles, including display names, roles, and notes.
+      parameters:
+        - name: role
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/OAuthRole'
+          description: Optional filter by role (`admin` or `staff`)
+      responses:
+        '200':
+          description: List of authorized OAuth accounts
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/BusinessError'
+                type: array
+                items:
+                  $ref: '#/components/schemas/OAuthAccountDto'
+    post:
+      tags: [system]
+      operationId: createOAuthAccount
+      summary: Add an authorized Google OAuth account
+      description: |
+        Adds a new authorized Google account to the whitelist with role, display name, and optional note.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOAuthAccountRequest'
+      responses:
+        '201':
+          description: Created OAuth account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthAccountDto'
+        '400':
+          $ref: '#/components/responses/BusinessError'
+
+  /system/oauth/accounts/{email}:
+    put:
+      tags: [system]
+      operationId: updateOAuthAccount
+      summary: Update an authorized Google OAuth account
+      description: |
+        Updates the display name, note, or role of an existing authorized Google OAuth account.
+      parameters:
+        - name: email
+          in: path
+          required: true
+          schema:
+            type: string
+            format: email
+          description: Google account Gmail address
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateOAuthAccountRequest'
+      responses:
+        '200':
+          description: Updated OAuth account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OAuthAccountDto'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [system]
+      operationId: deleteOAuthAccount
+      summary: Remove a Google OAuth account from whitelist
+      description: |
+        Removes an authorized Google account from the whitelist.
+      parameters:
+        - name: email
+          in: path
+          required: true
+          schema:
+            type: string
+            format: email
+          description: Google account Gmail address to remove
+      responses:
+        '200':
+          description: Account removed from whitelist
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  deletedEmail:
+                    type: string
+                    example: clerk01@gmail.com
+        '400':
+          $ref: '#/components/responses/BusinessError'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
 components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Authenticated cashier / store staff token containing cashierId, name, and active store branch.
+
   parameters:
     ProductId:
       name: productId
@@ -491,6 +1006,20 @@ components:
       schema:
         type: string
       example: prod-001
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: so-2001
+    PreOrderId:
+      name: preOrderId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: po-1001
     CustomerId:
       name: customerId
       in: path
@@ -500,26 +1029,44 @@ components:
       example: cust-001
 
   responses:
-    ProductNotFound:
-      description: Product not found
+    NotFound:
+      description: Resource not found
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/BusinessError'
           example:
             code: PRODUCT_NOT_FOUND
-            message: 找不到指定商品
-    CustomerNotFound:
-      description: Customer not found
+            message: 找不到指定資源
+    BusinessError:
+      description: Business rule failed (no partial writes)
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/BusinessError'
-          example:
-            code: CUSTOMER_NOT_FOUND
-            message: 找不到指定的會員
+          examples:
+            insufficientStock:
+              value:
+                code: INSUFFICIENT_STORE_STOCK
+                message: 門市現貨不足，請先從倉庫調撥
+            returnQty:
+              value:
+                code: RETURN_QTY_EXCEEDED
+                message: 退貨數量超過原單剩餘可退上限
+            payment:
+              value:
+                code: PAYMENT_INSUFFICIENT
+                message: 支付總額不足
 
   schemas:
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+
     BusinessError:
       type: object
       required: [code, message]
@@ -533,206 +1080,22 @@ components:
       type: string
       enum:
         - INSUFFICIENT_STORE_STOCK
-        - PREORDER_QTY_EXCEEDED
+        - RETURN_QTY_EXCEEDED
         - PAYMENT_INSUFFICIENT
         - PRODUCT_NOT_FOUND
         - PRODUCT_SKU_DUPLICATE
+        - ORDER_NOT_FOUND
+        - LOCATION_NOT_FOUND
+        - INVALID_LOCATION_TRANSFER
+        - TARGET_LOCATION_NOT_FOUND
         - STORAGE_CORRUPTED
         - CUSTOMER_NOT_FOUND
         - CUSTOMER_PHONE_DUPLICATE
         - CUSTOMER_EMAIL_DUPLICATE
         - CUSTOMER_HAS_UNFINISHED_ORDERS
-        - ORDER_NOT_FOUND
-        - RETURN_QTY_EXCEEDED
         - INVALID_RETURN_CUSTOMER
         - IDEMPOTENCY_CONFLICT
-        - INVALID_PAYMENT
-
-
-    CreateOrderRequest:
-      type: object
-      description: |
-        The client does not send `cashierId` or `cashierName`. The server copies
-        them from the current user. Until staff login exists, that user is the
-        demo cashier `staff-001` / `店長 Fred`. A body that still includes cashier
-        fields is ignored.
-      required: [items, shippingFee, payments]
-      properties:
-        customerId: {type: string}
-        branchId:
-          type: string
-          enum: [branch-store, branch-online]
-          default: branch-store
-        items:
-          type: array
-          minItems: 1
-          items:
-            $ref: '#/components/schemas/CreateOrderItem'
-        shippingFee: {type: integer, minimum: 0}
-        payments:
-          type: array
-          minItems: 1
-          items:
-            $ref: '#/components/schemas/PaymentTender'
-        note: {type: string}
-    CreateOrderItem:
-      type: object
-      required: [productId, quantity]
-      properties:
-        productId: {type: string}
-        quantity: {type: integer}
-        unitPrice: {type: integer, minimum: 0}
-        isManualPrice: {type: boolean, default: false}
-        priceDiffReason: {type: string}
-        pointsDiscountApplied: {type: boolean, default: false}
-        originalOrderId: {type: string}
-        originalOrderItemId: {type: string}
-        restock: {type: boolean}
-        returnReason: {type: string}
-    PaymentMethodType:
-      type: string
-      enum: [cash, credit_card, line_pay, bank_transfer, cod]
-    PaymentTender:
-      type: object
-      required: [type, name, amount]
-      properties:
-        type:
-          $ref: '#/components/schemas/PaymentMethodType'
-        name:
-          type: string
-          example: 現金
-        amount:
-          type: integer
-        tenderedCash:
-          type: integer
-          description: Cash notes received
-        changeAmount:
-          type: integer
-        transactionRef:
-          type: string
-          description: Card last-4 or transfer last-5
-    CheckoutOrderItem:
-      type: object
-      required:
-        - id
-        - productId
-        - sku
-        - name
-        - scale
-        - brand
-        - originalPrice
-        - unitPrice
-        - isManualPrice
-        - quantity
-        - subtotal
-        - pointsDiscountApplied
-        - pointsDiscountAmount
-        - returnedQuantity
-      properties:
-        id: {type: string}
-        productId:
-          type: string
-          description: Catalog id. Remains set because products are soft-deleted.
-        sku: {type: string}
-        name: {type: string}
-        scale:
-          $ref: '#/components/schemas/ModelScale'
-        brand: {type: string}
-        originalPrice: {type: integer}
-        unitPrice: {type: integer}
-        isManualPrice: {type: boolean}
-        priceDiffReason: {type: string}
-        quantity: {type: integer}
-        subtotal: {type: integer}
-        pointsDiscountApplied: {type: boolean}
-        pointsDiscountAmount: {type: integer}
-        returnedQuantity: {type: integer}
-        originalOrderId: {type: string}
-        originalOrderItemId: {type: string}
-        restock: {type: boolean}
-        returnReason: {type: string}
-    CheckoutOrder:
-      type: object
-      description: |
-        Recorded sale. `cashierId` and `cashierName` are snapshots of the current
-        user (`id`, `name`), not values from the request. Until staff login exists,
-        that user is the demo cashier `staff-001` / `店長 Fred`.
-        There is no invoice and no `costPrice`.
-        These fields are what the client uses to compose the slip.
-      required:
-        - id
-        - orderNumber
-        - branchId
-        - branchName
-        - cashierId
-        - cashierName
-        - status
-        - items
-        - itemsSubtotal
-        - discountAmount
-        - pointsDiscountAmount
-        - shippingFee
-        - totalAmount
-        - payments
-        - createdAt
-        - updatedAt
-      properties:
-        id: {type: string}
-        orderNumber:
-          type: string
-          description: '`SO-YYYYMMDD-HHMMSS-####` in Asia/Taipei. Sequence is per second.'
-          example: SO-20261011-014430-0001
-        branchId:
-          type: string
-          enum: [branch-store, branch-online]
-        branchName: {type: string, example: 台北旗艦店}
-        cashierId: {type: string}
-        cashierName: {type: string}
-        status:
-          type: string
-          enum: [completed, partially_refunded, refunded]
-        customerId: {type: [string, 'null']}
-        customerName: {type: [string, 'null']}
-        customerPhone: {type: [string, 'null']}
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/CheckoutOrderItem'
-        itemsSubtotal: {type: integer}
-        discountAmount: {type: integer}
-        pointsDiscountAmount: {type: integer}
-        shippingFee: {type: integer}
-        totalAmount: {type: integer}
-        payments:
-          type: array
-          items:
-            $ref: '#/components/schemas/PaymentTender'
-        note: {type: string}
-        createdAt: {type: string, format: date-time}
-        updatedAt: {type: string, format: date-time}
-    CheckoutReceipt:
-      type: object
-      description: |
-        JSON only. The server does not return HTML.
-        The client composes the slip from `order.branchName`, `order.orderNumber`,
-        `order.cashierName`, `order.createdAt`, each item `name` / `quantity` /
-        `unitPrice` / `subtotal`, `order.shippingFee`, `order.payments`, and
-        `order.totalAmount`.
-      required: [order]
-      properties:
-        order:
-          $ref: '#/components/schemas/CheckoutOrder'
-    CheckoutOrderSearchResponse:
-      type: object
-      required: [items, page, pageSize, total]
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/CheckoutOrder'
-        page: {type: integer}
-        pageSize: {type: integer}
-        total: {type: integer}
+        - PREORDER_QTY_EXCEEDED
 
     ModelScale:
       type: string
@@ -752,7 +1115,98 @@ components:
 
     StockLocation:
       type: string
-      enum: [store, warehouse, company, other]
+      description: Stock location identifier (UUID or default location identifier)
+      example: e1a10002-0000-4000-8000-000000000002
+
+    StockLocationDto:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique Primary Key (UUID)
+          example: e1a10001-0000-4000-8000-000000000001
+        name:
+          type: string
+          example: 後方倉庫
+        icon:
+          type: string
+          example: 📦
+        isDefault:
+          type: boolean
+          default: false
+        displayOrder:
+          type: integer
+          default: 1
+        isActive:
+          type: boolean
+          default: true
+
+    CreateStockLocationRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          example: 高雄巨蛋門市
+        icon:
+          type: string
+          example: 🏬
+        displayOrder:
+          type: integer
+        isActive:
+          type: boolean
+          default: true
+
+    UpdateStockLocationRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          example: 門市展示區
+        icon:
+          type: string
+          example: 🏪
+        displayOrder:
+          type: integer
+          example: 1
+        isActive:
+          type: boolean
+          example: true
+
+    DeleteStockLocationRequest:
+      type: object
+      required: [transferToLocation]
+      properties:
+        transferToLocation:
+          $ref: '#/components/schemas/StockLocation'
+        reason:
+          type: string
+          example: 撤點整併至後方倉庫
+
+    DeleteStockLocationResponse:
+      type: object
+      required: [success, deletedLocation, transferredToLocation, affectedProductsCount, totalQuantityTransferred]
+      properties:
+        success:
+          type: boolean
+          example: true
+        deletedLocation:
+          type: string
+          example: store_2
+        transferredToLocation:
+          type: string
+          example: warehouse
+        affectedProductsCount:
+          type: integer
+          example: 15
+        totalQuantityTransferred:
+          type: integer
+          example: 42
+        message:
+          type: string
+          example: 成功刪除地點並將 15 項商品共 42 台庫存轉移至後方倉庫
 
     LocationStock:
       type: object
@@ -766,10 +1220,6 @@ components:
         quantity:
           type: integer
 
-    ProductStatus:
-      type: string
-      enum: [active, discontinued]
-
     Product:
       type: object
       required:
@@ -779,13 +1229,9 @@ components:
         - barcode
         - brand
         - name
-        - scale
         - listPrice
-        - costPrice
         - stocks
         - totalStock
-        - preOrderPendingCount
-        - status
         - deleted
       properties:
         id:
@@ -798,12 +1244,17 @@ components:
           example: AA79121
         barcode:
           type: string
+          example: '471000000001'
         brand:
           type: string
         name:
           type: string
         scale:
           $ref: '#/components/schemas/ModelScale'
+          description: Model scale (optional)
+        spec:
+          type: string
+          description: Specification / edition / variant note
         material:
           type: string
         color:
@@ -812,8 +1263,7 @@ components:
           type: string
         listPrice:
           type: integer
-        costPrice:
-          type: integer
+          description: 建議售價 / 門市定價 (即試算表之 MSRP)
         vipPrice:
           type: integer
         stocks:
@@ -822,20 +1272,30 @@ components:
             $ref: '#/components/schemas/LocationStock'
         totalStock:
           type: integer
-        preOrderPendingCount:
-          type: integer
         note:
           type: string
-        status:
-          $ref: '#/components/schemas/ProductStatus'
+        createdAt:
+          type: string
+          readOnly: true
+          description: 建立時間
+        createdBy:
+          type: string
+          readOnly: true
+          description: 建檔人員 (後端由 Auth 取得)
+        updatedAt:
+          type: string
+          readOnly: true
+          description: 更新時間
+        updatedBy:
+          type: string
+          readOnly: true
+          description: 更新人員 (後端由 Auth 取得)
         deleted:
           type: boolean
           description: |
             Soft-delete flag. Create stores `false`.
-            `PUT /products/{productId}` sets it: `true` hides the product, `false` shows it again.
-            The row is not removed. There is no `DELETE /products/{productId}`.
-            `GET /products` omits `deleted: true`. `GET /products/{productId}` still returns it.
-            A new sale rejects a hidden product. A return may still use that `productId`.
+            `PUT /products/{productId}` sets `true` to hide and `false` to show it again.
+            The row is not removed. `GET /products` omits `deleted: true`.
 
     CreateProductRequest:
       type: object
@@ -844,21 +1304,23 @@ components:
         - barcode
         - brand
         - name
-        - scale
         - listPrice
-        - costPrice
-        - status
       properties:
         sku:
           type: string
         barcode:
           type: string
+          example: '471000000001'
         brand:
           type: string
         name:
           type: string
         scale:
           $ref: '#/components/schemas/ModelScale'
+          description: Model scale (optional)
+        spec:
+          type: string
+          description: Specification / edition / variant note
         material:
           type: string
         color:
@@ -868,16 +1330,12 @@ components:
         listPrice:
           type: integer
           minimum: 0
-        costPrice:
-          type: integer
-          minimum: 0
+          description: 建議售價 / 門市定價 (即試算表之 MSRP)
         vipPrice:
           type: integer
           minimum: 0
         note:
           type: string
-        status:
-          $ref: '#/components/schemas/ProductStatus'
 
     UpdateProductRequest:
       type: object
@@ -887,12 +1345,17 @@ components:
           type: string
         barcode:
           type: string
+          example: '471000000001'
         brand:
           type: string
         name:
           type: string
         scale:
           $ref: '#/components/schemas/ModelScale'
+          description: Model scale (optional)
+        spec:
+          type: string
+          description: Specification / edition / variant note
         material:
           type: string
         color:
@@ -902,31 +1365,544 @@ components:
         listPrice:
           type: integer
           minimum: 0
-        costPrice:
-          type: integer
-          minimum: 0
+          description: 建議售價 / 門市定價 (即試算表之 MSRP)
         vipPrice:
           type: integer
           minimum: 0
         note:
           type: string
-        status:
-          $ref: '#/components/schemas/ProductStatus'
         deleted:
           type: boolean
           description: |
             `true` hides the product from search and from a new sale.
             `false` shows it again. Does not remove the row.
 
+    InventoryTransferRequest:
+      type: object
+      required: [productId, fromLocation, toLocation, quantity]
+      properties:
+        productId:
+          type: string
+        fromLocation:
+          $ref: '#/components/schemas/StockLocation'
+        toLocation:
+          $ref: '#/components/schemas/StockLocation'
+        quantity:
+          type: integer
+          minimum: 1
+        reason:
+          type: string
+        operatorId:
+          type: string
+
+    StockAdjustRequest:
+      type: object
+      required: [productId, location, newQuantity, reason]
+      properties:
+        productId:
+          type: string
+        location:
+          $ref: '#/components/schemas/StockLocation'
+        newQuantity:
+          type: integer
+          minimum: 0
+        reason:
+          type: string
+
+    BatchStockAdjustRequest:
+      type: object
+      required: [adjustments, operatorName, timestamp]
+      properties:
+        operatorName:
+          type: string
+        timestamp:
+          type: string
+        note:
+          type: string
+        adjustments:
+          type: array
+          items:
+            $ref: '#/components/schemas/StockItemAdjustment'
+
+    StockLocationChange:
+      type: object
+      required: [location, locationName, oldQty, newQty, diff]
+      properties:
+        location:
+          $ref: '#/components/schemas/StockLocation'
+        locationName:
+          type: string
+        oldQty:
+          type: integer
+        newQty:
+          type: integer
+        diff:
+          type: integer
+
+    StockItemAdjustment:
+      type: object
+      required: [productId, sku, name, brand, changes, summaryText]
+      properties:
+        productId:
+          type: string
+        sku:
+          type: string
+        barcode:
+          type: string
+        name:
+          type: string
+        brand:
+          type: string
+        changes:
+          type: array
+          items:
+            $ref: '#/components/schemas/StockLocationChange'
+        summaryText:
+          type: string
+
+    StockAdjustmentLog:
+      type: object
+      required: [id, timestamp, operatorName, items, totalQtyChange]
+      properties:
+        id:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        operatorName:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/StockItemAdjustment'
+        totalQtyChange:
+          type: integer
+        note:
+          type: string
+
+    PaymentMethodType:
+      type: string
+      enum: [cash, credit_card, line_pay, bank_transfer, cod]
+
+    PaymentTender:
+      type: object
+      required: [type, name, amount]
+      properties:
+        type:
+          $ref: '#/components/schemas/PaymentMethodType'
+        name:
+          type: string
+          example: 現金
+        amount:
+          type: integer
+        tenderedCash:
+          type: integer
+          description: Cash notes received
+        changeAmount:
+          type: integer
+        transactionRef:
+          type: string
+          description: Card last-4 or transfer last-5
+
+    CheckoutOrderItem:
+      type: object
+      required:
+        - id
+        - productId
+        - sku
+        - name
+        - brand
+        - originalPrice
+        - unitPrice
+        - isManualPrice
+        - quantity
+        - subtotal
+        - pointsDiscountApplied
+        - pointsDiscountAmount
+        - returnedQuantity
+      properties:
+        id:
+          type: string
+        productId:
+          type: string
+          description: Catalog id. Remains set because products are soft-deleted.
+        sku:
+          type: string
+        name:
+          type: string
+        brand:
+          type: string
+        scale:
+          $ref: '#/components/schemas/ModelScale'
+        originalPrice:
+          type: integer
+        unitPrice:
+          type: integer
+          description: 結帳成交單價
+        isManualPrice:
+          type: boolean
+        priceDiffReason:
+          type: string
+        quantity:
+          type: integer
+          description: Positive for purchase, negative for return/exchange
+        subtotal:
+          type: integer
+        pointsDiscountApplied:
+          type: boolean
+        pointsDiscountAmount:
+          type: integer
+        note:
+          type: string
+          description: 項目備註
+        returnedQuantity:
+          type: integer
+          description: Cumulative quantity returned against this line item
+          default: 0
+        originalOrderId:
+          type: string
+        originalOrderItemId:
+          type: string
+        restock:
+          type: boolean
+          default: true
+        returnReason:
+          type: string
+
+    OrderStatus:
+      type: string
+      enum: [completed, partially_refunded, refunded]
+
+    CheckoutOrder:
+      type: object
+      required:
+        - id
+        - orderNumber
+        - branchId
+        - branchName
+        - cashierId
+        - cashierName
+        - status
+        - items
+        - itemsSubtotal
+        - discountAmount
+        - pointsDiscountAmount
+        - shippingFee
+        - totalAmount
+        - payments
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+        orderNumber:
+          type: string
+          description: '`SO-YYYYMMDD-HHMMSS-####` in Asia/Taipei. Sequence is per second.'
+          example: SO-20261011-014430-0001
+        branchId:
+          type: string
+          enum: [branch-store, branch-online]
+        branchName:
+          type: string
+          example: 台北旗艦店
+        cashierId:
+          type: string
+        cashierName:
+          type: string
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        customerId:
+          type: string
+        customerName:
+          type: string
+        customerPhone:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CheckoutOrderItem'
+        itemsSubtotal:
+          type: integer
+        discountAmount:
+          type: integer
+        pointsDiscountAmount:
+          type: integer
+        shippingFee:
+          type: integer
+        totalAmount:
+          type: integer
+        payments:
+          type: array
+          items:
+            $ref: '#/components/schemas/PaymentTender'
+        note:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+          readOnly: true
+          description: 建立時間
+        createdBy:
+          type: string
+          readOnly: true
+          description: 建檔人員
+        updatedAt:
+          type: string
+          format: date-time
+          readOnly: true
+          description: 更新時間
+        updatedBy:
+          type: string
+          readOnly: true
+          description: 更新人員
+
+    CreateOrderItemPayload:
+      type: object
+      required: [productId, quantity]
+      properties:
+        productId:
+          type: string
+        quantity:
+          type: integer
+          description: Positive for purchase, negative for return/exchange
+        unitPrice:
+          type: integer
+          description: Cashier-set unit price (re-validated by server unless isManualPrice is true)
+        isManualPrice:
+          type: boolean
+          default: false
+        priceDiffReason:
+          type: string
+        pointsDiscountApplied:
+          type: boolean
+          default: false
+        originalOrderId:
+          type: string
+          description: Required when quantity < 0 (links return to original sales order)
+        originalOrderItemId:
+          type: string
+          description: Required when quantity < 0 (links return to original item line)
+        restock:
+          type: boolean
+          default: true
+          description: For returns, whether returned item is restocked to store inventory
+        returnReason:
+          type: string
+        note:
+          type: string
+
+    CreateOrderPayload:
+      type: object
+      required: [items, payments]
+      properties:
+        customerId:
+          type: string
+        branchId:
+          type: string
+          enum: [branch-store, branch-online]
+          default: branch-store
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/CreateOrderItemPayload'
+        shippingFee:
+          type: integer
+          default: 0
+        payments:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/PaymentTender'
+        note:
+          type: string
+
+    CheckoutReceipt:
+      type: object
+      required: [order, receiptPrintHtml]
+      properties:
+        order:
+          $ref: '#/components/schemas/CheckoutOrder'
+        receiptPrintHtml:
+          type: string
+          description: Thermal-style receipt HTML for printing and preview
+
+    CheckoutOrderSearchResponse:
+      type: object
+      required: [items, page, pageSize, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CheckoutOrder'
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+
+    PreOrderStatus:
+      type: string
+      enum:
+        - pending
+        - partially_arrived
+        - partially_completed
+        - completed
+        - cancelled
+
+    PreOrderItem:
+      type: object
+      required:
+        - id
+        - productId
+        - sku
+        - productName
+        - scale
+        - brand
+        - quotedPrice
+        - qtyOrdered
+        - qtyArrived
+        - qtyDelivered
+      properties:
+        id:
+          type: string
+        productId:
+          type: string
+        sku:
+          type: string
+        productName:
+          type: string
+        scale:
+          $ref: '#/components/schemas/ModelScale'
+        brand:
+          type: string
+        quotedPrice:
+          type: integer
+        qtyOrdered:
+          type: integer
+        qtyArrived:
+          type: integer
+        qtyDelivered:
+          type: integer
+
+    PreOrder:
+      type: object
+      required:
+        - id
+        - orderNumber
+        - customerId
+        - customerName
+        - customerPhone
+        - orderDate
+        - status
+        - source
+        - items
+        - updatedAt
+      properties:
+        id:
+          type: string
+        orderNumber:
+          type: string
+          example: PO-202607-0019
+        customerId:
+          type: string
+        customerName:
+          type: string
+        customerPhone:
+          type: string
+        orderDate:
+          type: string
+        expectedArrivalDate:
+          type: string
+        status:
+          $ref: '#/components/schemas/PreOrderStatus'
+        source:
+          type: string
+          enum: [in_store, website]
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PreOrderItem'
+        note:
+          type: string
+        operatorName:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+
+    CreatePreOrderRequest:
+      type: object
+      properties:
+        customerId:
+          type: string
+        customerName:
+          type: string
+        customerPhone:
+          type: string
+        orderDate:
+          type: string
+        expectedArrivalDate:
+          type: string
+        source:
+          type: string
+          enum: [in_store, website]
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PreOrderItem'
+        note:
+          type: string
+        operatorName:
+          type: string
+
+    UpdatePreOrderRequest:
+      type: object
+      properties:
+        customerId:
+          type: string
+        customerName:
+          type: string
+        customerPhone:
+          type: string
+        orderDate:
+          type: string
+        expectedArrivalDate:
+          type: string
+        status:
+          $ref: '#/components/schemas/PreOrderStatus'
+        source:
+          type: string
+          enum: [in_store, website]
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/PreOrderItem'
+        note:
+          type: string
+        operatorName:
+          type: string
+
+    MarkItemsArrivedRequest:
+      type: object
+      required: [arrivedItems]
+      properties:
+        arrivedItems:
+          type: array
+          items:
+            type: object
+            required: [productId, qty]
+            properties:
+              productId:
+                type: string
+              qty:
+                type: integer
+                minimum: 1
+
     VipTier:
       type: string
-      enum: [regular, silver, gold, platinum]
-
-    VipTierOrAll:
-      oneOf:
-        - $ref: '#/components/schemas/VipTier'
-        - type: string
-          const: ALL
+      enum: [Retail, B, A, S]
 
     Customer:
       type: object
@@ -934,52 +1910,81 @@ components:
         - id
         - name
         - phone
-        - email
         - vipTier
         - vipTierName
         - totalSpent
         - createdAt
-        - updatedAt
       properties:
         id:
           type: string
-          description: Server-assigned PK (`cust-{uuid4}` without dashes)
+        name:
+          type: string
+          description: Customer_Name (客戶姓名/名稱)
+        phone:
+          type: string
+          description: Phone (電話/手機)
+        email:
+          type: string
+          format: email
+        vipTier:
+          $ref: '#/components/schemas/VipTier'
+          description: Tier (等級：Retail, B, A, S)
+        vipTierName:
+          type: string
+        totalSpent:
+          type: integer
+        note:
+          type: string
+          description: 備註
+        createdAt:
+          type: string
+          readOnly: true
+          description: 建立時間
+        createdBy:
+          type: string
+          readOnly: true
+          description: 建檔人員 (後端由 Auth 取得)
+        updatedAt:
+          type: string
+          readOnly: true
+          description: 更新時間
+        updatedBy:
+          type: string
+          readOnly: true
+          description: 更新人員 (後端由 Auth 取得)
+
+    CreateCustomerRequest:
+      type: object
+      required:
+        - name
+        - phone
+      properties:
         name:
           type: string
         phone:
-          type: [string, 'null']
-          description: |
-            Optional. Always present on the response. Unique among non-null
-            values after canonicalize. JSON `null` when unset.
+          type: string
         email:
-          type: [string, 'null']
+          type: string
           format: email
-          description: |
-            Optional. Always present on the response. Unique among non-null
-            values after trim + lowercase. JSON `null` when unset.
         vipTier:
           $ref: '#/components/schemas/VipTier'
-        vipTierName:
-          type: string
-          description: |
-            Derived on read, not stored.
-            platinum 白金黑卡 (9折); gold 金卡會員 (95折);
-            silver 銀卡會員 (98折); regular 一般會員
-        totalSpent:
-          type: integer
-          minimum: 0
-          description: Server-owned after create; catalog create always 0
         note:
           type: string
-          description: Optional string. Omit or empty. Not JSON null.
-        createdAt:
+
+    UpdateCustomerRequest:
+      type: object
+      properties:
+        name:
           type: string
-          format: date-time
-          description: Server-assigned ISO 8601
-        updatedAt:
+        phone:
           type: string
-          format: date-time
-          description: Server-assigned ISO 8601; bump on profile update
+        email:
+          type: string
+          format: email
+        vipTier:
+          $ref: '#/components/schemas/VipTier'
+        note:
+          type: string
 
     CustomerSearchResponse:
       type: object
@@ -991,56 +1996,84 @@ components:
             $ref: '#/components/schemas/Customer'
         page:
           type: integer
-          minimum: 1
+          example: 1
         pageSize:
           type: integer
-          minimum: 1
-          maximum: 100
+          example: 20
         total:
           type: integer
-          minimum: 0
-          description: Filtered row count (not just this page)
+          example: 42
 
-    CreateCustomerRequest:
+    StoreDto:
       type: object
-      required:
-        - name
+      required: [name]
       properties:
         name:
           type: string
-        phone:
-          type: [string, 'null']
-          description: |
-            Optional. Omit / null / whitespace / empty after canonicalize →
-            SQL NULL. Unique among non-null canonical values.
-        email:
-          type: [string, 'null']
-          format: email
-          description: Optional. Omit / null / whitespace → SQL NULL
-        vipTier:
-          $ref: '#/components/schemas/VipTier'
-          description: Optional; omit → regular
-        note:
-          type: string
-          description: Optional string. Omit or empty. Not JSON null.
+          example: 台北旗艦店
+        isDefault:
+          type: boolean
+          default: false
 
-    UpdateCustomerRequest:
+    CreateStoreRequest:
       type: object
-      description: |
-        Partial profile update. Excludes id, createdAt, updatedAt,
-        vipTierName, totalSpent. phone and email may be null to clear.
+      required: [name]
       properties:
         name:
           type: string
-        phone:
-          type: [string, 'null']
-          description: Omit to leave unchanged; null clears to SQL NULL
+          example: 高雄巨蛋店
+
+    OAuthRole:
+      type: string
+      enum: [admin, staff]
+      description: Access control role for Google OAuth accounts
+      example: admin
+
+    OAuthAccountDto:
+      type: object
+      required: [email, role]
+      properties:
         email:
-          type: [string, 'null']
+          type: string
           format: email
-          description: Omit to leave unchanged; null clears to SQL NULL
-        vipTier:
-          $ref: '#/components/schemas/VipTier'
+          example: fred@gmail.com
+        role:
+          $ref: '#/components/schemas/OAuthRole'
+        name:
+          type: string
+          example: 店長 Fred
+          description: Display name / cashier name
         note:
           type: string
-          description: Optional string. Omit to leave unchanged; empty string is valid.
+          example: 系統最高管理員 / 總部
+          description: Optional note / job title / shift info
+
+    CreateOAuthAccountRequest:
+      type: object
+      required: [email, role]
+      properties:
+        email:
+          type: string
+          format: email
+          example: clerk01@gmail.com
+        role:
+          $ref: '#/components/schemas/OAuthRole'
+        name:
+          type: string
+          example: 王小美
+        note:
+          type: string
+          example: 台北店早班店員
+
+    UpdateOAuthAccountRequest:
+      type: object
+      properties:
+        role:
+          $ref: '#/components/schemas/OAuthRole'
+        name:
+          type: string
+          example: 王小美
+        note:
+          type: string
+          example: 台北店早班主管
+

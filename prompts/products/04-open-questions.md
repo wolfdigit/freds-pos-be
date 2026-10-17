@@ -31,7 +31,7 @@ Decisions from the planning discussion are recorded below. Items marked **Decide
 
 ### 2. PUT body — contract excludes non-metadata fields
 
-- Named schema `UpdateProductRequest`: only `sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `costPrice`, `vipPrice`, `note`, `status`, `material`, `color`, `imageUrl`
+- Named schema `UpdateProductRequest`: only `sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `vipPrice`, `note`, `material`, `color`, `imageUrl`, `deleted`. The catalog does not record `costPrice` or product `status`.
 - **Do not** document `stocks`, `totalStock`, `id`, `normalizedSku`, `preOrderPendingCount` on update
 - FE: replace `Partial<Product>` update payload with a dedicated update type aligned to OpenAPI
 - Implementation may use Pydantic `extra='ignore'` as a safety net; the **source of truth** is the narrowed OpenAPI schema

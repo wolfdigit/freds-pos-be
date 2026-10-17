@@ -123,7 +123,7 @@ Base URL: `/api/v1` (see [`../openapi.yaml`](../openapi.yaml) servers).
 5. Integer TWD only. No fractional currency.
 6. The NT$360 points reduction is already in the line `unitPrice` from the frontend. If that reduction would make a line `subtotal` negative, that line `subtotal` is **0**. `totalAmount` is the sum of line subtotals plus shipping. It does not floor the points discount again. A return line keeps a negative `subtotal` so the refund still reduces the total. A ticket may contain sale lines and return lines together.
 7. Walk-in sales omit `customerId`. Snapshots are null. `total_spent` is unchanged.
-8. The receipt is the order JSON. The server does not send HTML.
+8. The `201` body is `{ order, receiptPrintHtml }`. `receiptPrintHtml` is the thermal slip. There is no invoice.
 
 ## Doc map
 

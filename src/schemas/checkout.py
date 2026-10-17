@@ -7,11 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class PaymentMethodType(str, Enum):
     CASH = "cash"
-    BANK_TRANSFER_CTBC = "bank_transfer_ctbc"
-    BANK_TRANSFER_UBOT = "bank_transfer_ubot"
-    CREDIT_CARD_PHYSICAL = "credit_card_physical"
-    CREDIT_CARD_ONLINE = "credit_card_online"
+    CREDIT_CARD = "credit_card"
     LINE_PAY = "line_pay"
+    BANK_TRANSFER = "bank_transfer"
     COD = "cod"
 
 
@@ -30,17 +28,29 @@ class PaymentTender(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     type: PaymentMethodType
+    name: str
     amount: int
+    tendered_cash: Optional[int] = Field(None, alias="tenderedCash")
+    change_amount: Optional[int] = Field(None, alias="changeAmount")
+    transaction_ref: Optional[str] = Field(None, alias="transactionRef")
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("name must not be empty")
+        return stripped
 
 
 class CheckoutOrderItem(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
-    product_id: Optional[str] = Field(None, alias="productId")
+    product_id: str = Field(..., alias="productId")
     sku: str
     name: str
-    scale: str
+    scale: Optional[str] = None
     brand: str
     original_price: int = Field(..., alias="originalPrice")
     unit_price: int = Field(..., alias="unitPrice")
@@ -55,6 +65,7 @@ class CheckoutOrderItem(BaseModel):
     original_order_item_id: Optional[str] = Field(None, alias="originalOrderItemId")
     restock: Optional[bool] = None
     return_reason: Optional[str] = Field(None, alias="returnReason")
+    note: Optional[str] = None
 
 
 class CheckoutOrder(BaseModel):
@@ -79,10 +90,14 @@ class CheckoutOrder(BaseModel):
     payments: List[PaymentTender]
     note: str = ""
     created_at: datetime = Field(..., alias="createdAt")
+    created_by: Optional[str] = Field(None, alias="createdBy")
     updated_at: datetime = Field(..., alias="updatedAt")
+    updated_by: Optional[str] = Field(None, alias="updatedBy")
 
 
 class CheckoutReceipt(BaseModel):
+    """Recorded order plus the thermal slip HTML."""
+
     model_config = ConfigDict(populate_by_name=True)
 
     order: CheckoutOrder
@@ -102,6 +117,7 @@ class CreateOrderItem(BaseModel):
     original_order_item_id: Optional[str] = Field(None, alias="originalOrderItemId")
     restock: Optional[bool] = None
     return_reason: Optional[str] = Field(None, alias="returnReason")
+    note: Optional[str] = None
 
     @field_validator("quantity")
     @classmethod

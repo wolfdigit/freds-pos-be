@@ -65,7 +65,7 @@ Same fields as the frontend tender:
 
 | Field | Type | Notes |
 |-------|------|--------|
-| `type` | `PaymentMethodType` | `cod` is rejected in this phase (`422`). |
+| `type` | `PaymentMethodType` | `cash`, `credit_card`, `line_pay`, `bank_transfer`, or `cod`. `cod` is accepted. |
 | `name` | string | Required. Display name, such as `現金`. |
 | `amount` | integer | This tender's applied amount. Negative on a refund tender. |
 | `tenderedCash` | integer | Optional. Cash notes received. |
@@ -126,7 +126,7 @@ All checks run inside the database transaction. Any failure rolls back.
 5. `branchId`, when sent, is `branch-store` or `branch-online`. Anything else → `422`.
 6. A line with `pointsDiscountApplied: true` must have `quantity > 0` and a `customerId` on the order. Otherwise `422`. At most one such line per `productId` on the order. A second line for the same product with the flag set → `422`. The frontend already reduced `unitPrice` by 360. The server does not change `unitPrice` again and does not read a points balance. A return line (`quantity < 0`) is stored with `pointsDiscountApplied: false` and `pointsDiscountAmount: 0` even if the original line was discounted. The refund amount is that line's `unitPrice × quantity` only.
 7. Payments: when `totalAmount ≥ 0`, the sum of `amount` must be ≥ `totalAmount`. Else `409` `PAYMENT_INSUFFICIENT`. When `totalAmount < 0`, the sum must equal `totalAmount`.
-8. `cod` tender → `422`.
+8. `cod` is a valid tender. It is stored and returned like the other payment types.
 9. A checkout ticket can contain both sale lines (`quantity > 0`) and return lines (`quantity < 0`). That mix is valid.
 
 ### Writes on success
@@ -145,12 +145,12 @@ In one commit:
 
 | Status | Body |
 |--------|------|
-| `201` | `CheckoutReceipt`: `{ order }`. `order` is `CheckoutOrder`. |
+| `201` | `CheckoutReceipt`: `{ order, receiptPrintHtml }`. `order` is `CheckoutOrder`. `receiptPrintHtml` is the thermal slip. |
 | `404` | `PRODUCT_NOT_FOUND`, `CUSTOMER_NOT_FOUND`, `ORDER_NOT_FOUND` |
 | `409` | Return quantity, return customer, payment, or idempotency conflicts |
-| `422` | Malformed body, empty items, zero quantity, unknown branch, or `cod` |
+| `422` | Malformed body, empty items, zero quantity, or unknown branch |
 
-The server does not return HTML. The client builds the slip from `order.branchName`, `order.orderNumber`, `order.cashierName`, `order.createdAt`, each item's `name`, `quantity`, `unitPrice`, and `subtotal`, `order.shippingFee`, `order.payments`, and `order.totalAmount`. There is no invoice on the slip.
+`receiptPrintHtml` is returned with the order. There is no invoice on the slip. The HTML uses `order.branchName`, `order.orderNumber`, `order.cashierName`, `order.createdAt`, each item's `name`, `quantity`, `unitPrice`, and `subtotal`, `order.shippingFee`, `order.payments`, and `order.totalAmount`.
 
 ---
 

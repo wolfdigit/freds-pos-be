@@ -9,6 +9,7 @@ from src.api.deps import get_current_user_optional, get_db
 from src.schemas.checkout import (
     CheckoutOrder,
     CheckoutOrderSearchResponse,
+    CheckoutReceipt,
     CreateOrderRequest,
     OrderStatus,
 )
@@ -35,7 +36,7 @@ def create_checkout_order(
     body: CreateOrderRequest,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_optional),
-    idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
+    idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key"),
 ) -> CheckoutReceipt:
     return CheckoutService(db).create(
         body,

@@ -31,6 +31,7 @@ class PreOrder(Base):
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="in_store")
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    operator_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     order_date: Mapped[date] = mapped_column(Date, nullable=False)
     expected_arrival_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(

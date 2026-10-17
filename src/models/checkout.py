@@ -58,6 +58,8 @@ class CheckoutOrder(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utc_now, onupdate=_utc_now
     )
+    created_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     items: Mapped[List["CheckoutOrderItem"]] = relationship(
         "CheckoutOrderItem",
@@ -87,10 +89,10 @@ class CheckoutOrderItem(Base):
         index=True,
     )
     line_no: Mapped[int] = mapped_column(Integer, nullable=False)
-    product_id: Mapped[Optional[str]] = mapped_column(
+    product_id: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("product.id", ondelete="SET NULL"),
-        nullable=True,
+        ForeignKey("product.id", ondelete="RESTRICT"),
+        nullable=False,
         index=True,
     )
     sku: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -115,6 +117,7 @@ class CheckoutOrderItem(Base):
     )
     restock: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     return_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     order: Mapped["CheckoutOrder"] = relationship(
         "CheckoutOrder",
@@ -141,7 +144,11 @@ class CheckoutPayment(Base):
     )
     line_no: Mapped[int] = mapped_column(Integer, nullable=False)
     type: Mapped[str] = mapped_column(String(32), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
     amount: Mapped[int] = mapped_column(Integer, nullable=False)
+    tendered_cash: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    change_amount: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    transaction_ref: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     order: Mapped["CheckoutOrder"] = relationship("CheckoutOrder", back_populates="payments")
 

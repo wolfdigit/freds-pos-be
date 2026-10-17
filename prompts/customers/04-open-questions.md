@@ -2,6 +2,8 @@
 
 Decisions from the planning discussion are recorded below. Items marked **Decided** should not be reopened without cause. Rows **27–34** (2026-09-13 revision) supersede earlier choices on points, email, phone, by-phone, `updatedAt`, `note`, paging, and SQL-only search.
 
+The frontend OpenAPI (2026-10-17) supersedes the phone-optional and `regular` / `silver` / `gold` / `platinum` rows: `phone` is required, and `vipTier` is `Retail`, `B`, `A`, `S` (omit → `Retail`).
+
 ---
 
 ## Decision log

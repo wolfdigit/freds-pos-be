@@ -13,8 +13,8 @@ Customers paths live in the merged [`../openapi.yaml`](../openapi.yaml) alongsid
 | Change | Detail |
 |--------|--------|
 | `CreateCustomerRequest.required` | `name` only. **Phone and email are not required.** No `vipTierName`, `totalSpent`, `rewardPoints`, `vipTier`. |
-| `CreateCustomerRequest` properties | Optional: `phone` (`type: [string, null]`), `email` (`type: [string, null]`, `format: email`), `vipTier` (default `regular`), `note` (optional **string**, not nullable). No `rewardPoints`. No client `id` / `createdAt` / `updatedAt` / `vipTierName` / `totalSpent`. |
-| `POST /customers` description | Server assigns `id`, `createdAt`, `updatedAt`; always `totalSpent: 0`; missing `vipTier` → `regular`; derives `vipTierName`; omit/`null` phone → `NULL`; omit/`null` email → `NULL`; duplicate non-null phone → 409; duplicate non-null email → 409; invalid email → 422. |
+| `CreateCustomerRequest` properties | Required: `name`, `phone`. Optional: `email` (`type: [string, null]`, `format: email`), `vipTier` (default `Retail`), `note`. No `rewardPoints`. No client `id` / `createdAt` / `updatedAt` / `vipTierName` / `totalSpent`. |
+| `POST /customers` description | Server assigns `id`, `createdAt`, `updatedAt`; always `totalSpent: 0`; missing `vipTier` → `Retail`; derives `vipTierName`; `phone` is required and unique; omit/`null` email → `NULL`; duplicate phone → 409; duplicate non-null email → 409; invalid email → 422. |
 | `UpdateCustomerRequest` | Profile fields only (`name`, `phone`, `email`, `vipTier`, `note`). **Exclude** `id`, `createdAt`, `updatedAt`, `vipTierName`, `totalSpent`, `rewardPoints`. `phone` and `email` may be `null` to clear. |
 | `PUT` description | Profile only; never mutate `totalSpent`; bump `updatedAt`; phone/email uniqueness among non-null; `vipTierName` follows the map. |
 | `GET /customers` | Params **`keyword`**, **`vipTier`** (`VipTier` \| `ALL`), **`page`** (default 1), **`pageSize`** (default 20, max 100). **No `minPoints`.** Response **`CustomerSearchResponse`** `{ items, page, pageSize, total }`. SQL-only filters. Sort `name ASC`. |

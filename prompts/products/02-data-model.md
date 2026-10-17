@@ -20,9 +20,7 @@ erDiagram
     string color
     string image_url
     int list_price
-    int cost_price
     int vip_price
-    string status
     boolean deleted
     string note
     datetime created_at
@@ -61,9 +59,7 @@ Catalog metadata only. **Does not** store `total_stock` or `pre_order_pending_co
 | `color` | `String` nullable | |
 | `image_url` | `String` nullable | → JSON `imageUrl` |
 | `list_price` | `Integer` | TWD ≥ 0 → `listPrice` |
-| `cost_price` | `Integer` | TWD ≥ 0 → `costPrice` |
 | `vip_price` | `Integer` nullable | TWD ≥ 0 → `vipPrice` |
-| `status` | `String` | `active` \| `discontinued` |
 | `deleted` | `Boolean` | Not null. Default `false`. `PUT /products/{productId}` sets it. `true` hides the product. `false` restores it. The row is never removed, so checkout lines keep `product_id` and a return can still require the same product id. |
 | `note` | `Text` / `String` nullable | |
 | `created_at` | `DateTime` TZ | Server set on insert |
@@ -173,7 +169,6 @@ Register models in `src/models/__init__.py` / `src/db/base.py` so Alembic autoge
 | `normalized_sku` | `normalizedSku` |
 | `image_url` | `imageUrl` |
 | `list_price` | `listPrice` |
-| `cost_price` | `costPrice` |
 | `vip_price` | `vipPrice` |
 | `location_name` | `locationName` |
 | (computed) | `totalStock`, `preOrderPendingCount` |

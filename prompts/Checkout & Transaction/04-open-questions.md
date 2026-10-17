@@ -17,11 +17,11 @@ Added the same day, then corrected: the NT$360 points exchange is **per product 
 | 3 | Immutability | Prices, buyer, cashier, branch, lines, and tenders do not change after commit. Returns are new orders. |
 | 4 | Product search | **Reuse `GET /products`.** No autocomplete endpoint, no separate rank, no separate limit. |
 | 5 | Suggestion size | **Removed.** The catalog list is the counter list. |
-| 6 | Discontinued products | Catalog search already returns them. Commit does not reject `discontinued`. |
+| 6 | Discontinued products | **Removed.** The catalog does not record product `status`. |
 | 7 | Charged price | Manual price only when `isManualPrice` is true. Otherwise **list price**, including a preorder pickup. Client `unitPrice` is ignored when the line is not manual. |
 | 8 | VIP auto-price | **Deferred.** Current `attachCustomer` does not reprice the cart. Do not apply `vipPrice` or tier percent in this phase. |
 | 9 | `originalPrice` | Always the list price at commit, so discount is list minus charged. |
-| 10 | Cost | Copy `cost_price` onto the line. **Omit it from JSON** so the receipt payload does not expose cost. |
+| 10 | Cost | **Removed.** The catalog and the sale line do not record `cost_price`. |
 | 11 | Buyer snapshot | Copy `name` and `phone` at commit. `customer_id` nullable, **`ON DELETE SET NULL`**. Snapshots remain. Walk-in leaves all three empty. |
 | 12 | Cashier | Snapshot of the current user, not a field on the create body. No staff table. Until login exists, `get_current_user_optional` is `staff-001` / `店長 Fred`. |
 | 13 | Branch | Two fixed ids, no branch table. `branch-store` / `台北旗艦店` is the physical counter and the default. `branch-online` / `官網` is the online store. Server sets the name from the id. Both branches deduct the same `store` shelf. |
@@ -32,7 +32,7 @@ Added the same day, then corrected: the NT$360 points exchange is **per product 
 | 18 | Stock | Positive lines and preorder pickups deduct **`store`** under a row lock. Short stock → `409` `INSUFFICIENT_STORE_STOCK`. Returns restock `store` unless `restock` is false. Other locations do not move. |
 | 19 | Returns | Negative quantity requires `originalOrderId` and `originalOrderItemId`. Cap is `quantity - returnedQuantity`. A member sale cannot be returned onto a different member. A return refunds **`unitPrice` only**. It does not reverse the NT$360. The original line keeps its points-discount columns. |
 | 20 | Preorder authoring | **No create/edit API.** This pass adds `pre_order` and `pre_order_item` so pickup can increment `qty_delivered` and derive status. |
-| 21 | Payments | At least one tender. Fields match the frontend: `type`, `name`, `amount`, `tenderedCash`, `changeAmount`, `transactionRef`. Types are `cash`, `credit_card`, `line_pay`, `bank_transfer`, `cod`. `cod` rejected. Non-negative totals require payment sum ≥ total. Negative totals require payment sum = total. Checkout does not accept preorder ids. |
+| 21 | Payments | At least one tender. Fields match the frontend OpenAPI: `type`, `name`, `amount`, `tenderedCash`, `changeAmount`, `transactionRef`. Types are `cash`, `credit_card`, `line_pay`, `bank_transfer`, `cod`. **`cod` is accepted.** Non-negative totals require payment sum ≥ total. Negative totals require payment sum = total. Checkout does not accept preorder ids. |
 | 22 | Idempotency | Optional header `X-Idempotency-Key`, stored as `idempotency_key`. Same key, same current user, and same body replays the order JSON. Same key with a different body or a different user → `409`. On unique conflict, catch, re-select, and apply those same rules. A lookup before insert is not enough. |
 | 23 | History paging | `page` / `pageSize` like customers. Sort **`createdAt DESC`**. |
 | 24 | Auth | Optional/dummy for this phase. |
@@ -40,9 +40,9 @@ Added the same day, then corrected: the NT$360 points exchange is **per product 
 | 26 | Implementation | **Backend checkout API** in this pass: models, migration, `POST/GET /checkout/orders`, stock, `totalSpent`. Frontend wiring stays later. |
 | 27 | Discount floor | Floor the sale total at 0 only when points discounts wipe out a non-negative gross. A return total stays negative. |
 | 28 | Invoice | **None.** No invoice number, type, carrier, tax id, or buyer title. No `invoiceNumber` query. No invoice on the receipt. |
-| 29 | Receipt body | **No HTML.** `201` is `{ order }` and `order` carries the slip fields. The client composes the HTML. |
+| 29 | Receipt body | **`201` is `{ order, receiptPrintHtml }`.** The server returns the thermal HTML. There is no invoice. |
 | 30 | Product delete | **Soft delete through `PUT /products/{productId}`.** `deleted: true` hides the row from search and from a new sale. `deleted: false` restores it. No `DELETE` route and no row removal. Sale line `product_id` is required and **`ON DELETE RESTRICT`**. A return always requires the request `productId` to equal the original line's `product_id`, including when that product is hidden. |
-| 31 | OpenAPI source | Checkout shapes follow `freds-pos-fe/docs/openapi.yaml` after invoice was removed, then this folder's narrower rules (no HTML, time-prefixed order number, soft-deleted products, idempotent replay). |
+| 31 | OpenAPI source | Checkout shapes follow `freds-pos-fe/docs/openapi.yaml`, plus branch, points discount, the per-second order number, paged history, soft-deleted products, and idempotent replay. The receipt includes HTML. |
 
 ## Left for later
 

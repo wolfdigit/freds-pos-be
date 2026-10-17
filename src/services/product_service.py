@@ -5,6 +5,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional, Sequence
 
+from src.models.location import StockLocation
+
 from sqlalchemy import func, or_, select
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.orm import Session, selectinload
@@ -16,25 +18,9 @@ from src.schemas.product import (
     CreateProductRequest,
     LocationStock,
     Product as ProductSchema,
-    StockLocation,
     UpdateProductRequest,
 )
-
-# 庫存地點代碼對應的中文顯示名稱（門市、倉庫、總倉、調度暫存）。
-LOCATION_NAME_MAP = {
-    StockLocation.STORE: "門市現貨",
-    StockLocation.WAREHOUSE: "後方倉庫",
-    StockLocation.COMPANY: "公司總倉",
-    StockLocation.OTHER: "調度暫存",
-}
-
-# 回傳庫存列表時的固定地點順序，與前端顯示一致。
-STOCK_LOCATION_ORDER: Sequence[StockLocation] = (
-    StockLocation.STORE,
-    StockLocation.WAREHOUSE,
-    StockLocation.COMPANY,
-    StockLocation.OTHER,
-)
+from src.services.inventory_service import ensure_locations
 
 
 # 將 SKU 轉成大寫並移除非 A-Z/0-9 字元（與前端相同）。
@@ -49,27 +35,40 @@ def _new_product_id() -> str:
     return f"prod-{uuid.uuid4().hex}"
 
 
+def _blank_to_none(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def _actor_name(actor_name: Optional[str]) -> Optional[str]:
+    return _blank_to_none(actor_name)
+
+
 # 將 ORM Product 轉成 API 的 ProductSchema（含庫存與預購待出）。
 # product: 已載入關聯的商品
-def _to_product_schema(product: Product) -> ProductSchema:
+def _to_product_schema(product: Product, locations: Sequence[StockLocation]) -> ProductSchema:
     stocks_by_location = {s.location: s for s in product.stocks}
     stocks: List[LocationStock] = []
-    for loc in STOCK_LOCATION_ORDER:
-        row = stocks_by_location.get(loc.value)
-        if row is not None:
+    seen = set()
+    for loc in locations:
+        seen.add(loc.id)
+        row = stocks_by_location.get(loc.id)
+        stocks.append(
+            LocationStock(
+                location=loc.id,
+                locationName=row.location_name if row is not None else loc.name,
+                quantity=row.quantity if row is not None else 0,
+            )
+        )
+    for row in product.stocks:
+        if row.location not in seen:
             stocks.append(
                 LocationStock(
-                    location=StockLocation(row.location),
+                    location=row.location,
                     locationName=row.location_name,
                     quantity=row.quantity,
-                )
-            )
-        else:
-            stocks.append(
-                LocationStock(
-                    location=loc,
-                    locationName=LOCATION_NAME_MAP[loc],
-                    quantity=0,
                 )
             )
 
@@ -87,18 +86,22 @@ def _to_product_schema(product: Product) -> ProductSchema:
         barcode=product.barcode,
         brand=product.brand,
         name=product.name,
-        scale=product.scale,
+        scale=product.scale or None,
+        spec=product.spec,
         material=product.material,
         color=product.color,
         imageUrl=product.image_url,
         listPrice=product.list_price,
-        costPrice=product.cost_price,
         vipPrice=product.vip_price,
         stocks=stocks,
         totalStock=total_stock,
         preOrderPendingCount=pending,
         note=product.note,
-        status=product.status,
+        deleted=product.deleted,
+        createdAt=product.created_at,
+        createdBy=product.created_by,
+        updatedAt=product.updated_at,
+        updatedBy=product.updated_by,
     )
 
 
@@ -149,10 +152,11 @@ class ProductService:
 
     # 新增商品並建立各地點庫存列（數量 0）。
     # data: 建立商品的請求內容。
-    def create(self, data: CreateProductRequest) -> ProductSchema:
+    def create(self, data: CreateProductRequest, *, actor_name: Optional[str] = None) -> ProductSchema:
         self._ensure_sku_unique(data.sku)
 
         now = datetime.now(timezone.utc)
+        actor = _actor_name(actor_name)
         product = Product(
             id=_new_product_id(),
             sku=data.sku,
@@ -160,39 +164,49 @@ class ProductService:
             barcode=data.barcode,
             brand=data.brand,
             name=data.name,
-            scale=data.scale.value,
+            scale=data.scale.value if data.scale is not None else "",
+            spec=_blank_to_none(data.spec),
             material=data.material,
             color=data.color,
             image_url=data.image_url,
             list_price=data.list_price,
-            cost_price=data.cost_price,
             vip_price=data.vip_price,
-            status=data.status.value,
+            deleted=False,
             note=data.note,
             created_at=now,
             updated_at=now,
+            created_by=actor,
+            updated_by=actor,
         )
-        for loc in STOCK_LOCATION_ORDER:
+        for loc in ensure_locations(self.db):
+            if not loc.is_active:
+                continue
             product.stocks.append(
                 ProductStock(
-                    location=loc.value,
-                    location_name=LOCATION_NAME_MAP[loc],
+                    location=loc.id,
+                    location_name=loc.name,
                     quantity=0,
                 )
             )
 
         self.db.add(product)
         self.db.commit()
-        return _to_product_schema(self._get_by_id_or_raise(product.id))
+        return _to_product_schema(self._get_by_id_or_raise(product.id), ensure_locations(self.db))
 
     # 依 product_id (商品主鍵) 取得單一商品的 API 資料。
     def get_by_id(self, product_id: str) -> ProductSchema:
-        return _to_product_schema(self._get_by_id_or_raise(product_id))
+        return _to_product_schema(self._get_by_id_or_raise(product_id), ensure_locations(self.db))
 
     # 更新指定商品已提供的欄位。
     # product_id: 商品主鍵
     # data: 部分更新請求
-    def update(self, product_id: str, data: UpdateProductRequest) -> ProductSchema:
+    def update(
+        self,
+        product_id: str,
+        data: UpdateProductRequest,
+        *,
+        actor_name: Optional[str] = None,
+    ) -> ProductSchema:
         product = self._get_by_id_or_raise(product_id)
         updates = data.model_dump(exclude_unset=True)
 
@@ -211,7 +225,6 @@ class ProductService:
             "color": "color",
             "image_url": "image_url",
             "list_price": "list_price",
-            "cost_price": "cost_price",
             "vip_price": "vip_price",
             "note": "note",
         }
@@ -219,17 +232,19 @@ class ProductService:
             if src in updates:
                 setattr(product, dest, updates[src])
 
+        if "spec" in updates:
+            product.spec = _blank_to_none(updates["spec"])
         if "scale" in updates and updates["scale"] is not None:
             scale = updates["scale"]
             product.scale = scale.value if hasattr(scale, "value") else scale
-        if "status" in updates and updates["status"] is not None:
-            status = updates["status"]
-            product.status = status.value if hasattr(status, "value") else status
+        if "deleted" in updates and updates["deleted"] is not None:
+            product.deleted = bool(updates["deleted"])
 
         product.updated_at = datetime.now(timezone.utc)
+        product.updated_by = _actor_name(actor_name)
         self.db.add(product)
         self.db.commit()
-        return _to_product_schema(self._get_by_id_or_raise(product_id))
+        return _to_product_schema(self._get_by_id_or_raise(product_id), ensure_locations(self.db))
 
     # 依條件搜尋商品。關鍵字／比例／品牌／庫存篩選都在 SQL 執行。
     # keyword: 關鍵字
@@ -243,9 +258,13 @@ class ProductService:
         brand: Optional[str] = None,
         in_stock_only: bool = False,
     ) -> List[ProductSchema]:
-        stmt = select(Product).options(
-            selectinload(Product.stocks),
-            selectinload(Product.pre_order_pending),
+        stmt = (
+            select(Product)
+            .where(Product.deleted.is_(False))
+            .options(
+                selectinload(Product.stocks),
+                selectinload(Product.pre_order_pending),
+            )
         )
 
         if scale and scale != "ALL":
@@ -281,4 +300,5 @@ class ProductService:
 
         stmt = stmt.order_by(Product.sku.asc())
         products = list(self.db.scalars(stmt).unique().all())
-        return [_to_product_schema(p) for p in products]
+        locations = ensure_locations(self.db)
+        return [_to_product_schema(p, locations) for p in products]

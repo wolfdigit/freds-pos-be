@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import uuid
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ from src.schemas.checkout import (
     CheckoutOrder as CheckoutOrderSchema,
     CheckoutOrderItem as CheckoutOrderItemSchema,
     CheckoutOrderSearchResponse,
+    CheckoutReceipt,
     CreateOrderItem,
     CreateOrderRequest,
     OrderStatus,
@@ -32,7 +34,7 @@ from src.services.customer_service import canonicalize_phone
 from src.services.product_service import normalize_sku
 
 POINTS_DISCOUNT_TWD = 360
-STORE_LOCATION = "store"
+STORE_LOCATION = "e1a10001-0000-4000-8000-000000000001"
 STORE_LOCATION_NAME = "門市現貨"
 TAIPEI = ZoneInfo("Asia/Taipei")
 BRANCH_NAMES = {
@@ -59,6 +61,7 @@ class _DraftLine:
     original_item: Optional[CheckoutOrderItem]
     restock: Optional[bool]
     return_reason: Optional[str]
+    note: Optional[str]
 
 
 def _contains_like(column: ColumnElement, value: str) -> ColumnElement:
@@ -96,7 +99,7 @@ def _to_item_schema(item: CheckoutOrderItem) -> CheckoutOrderItemSchema:
         productId=item.product_id,
         sku=item.sku,
         name=item.name,
-        scale=item.scale,
+        scale=item.scale or None,
         brand=item.brand,
         originalPrice=item.original_price,
         unitPrice=item.unit_price,
@@ -111,6 +114,7 @@ def _to_item_schema(item: CheckoutOrderItem) -> CheckoutOrderItemSchema:
         originalOrderItemId=item.original_order_item_id,
         restock=item.restock,
         returnReason=item.return_reason,
+        note=item.note,
     )
 
 
@@ -133,30 +137,56 @@ def _to_order_schema(order: CheckoutOrder) -> CheckoutOrderSchema:
         shippingFee=order.shipping_fee,
         totalAmount=order.total_amount,
         payments=[
-            PaymentTender(type=PaymentMethodType(payment.type), amount=payment.amount)
+            PaymentTender(
+                type=PaymentMethodType(payment.type),
+                name=payment.name,
+                amount=payment.amount,
+                tenderedCash=payment.tendered_cash,
+                changeAmount=payment.change_amount,
+                transactionRef=payment.transaction_ref,
+            )
             for payment in order.payments
         ],
         note=order.note or "",
         createdAt=order.created_at,
+        createdBy=order.created_by,
         updatedAt=order.updated_at,
+        updatedBy=order.updated_by,
     )
 
 
 def _receipt_html(order: CheckoutOrderSchema) -> str:
     rows = "".join(
-        f"<tr><td>{item.name}</td><td>{item.quantity}</td><td>{item.unit_price}</td>"
-        f"<td>{item.subtotal}</td></tr>"
+        "<tr>"
+        f"<td>{html.escape(item.name)}</td>"
+        f"<td>{item.quantity}</td>"
+        f"<td>{item.unit_price}</td>"
+        f"<td>{item.subtotal}</td>"
+        "</tr>"
         for item in order.items
     )
+    payments = "".join(
+        f"<div>{html.escape(payment.name)} {payment.amount}</div>" for payment in order.payments
+    )
+    created = order.created_at.astimezone(TAIPEI).strftime("%Y-%m-%d %H:%M:%S")
     return (
-        "<div class=\"receipt\">"
-        f"<h2>{order.branch_name}</h2>"
-        f"<p>單號: {order.order_number}</p>"
-        f"<p>收銀員: {order.cashier_name}</p>"
-        f"<table>{rows}</table>"
-        f"<p>應收總額: NT$ {order.total_amount}</p>"
+        "<div>"
+        f"<div>{html.escape(order.branch_name)}</div>"
+        f"<div>單號 {html.escape(order.order_number)}</div>"
+        f"<div>收銀 {html.escape(order.cashier_name)}</div>"
+        f"<div>{html.escape(created)}</div>"
+        "<table><thead><tr><th>品名</th><th>數量</th><th>單價</th><th>小計</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+        f"<div>運費 {order.shipping_fee}</div>"
+        f"{payments}"
+        f"<div>合計 {order.total_amount}</div>"
         "</div>"
     )
+
+
+def _receipt(order: CheckoutOrder) -> CheckoutReceipt:
+    schema = _to_order_schema(order)
+    return CheckoutReceipt(order=schema, receiptPrintHtml=_receipt_html(schema))
 
 
 def _raise(status_code: int, code: BusinessErrorCode, message: str) -> None:
@@ -181,28 +211,43 @@ class CheckoutService:
             raise RuntimeError("目前使用者沒有收銀員身分")
         key = (idempotency_key or "").strip() or None
         body_hash = _body_hash(data)
-        if key is not None:
-            existing = self.db.scalar(
-                select(CheckoutOrder)
-                .where(CheckoutOrder.idempotency_key == key)
-                .options(*_order_options())
-            )
-            if existing is not None:
-                if (
-                    existing.idempotency_body_hash != body_hash
-                    or existing.cashier_id != cashier_id
-                ):
-                    _raise(409, BusinessErrorCode.IDEMPOTENCY_CONFLICT, "重複的結帳請求內容不一致")
-                order = _to_order_schema(existing)
-                return CheckoutReceipt(order=order, receiptPrintHtml=_receipt_html(order))
+        replay = self._replay_or_none(key, body_hash, cashier_id)
+        if replay is not None:
+            return replay
 
-        self._reject_cod(data.payments)
         customer = self._load_customer(data.customer_id)
         drafts = self._build_lines(data, customer)
-        self._apply_writes(data, customer, drafts, key, body_hash, cashier_id, cashier_name)
+        try:
+            self._apply_writes(data, customer, drafts, key, body_hash, cashier_id, cashier_name)
+        except IntegrityError as exc:
+            self.db.rollback()
+            if key is not None and "idempotency_key" in str(exc).lower():
+                replay = self._replay_or_none(key, body_hash, cashier_id)
+                if replay is not None:
+                    return replay
+                _raise(409, BusinessErrorCode.IDEMPOTENCY_CONFLICT, "重複的結帳請求內容不一致")
+            raise
         stored = self._get_by_id_or_raise(self._last_order_id)
-        order = _to_order_schema(stored)
-        return CheckoutReceipt(order=order, receiptPrintHtml=_receipt_html(order))
+        return _receipt(stored)
+
+    def _replay_or_none(
+        self,
+        key: Optional[str],
+        body_hash: str,
+        cashier_id: str,
+    ) -> Optional[CheckoutReceipt]:
+        if key is None:
+            return None
+        existing = self.db.scalar(
+            select(CheckoutOrder)
+            .where(CheckoutOrder.idempotency_key == key)
+            .options(*_order_options())
+        )
+        if existing is None:
+            return None
+        if existing.idempotency_body_hash != body_hash or existing.cashier_id != cashier_id:
+            _raise(409, BusinessErrorCode.IDEMPOTENCY_CONFLICT, "重複的結帳請求內容不一致")
+        return _receipt(existing)
 
     def get_by_id(self, order_id: str) -> CheckoutOrderSchema:
         return _to_order_schema(self._get_by_id_or_raise(order_id))
@@ -303,10 +348,6 @@ class CheckoutService:
             _raise(404, BusinessErrorCode.CUSTOMER_NOT_FOUND, "找不到指定的會員")
         return customer
 
-    def _reject_cod(self, payments: Sequence[PaymentTender]) -> None:
-        if any(payment.type == PaymentMethodType.COD for payment in payments):
-            _raise(422, BusinessErrorCode.INVALID_PAYMENT, "此階段不接受取貨付款")
-
     def _lock_store_stock(self, product_id: str) -> Optional[ProductStock]:
         return self.db.scalar(
             select(ProductStock)
@@ -330,6 +371,12 @@ class CheckoutService:
                     404,
                     BusinessErrorCode.PRODUCT_NOT_FOUND,
                     f"找不到商品 (ID: {raw.product_id})",
+                )
+            if raw.quantity > 0 and product.deleted:
+                _raise(
+                    404,
+                    BusinessErrorCode.PRODUCT_NOT_FOUND,
+                    f"商品已下架，無法銷售 (ID: {raw.product_id})",
                 )
             original_item = self._lock_original_item(raw, data.customer_id, reserved_return)
             if raw.quantity < 0:
@@ -388,6 +435,7 @@ class CheckoutService:
                     original_item=original_item,
                     restock=raw.restock,
                     return_reason=raw.return_reason,
+                    note=(raw.note or "").strip() or None,
                 )
             )
         return drafts
@@ -412,7 +460,7 @@ class CheckoutService:
             _raise(404, BusinessErrorCode.ORDER_NOT_FOUND, "找不到要退回商品的原始銷售單")
         if original.quantity <= 0:
             _raise(409, BusinessErrorCode.RETURN_QTY_EXCEEDED, "只能退回銷售明細，不能退回退貨明細")
-        if original.product_id is not None and original.product_id != raw.product_id:
+        if original.product_id != raw.product_id:
             _raise(409, BusinessErrorCode.RETURN_QTY_EXCEEDED, "退貨商品與原銷售明細不符")
         already = reserved_return.get(original.id, 0)
         remaining = original.quantity - original.returned_quantity
@@ -452,13 +500,14 @@ class CheckoutService:
         self._check_payments(data.payments, total_amount)
 
         now = datetime.now(timezone.utc)
-        business_date = datetime.now(TAIPEI).date()
+        now_taipei = datetime.now(TAIPEI)
+        business_date = now_taipei.date()
         order_id = _new_id("ord")
         self._last_order_id = order_id
         branch_id = data.branch_id.value
         order = CheckoutOrder(
             id=order_id,
-            order_number=self._next_order_number(business_date),
+            order_number=self._next_order_number(now_taipei),
             idempotency_key=idempotency_key,
             idempotency_body_hash=body_hash if idempotency_key else None,
             branch_id=branch_id,
@@ -477,6 +526,8 @@ class CheckoutService:
             business_date=business_date,
             created_at=now,
             updated_at=now,
+            created_by=cashier_name,
+            updated_by=cashier_name,
         )
         self.db.add(order)
 
@@ -511,6 +562,7 @@ class CheckoutService:
                         True if line.quantity < 0 else None
                     ),
                     return_reason=line.return_reason,
+                    note=line.note,
                 )
             )
         for index, payment in enumerate(data.payments, start=1):
@@ -520,7 +572,11 @@ class CheckoutService:
                     order_id=order_id,
                     line_no=index,
                     type=payment.type.value,
+                    name=payment.name,
                     amount=payment.amount,
+                    tendered_cash=payment.tendered_cash,
+                    change_amount=payment.change_amount,
+                    transaction_ref=payment.transaction_ref,
                 )
             )
         for original in touched_orders.values():
@@ -537,6 +593,7 @@ class CheckoutService:
             elif any(item.returned_quantity > 0 for item in positive):
                 original.status = OrderStatus.PARTIALLY_REFUNDED.value
             original.updated_at = now
+            original.updated_by = cashier_name
         if customer is not None:
             customer.total_spent = max(0, customer.total_spent + total_amount)
             customer.updated_at = now
@@ -559,6 +616,8 @@ class CheckoutService:
             )
             self.db.add(stock)
             self.db.flush()
+        if delta < 0 and stock.quantity + delta < 0:
+            _raise(409, BusinessErrorCode.INSUFFICIENT_STORE_STOCK, "門市庫存不足")
         stock.quantity += delta
 
     def _check_payments(self, payments: Sequence[PaymentTender], total_amount: int) -> None:
@@ -568,8 +627,8 @@ class CheckoutService:
         if total_amount < 0 and paid != total_amount:
             _raise(409, BusinessErrorCode.PAYMENT_INSUFFICIENT, "退款金額須等於應退總額")
 
-    def _next_order_number(self, business_date) -> str:
-        prefix = f"SO-{business_date.strftime('%Y%m%d')}-"
+    def _next_order_number(self, now_taipei: datetime) -> str:
+        prefix = f"SO-{now_taipei.strftime('%Y%m%d-%H%M%S')}-"
         existing = self.db.scalars(
             select(CheckoutOrder.order_number).where(
                 CheckoutOrder.order_number.like(f"{prefix}%")

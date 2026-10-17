@@ -16,18 +16,16 @@ CamelCase JSON matching FE `Product` (`freds-pos-fe/src/types/product.ts`).
 | `barcode` | string | Required; **not** unique |
 | `brand` | string | |
 | `name` | string | |
-| `scale` | `ModelScale` | `1:18` \| `1:43` \| `1:64` \| `1:24` \| `1:12` \| `配件周邊` |
+| `scale` | `ModelScale` \| null | `1:18` \| `1:43` \| `1:64` \| `1:24` \| `1:12` \| `配件周邊`. Null when the create screen leaves the scale blank. |
 | `material` | string? | |
 | `color` | string? | |
 | `imageUrl` | string? | |
 | `listPrice` | integer | TWD, ≥ 0 |
-| `costPrice` | integer | TWD, ≥ 0 |
 | `vipPrice` | integer? | TWD, ≥ 0 when present |
 | `stocks` | `LocationStock[]` | Always four locations (see below) |
 | `totalStock` | integer | Server-computed: sum of `stocks[].quantity` |
 | `preOrderPendingCount` | integer | Server-computed from `product_pre_order_pending` (no row → `0`) |
 | `note` | string? | |
-| `status` | `active` \| `discontinued` | |
 | `deleted` | boolean | Soft-delete flag. Create stores `false`. `PUT /products/{productId}` is the only way to change it. `true` hides the product. `false` shows it again. The row stays. `GET /products` omits `deleted: true`. `GET /products/{productId}` still returns it. |
 
 ### `LocationStock`
@@ -57,6 +55,7 @@ Not accepted on create or update request schemas:
 - `preOrderPendingCount`
 - `stocks` (create: server initializes; update: not in contract)
 - `deleted` on create (server stores `false`). `PUT` is the only write for this flag. `true` hides the product. `false` shows it again. The row stays. There is no `DELETE /products/{productId}`.
+- `costPrice` and product `status`. The catalog does not record them.
 
 ---
 
@@ -93,11 +92,13 @@ Auth: optional/dummy (`deps.get_current_user_optional`).
 
 ### Request body — `CreateProductRequest`
 
-**Required:** `sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `costPrice`, `status`
+**Required:** `sku`, `barcode`, `brand`, `name`, `listPrice`
 
-**Optional:** `material`, `color`, `imageUrl`, `vipPrice`, `note`
+**Optional:** `scale`, `material`, `color`, `imageUrl`, `vipPrice`, `note`
 
-**Not in request schema:** `id`, `normalizedSku`, `totalStock`, `preOrderPendingCount`, **`stocks` / any quantity fields**
+The catalog does not record `costPrice` or product `status`. Omit `scale` and the server stores no scale.
+
+**Not in request schema:** `id`, `normalizedSku`, `totalStock`, `preOrderPendingCount`, **`stocks` / any quantity fields**, **`costPrice`**, **`status`**
 
 #### Create-time stock rows (server-only)
 
@@ -161,7 +162,7 @@ Note: FE mock returns `null` for missing id; HTTP adapter should map `404` → t
 
 All fields optional / partial:
 
-`sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `costPrice`, `vipPrice`, `note`, `status`, `material`, `color`, `imageUrl`, `deleted`
+`sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `vipPrice`, `note`, `material`, `color`, `imageUrl`, `deleted`
 
 **Excluded from OpenAPI schema (not part of the contract):**
 
@@ -213,8 +214,9 @@ This phase’s contract is [`../openapi.yaml`](../openapi.yaml) (products tag; m
 
 - **Remove from `required`:** `normalizedSku`, `totalStock`, `preOrderPendingCount`, `stocks`
 - **Remove `stocks` (and any quantity)** from the create request schema
-- Required: `sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `costPrice`, `status`
-- Optional: `material`, `color`, `imageUrl`, `vipPrice`, `note`
+- Required: `sku`, `barcode`, `brand`, `name`, `listPrice`
+- Optional: `scale`, `material`, `color`, `imageUrl`, `vipPrice`, `note`
+- The catalog does not record `costPrice` or product `status` on the request, the response, or the row.
 
 ### 2. `POST /products` description
 
@@ -236,6 +238,6 @@ Replace opaque PUT body with named schema — **metadata fields only**; exclude 
 
 - Document default sort `sku ASC`
 
-### 6. Out of scope (no YAML yet)
+### 6. Inventory and the rest of the frontend contract
 
-Do not add `/inventory/*` paths in this phase.
+`/inventory/*`, `/preorders`, `/system/stores`, and `/system/oauth/accounts` are in [`../openapi.yaml`](../openapi.yaml).

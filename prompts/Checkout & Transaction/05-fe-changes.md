@@ -32,9 +32,9 @@ Stop sending fields the server ignores for non-manual lines as if they were auth
 
 ## Display gaps vs this contract
 
-The current `CheckoutOrder` type has no `branchId`, `branchName`, line `id`, or `updatedAt`. Add them when the adapter is wired. Do not add an invoice. The `201` body is `{ order }` with no HTML. Build the slip in the client from `branchName`, `orderNumber`, `cashierName`, `createdAt`, each line's `name`, `quantity`, `unitPrice`, and `subtotal`, `shippingFee`, `payments`, and `totalAmount`. `branchName` is `台北旗艦店` or `官網`. `orderNumber` looks like `SO-20261011-014430-0001`.
+The current `CheckoutOrder` type has no `branchId`, `branchName`, line `id`, or `updatedAt`. Add them when the adapter is wired. Do not add an invoice. The `201` body is `{ order, receiptPrintHtml }`. `branchName` is `台北旗艦店` or `官網`. `orderNumber` looks like `SO-20261011-014430-0001`. Payment types follow the frontend OpenAPI: `cash`, `credit_card`, `line_pay`, `bank_transfer`, `cod`. `cod` is accepted.
 
-`costPrice` is stored on the line and is not part of this JSON. Do not add a cashier-facing cost column from this API.
+The catalog and the sale line do not record `costPrice`. Do not add a cashier-facing cost column from this API.
 
 Do not send `usedPoints`, `earnedPoints`, or a member points balance. Each redeemed product line sends `pointsDiscountApplied`. The server stores 360 on that line and subtracts it from the sale total, which cannot go below 0. The receipt shows that flag on the line.
 
