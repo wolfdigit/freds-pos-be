@@ -64,7 +64,7 @@ class SystemService:
         self._require_actor_admin(actor_role)
         email = str(data.email).strip().lower()
         role = _normalize_role(data.role)
-        name = _required_name(data.name)
+        name = _normalize_optional_name(data.name)
         if self.db.get(OAuthAccount, email) is not None:
             _raise(400, BusinessErrorCode.CUSTOMER_EMAIL_DUPLICATE, "帳號已存在")
         row = OAuthAccount(id=new_account_id(), email=email, role=role, name=name, note=data.note)
@@ -90,8 +90,8 @@ class SystemService:
             if (row.role or "").strip().lower() == "admin" and role != "admin":
                 self._reject_admin_removal(row.email, actor.email, deleting=False)
             row.role = role
-        if data.name is not None:
-            row.name = _required_name(data.name)
+        if "name" in data.model_fields_set:
+            row.name = _normalize_optional_name(data.name)
         if data.note is not None:
             row.note = data.note
         self.db.commit()
@@ -159,10 +159,12 @@ def _normalize_role(role: str) -> str:
     return value
 
 
-def _required_name(name: str | None) -> str:
+def _normalize_optional_name(name: str | None) -> str | None:
     value = (name or "").strip()
-    if not value or len(value) > 128:
-        _raise(400, BusinessErrorCode.ACCOUNT_NAME_REQUIRED, "請設定 128 字以內的顯示名稱")
+    if not value:
+        return None
+    if len(value) > 128:
+        _raise(400, BusinessErrorCode.ACCOUNT_NAME_REQUIRED, "顯示名稱不可超過 128 字")
     return value
 
 

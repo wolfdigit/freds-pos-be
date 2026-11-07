@@ -565,6 +565,130 @@ def test_blank_whitelist_name_uses_email_not_google_profile(client, google_jwks)
     assert login["user"]["id"].startswith("acct-")
 
 
+def test_optional_display_name_create_update_and_cashier_fallback(client, google_jwks):
+    _add_account(ADMIN_EMAIL, "admin", "管理員甲")
+    _add_store("奇可門市")
+    admin = _login(client, google_jwks)
+    _select(client, admin["token"], "奇可門市")
+
+    created = client.post(
+        "/api/v1/system/oauth/accounts",
+        json={"email": "blank-name@example.com", "role": "staff", "name": "   "},
+        headers=_auth(admin["token"]),
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["name"] is None
+
+    omitted = client.post(
+        "/api/v1/system/oauth/accounts",
+        json={"email": "omitted-name@example.com", "role": "staff"},
+        headers=_auth(admin["token"]),
+    )
+    assert omitted.status_code == 201, omitted.text
+    assert omitted.json()["name"] is None
+
+    too_long = client.post(
+        "/api/v1/system/oauth/accounts",
+        json={"email": "long-name@example.com", "role": "staff", "name": "名" * 129},
+        headers=_auth(admin["token"]),
+    )
+    assert too_long.status_code == 400
+    assert too_long.json()["code"] == "ACCOUNT_NAME_REQUIRED"
+
+    named = client.post(
+        "/api/v1/system/oauth/accounts",
+        json={"email": "named@example.com", "role": "staff", "name": "  櫃台小王  "},
+        headers=_auth(admin["token"]),
+    )
+    assert named.status_code == 201
+    assert named.json()["name"] == "櫃台小王"
+    staff_id = named.json()["id"]
+
+    unchanged = client.put(
+        "/api/v1/system/oauth/accounts/named@example.com",
+        json={"note": "只改備註"},
+        headers=_auth(admin["token"]),
+    )
+    assert unchanged.status_code == 200
+    assert unchanged.json()["name"] == "櫃台小王"
+    assert unchanged.json()["note"] == "只改備註"
+
+    staff = _login(client, google_jwks, "named@example.com", name="Google 個人名稱")
+    assert staff["user"]["name"] == "櫃台小王"
+    _select(client, staff["token"], "奇可門市")
+
+    product = client.post(
+        "/api/v1/products",
+        json={"sku": "SKU-NAME", "barcode": "222", "brand": "Brand", "name": "車", "listPrice": 80},
+        headers=_auth(admin["token"]),
+    )
+    assert product.status_code == 201, product.text
+    product_id = product.json()["id"]
+    _set_store_stock(product_id, 2)
+
+    first = client.post(
+        "/api/v1/checkout/orders",
+        json={
+            "items": [{"productId": product_id, "quantity": 1}],
+            "shippingFee": 0,
+            "payments": [{"type": "cash", "name": "現金", "amount": 80}],
+        },
+        headers=_auth(staff["token"]),
+    )
+    assert first.status_code == 201, first.text
+    assert first.json()["order"]["cashierId"] == staff_id
+    assert first.json()["order"]["cashierName"] == "櫃台小王"
+    order_id = first.json()["order"]["id"]
+
+    cleared = client.put(
+        "/api/v1/system/oauth/accounts/named@example.com",
+        json={"name": " \t "},
+        headers=_auth(admin["token"]),
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["name"] is None
+    me = client.get("/api/v1/auth/me", headers=_auth(staff["token"]))
+    assert me.json()["user"]["name"] == "named@example.com"
+
+    restored = client.put(
+        "/api/v1/system/oauth/accounts/named@example.com",
+        json={"name": "恢復名稱"},
+        headers=_auth(admin["token"]),
+    )
+    assert restored.status_code == 200
+    assert client.get("/api/v1/auth/me", headers=_auth(staff["token"])).json()["user"]["name"] == "恢復名稱"
+
+    explicit_null = client.put(
+        "/api/v1/system/oauth/accounts/named@example.com",
+        json={"name": None},
+        headers=_auth(admin["token"]),
+    )
+    assert explicit_null.status_code == 200
+    assert explicit_null.json()["name"] is None
+
+    second = client.post(
+        "/api/v1/checkout/orders",
+        json={
+            "items": [{"productId": product_id, "quantity": 1}],
+            "shippingFee": 0,
+            "payments": [{"type": "cash", "name": "現金", "amount": 80}],
+        },
+        headers=_auth(staff["token"]),
+    )
+    assert second.status_code == 201, second.text
+    assert second.json()["order"]["cashierName"] == "named@example.com"
+    original = client.get(f"/api/v1/checkout/orders/{order_id}", headers=_auth(admin["token"]))
+    assert original.status_code == 200
+    assert original.json()["cashierName"] == "櫃台小王"
+
+    self_delete = client.delete(
+        f"/api/v1/system/oauth/accounts/{ADMIN_EMAIL}",
+        headers=_auth(admin["token"]),
+    )
+    assert self_delete.status_code == 409
+    assert self_delete.json()["code"] == "ACCOUNT_LAST_ADMIN"
+
+
 def _account_count() -> int:
     db = SessionFactory()
     try:

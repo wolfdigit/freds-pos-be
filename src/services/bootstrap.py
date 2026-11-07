@@ -43,16 +43,18 @@ def bootstrap_admin_if_empty(db: Session) -> None:
     existing = db.scalar(select(func.count()).select_from(OAuthAccount))
     if existing:
         return
-    name = (settings.AUTH_BOOTSTRAP_ADMIN_NAME or "").strip() or raw_email
+    name = (settings.AUTH_BOOTSTRAP_ADMIN_NAME or "").strip()
     if len(name) > 128:
-        name = raw_email[:128]
+        logger.error("Admin bootstrap display name exceeds 128 characters; leaving it blank")
+        name = ""
+    stored_name = name or None
     try:
         db.add(
             OAuthAccount(
                 id=new_account_id(),
                 email=raw_email,
                 role="admin",
-                name=name,
+                name=stored_name,
                 note=None,
             )
         )

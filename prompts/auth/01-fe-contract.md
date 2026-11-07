@@ -40,7 +40,7 @@
 ```
 
 - `user.id` 是白名單穩定 id。收銀員 id、每帳購物車都用它。不要用 Google `sub`。
-- `user.name` 是白名單的 `name`。名稱空白時後端用 email，不用 Google 個人檔名稱。
+- `user.name` 是畫面上的顯示名稱。白名單 `name` 有值就用去掉空白後的內容；沒有則用帳號 email。不使用 Google 個人檔名稱。建立或更新時超過 128 字回 `400` `ACCOUNT_NAME_REQUIRED`。登入時若這個顯示結果仍超過 128 字，回 `403` `ACCOUNT_NAME_REQUIRED`。
 - `role` 只有 `admin` 或 `staff`。
 - Session 從這次登入起算 12 小時，使用中不會延長，也沒有閒置逾時。
 - 此時還沒選門市。業務 API 會回 `403` `AUTH_STORE_REQUIRED`。
@@ -52,7 +52,7 @@
 | 401 | `AUTH_INVALID_CREDENTIAL` | 簽章、iss、aud、過期、`email_verified` 不是 true |
 | 403 | `AUTH_ACCOUNT_NOT_ALLOWED` | email 不在 `oauth_account`。不會自動建帳 |
 | 403 | `AUTH_FORBIDDEN` | 角色不是 admin / staff |
-| 403 | `ACCOUNT_NAME_REQUIRED` | 顯示名稱超過 128 字且無法使用 |
+| 403 | `ACCOUNT_NAME_REQUIRED` | 登入時算出的顯示名稱超過 128 字 |
 | 503 | `AUTH_NOT_CONFIGURED` | 伺服器沒有 `GOOGLE_CLIENT_ID` |
 | 503 | `AUTH_PROVIDER_UNAVAILABLE` | 暫時拿不到 Google 公鑰 |
 
@@ -123,7 +123,7 @@
 { "id": "acct-...", "email": "person@example.com", "role": "staff", "name": "顯示名稱", "note": null }
 ```
 
-建立時 `role` 只能是 `admin` 或 `staff`，且必須有顯示名稱。不能刪自己、不能改自己的角色。最後一位管理員不能被刪除或降權（`409` `ACCOUNT_LAST_ADMIN` 或 `ACCOUNT_SELF_PROTECTED`）。
+建立時 `role` 只能是 `admin` 或 `staff`。`name` 可省略、null 或空白，存成沒有顯示名稱。有值會先去掉前後空白，超過 128 字拒絕。更新時沒送 `name` 表示不改；送 null 或空白表示清掉。不能刪自己、不能改自己的角色。最後一位管理員不能被刪除或降權（`409` `ACCOUNT_LAST_ADMIN` 或 `ACCOUNT_SELF_PROTECTED`）。
 
 還沒有任何門市時，已登入但尚未選門市的管理員可以 `POST /api/v1/system/stores` 建立第一間。店員不行，即使已經選了門市也不行。
 
@@ -133,7 +133,7 @@
 
 - 不要再依賴 body 的 `branchId`。後端會忽略它。
 - 訂單的 `branchId` 與 `branchName` 都是目前 session 的門市名稱。這只記這筆訂單屬於哪一間登入門市。
-- `cashierId` 是 `user.id`，`cashierName` 是白名單顯示名稱。舊訂單上的 `staff-001` / `店長 Fred` 不會被改寫。
+- `cashierId` 是 `user.id`。`cashierName` 是白名單顯示名稱；該欄空白時用帳號 email。已寫入的舊訂單不會被改寫。
 - 扣庫存與庫存不足規則維持原樣：結帳仍鎖定並增減既有庫存地點「門市現貨」（`store`），不是 `store_branch`。庫存不足仍是 `409` `INSUFFICIENT_STORE_STOCK`。換門市不會改這個扣減來源。
 
 換門市時若購物車有商品：前端顯示提示即可，不要擋住，也不要清掉數量。後端不接收購物車。下一筆成功結帳的訂單歸屬改為新門市，庫存檢查與扣減仍走原來的庫存地點。

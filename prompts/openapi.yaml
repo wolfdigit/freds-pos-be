@@ -2235,8 +2235,9 @@ components:
           $ref: '#/components/schemas/OAuthRole'
         name:
           type: string
+          nullable: true
           example: 店長 Fred
-          description: Display name / cashier name
+          description: Stored display name. Blank or null means sessions and new cashier snapshots show the account email, not a Google profile name.
         note:
           type: string
           example: 系統最高管理員 / 總部
@@ -2254,6 +2255,8 @@ components:
           $ref: '#/components/schemas/OAuthRole'
         name:
           type: string
+          nullable: true
+          description: Optional. Omit, null, or whitespace stores no display name. Longer than 128 characters is rejected.
           example: 王小美
         note:
           type: string
@@ -2266,6 +2269,10 @@ components:
           $ref: '#/components/schemas/OAuthRole'
         name:
           type: string
+          nullable: true
+          description: |
+            Omit to leave the stored name unchanged. Null or whitespace clears it.
+            A non-blank value is trimmed and must be at most 128 characters.
           example: 王小美
         note:
           type: string
