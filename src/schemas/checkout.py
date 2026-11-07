@@ -131,7 +131,8 @@ class CreateOrderRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     customer_id: Optional[str] = Field(None, alias="customerId")
-    branch_id: BranchId = Field(BranchId.STORE, alias="branchId")
+    # 舊客戶端可能仍送 branchId。伺服器不採用，訂單門市以登入 session 為準。
+    branch_id: Optional[str] = Field(None, alias="branchId")
     items: List[CreateOrderItem] = Field(..., min_length=1)
     shipping_fee: int = Field(..., alias="shippingFee", ge=0)
     payments: List[PaymentTender] = Field(..., min_length=1)

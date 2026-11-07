@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
 
+    # Google 登入。逗號可放多個 OAuth client id（正式、預覽、本地）。空值則登入一律拒絕。
+    GOOGLE_CLIENT_ID: str = ""
+    # 白名單還是空的時，寫入一筆管理員後就不再使用。不是永久權限。
+    AUTH_BOOTSTRAP_ADMIN_EMAIL: str = ""
+    AUTH_BOOTSTRAP_ADMIN_NAME: str = ""
+
     # CORS 設定
     BACKEND_CORS_ORIGINS: List[str] = [
         "http://localhost:5173",
@@ -59,6 +65,9 @@ class Settings(BaseSettings):
         elif isinstance(v, (list, str)):
             return v
         raise ValueError(v)
+
+    def google_client_ids(self) -> List[str]:
+        return [part.strip() for part in self.GOOGLE_CLIENT_ID.split(",") if part.strip()]
 
     model_config = SettingsConfigDict(
         env_file=_env_files,

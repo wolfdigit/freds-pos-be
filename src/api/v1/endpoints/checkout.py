@@ -5,7 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Header, Path, Query, status
 from sqlalchemy.orm import Session
 
-from src.api.deps import get_current_user_optional, get_db
+from src.api.deps import get_db, require_business_user
 from src.schemas.checkout import (
     CheckoutOrder,
     CheckoutOrderSearchResponse,
@@ -35,14 +35,13 @@ class OrderStatusQuery(str, Enum):
 def create_checkout_order(
     body: CreateOrderRequest,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_optional),
+    user=Depends(require_business_user),
     idempotency_key: Optional[str] = Header(None, alias="X-Idempotency-Key"),
 ) -> CheckoutReceipt:
     return CheckoutService(db).create(
         body,
         idempotency_key,
-        cashier_id=str(user["id"]),
-        cashier_name=str(user["name"]),
+        principal=user,
     )
 
 
@@ -66,7 +65,7 @@ def search_checkout_orders(
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_optional),
+    _user=Depends(require_business_user),
 ) -> CheckoutOrderSearchResponse:
     status_value = status_filter.value if status_filter is not None else None
     return CheckoutService(db).search(
@@ -94,6 +93,6 @@ def search_checkout_orders(
 def get_checkout_order(
     orderId: str = Path(...),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_optional),
+    _user=Depends(require_business_user),
 ) -> CheckoutOrder:
     return CheckoutService(db).get_by_id(orderId)

@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, Path, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from src.api.deps import get_current_user_optional, get_db
+from src.api.deps import get_db, require_business_user
 from src.schemas.customer import (
     CreateCustomerRequest,
     Customer,
@@ -40,7 +40,7 @@ def search_customers(
     page: int = Query(1, ge=1, description="1-based page index"),
     pageSize: int = Query(20, ge=1, le=100, description="Page length (max 100)"),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_optional),
+    _user=Depends(require_business_user),
 ) -> CustomerSearchResponse:
     """Default sort: name ASC, then id ASC. Filters run in SQL."""
     vip_tier = vipTier.value if vipTier is not None else None
@@ -62,7 +62,7 @@ def search_customers(
 def create_customer(
     body: CreateCustomerRequest,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_optional),
+    user=Depends(require_business_user),
 ) -> Customer:
     return CustomerService(db).create(body, actor_name=str(user["name"]))
 
@@ -76,7 +76,7 @@ def create_customer(
 def get_customer(
     customerId: str = Path(..., description="Customer id"),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_optional),
+    _user=Depends(require_business_user),
 ) -> Customer:
     return CustomerService(db).get_by_id(customerId)
 
@@ -91,7 +91,7 @@ def update_customer(
     body: UpdateCustomerRequest,
     customerId: str = Path(..., description="Customer id"),
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_optional),
+    user=Depends(require_business_user),
 ) -> Customer:
     return CustomerService(db).update(customerId, body, actor_name=str(user["name"]))
 
@@ -104,7 +104,7 @@ def update_customer(
 def delete_customer(
     customerId: str = Path(..., description="Customer id"),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_optional),
+    _user=Depends(require_business_user),
 ) -> Response:
     CustomerService(db).delete(customerId)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -123,7 +123,7 @@ def update_customer_spending(
     body: UpdateSpendingRequest,
     customerId: str = Path(..., description="Customer id"),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_optional),
+    _user=Depends(require_business_user),
 ) -> OkResponse:
     CustomerService(db).add_spending(customerId, body.amount)
     return OkResponse()
@@ -138,6 +138,6 @@ def update_customer_spending(
 def customer_preorders(
     customerId: str = Path(..., description="Customer id"),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_optional),
+    _user=Depends(require_business_user),
 ) -> List[PreOrder]:
     return PreOrderService(db).by_customer(customerId)

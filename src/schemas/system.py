@@ -17,6 +17,7 @@ class CreateStoreRequest(BaseModel):
 class OAuthAccountDto(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    id: str
     email: EmailStr
     role: str
     name: Optional[str] = None

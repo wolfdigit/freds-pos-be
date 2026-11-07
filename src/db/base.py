@@ -6,3 +6,4 @@ from src.models.checkout import CheckoutOrder, CheckoutOrderItem, CheckoutPaymen
 from src.models.preorder import PreOrder, PreOrderItem  # noqa: F401
 from src.models.location import StockAdjustmentLog, StockLocation  # noqa: F401
 from src.models.system import OAuthAccount, StoreBranch  # noqa: F401
+from src.models.auth import AuthSession  # noqa: F401

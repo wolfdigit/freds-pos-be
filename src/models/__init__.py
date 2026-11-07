@@ -5,6 +5,7 @@ from src.models.checkout import CheckoutOrder, CheckoutOrderItem, CheckoutPaymen
 from src.models.preorder import PreOrder, PreOrderItem
 from src.models.location import StockAdjustmentLog, StockLocation
 from src.models.system import OAuthAccount, StoreBranch
+from src.models.auth import AuthSession
 
 __all__ = [
     "Product",
@@ -20,4 +21,5 @@ __all__ = [
     "StockAdjustmentLog",
     "StoreBranch",
     "OAuthAccount",
+    "AuthSession",
 ]

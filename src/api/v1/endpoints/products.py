@@ -3,7 +3,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 
-from src.api.deps import get_current_user_optional, get_db
+from src.api.deps import get_db, require_business_user
 from src.schemas.product import CreateProductRequest, Product, UpdateProductRequest
 from src.services.product_service import ProductService
 
@@ -22,7 +22,7 @@ def search_products(
     brand: Optional[str] = Query(None, description="Brand filter, or ALL"),
     inStockOnly: bool = Query(False, description="Only products with totalStock > 0"),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_optional),
+    _user=Depends(require_business_user),
 ) -> List[Product]:
     """Default sort: sku ASC."""
     return ProductService(db).search(
@@ -43,7 +43,7 @@ def search_products(
 def create_product(
     body: CreateProductRequest,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_optional),
+    user=Depends(require_business_user),
 ) -> Product:
     return ProductService(db).create(body, actor_name=str(user["name"]))
 
@@ -57,7 +57,7 @@ def create_product(
 def get_product(
     productId: str = Path(..., description="Product id"),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_optional),
+    _user=Depends(require_business_user),
 ) -> Product:
     return ProductService(db).get_by_id(productId)
 
@@ -72,6 +72,6 @@ def update_product(
     body: UpdateProductRequest,
     productId: str = Path(..., description="Product id"),
     db: Session = Depends(get_db),
-    user=Depends(get_current_user_optional),
+    user=Depends(require_business_user),
 ) -> Product:
     return ProductService(db).update(productId, body, actor_name=str(user["name"]))
