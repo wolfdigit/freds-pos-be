@@ -156,6 +156,21 @@ uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 
 ---
 
+## Google 登入
+
+業務 API 需要已選門市的 session。`GET /api/v1/health` 與根路徑除外。設定與前端契約見 `prompts/auth/01-fe-contract.md`。
+
+正式環境至少要：
+
+- `DEBUG=false`
+- `GOOGLE_CLIENT_ID`：Google Cloud 的 OAuth 用戶端 ID，可逗號分隔多個。不要把 client secret 放到前端。
+- `AUTH_BOOTSTRAP_ADMIN_EMAIL`：只在 `oauth_account` 還是空的時寫入一位管理員。不要填前端示範信箱。寫入後這個變數不再賦權，刪掉它也不會刪帳號。
+- `AUTH_BOOTSTRAP_ADMIN_NAME`：選填。空白時顯示名稱用 email。
+- 套用 migration：`alembic upgrade head`
+- 與前端同一輪上線。這次之後未帶 session 的業務請求會回 401。
+
+Google 用戶端只用 OpenID 的 email（ID token），不要加 Gmail 範圍。
+
 ## 資料庫遷移 (Alembic)
 
 資料庫 schema 變更請透過 Alembic migration，不要直接改資料庫。連線字串由 `.env` 的 `SQLALCHEMY_DATABASE_URI` 注入（見 `alembic/env.py`），預設為本地 SQLite `sqlite:///./freds_pos.db`。請在專案根目錄、已啟用虛擬環境後執行下列指令。

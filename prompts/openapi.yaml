@@ -13,7 +13,7 @@ info:
     - **Line-Item Return Traceability**: Returns/exchanges (negative quantities) must reference `originalOrderId` and `originalOrderItemId`, with cumulative `returnedQuantity` tracking.
     - **ACID Atomicity**: Checkout/return operations execute inside a single database transaction (locking store stock, updating pre-orders, updating customer spending, and creating orders).
     - **Idempotency**: `POST /checkout/orders` supports `X-Idempotency-Key` to prevent double-charging or double stock deduction.
-    - **Authentication**: Cashier and branch identity are resolved from JWT Bearer tokens, bound at cashier login.
+    - **Authentication**: `POST /auth/google` exchanges a Google ID token for a server session. Later calls send `Authorization: Bearer <session token>`. The session's selected store is the order branch. Body `branchId` is ignored.
 
     **Conventions**
     - Amounts are TWD integers (no cents).
@@ -44,10 +44,117 @@ tags:
     description: Customer pre-orders and arrival management
   - name: customers
     description: Members and VIP tiers
+  - name: auth
+    description: Google sign-in, POS session, and store selection
   - name: system
     description: System configurations, store branches, and Google OAuth access control whitelist
 
 paths:
+  /auth/google:
+    post:
+      tags: [auth]
+      operationId: loginWithGoogle
+      summary: Exchange a Google ID token for a POS session
+      security: []
+      description: |
+        Send the Google Identity Services credential (ID token). The server checks signature, issuer,
+        audience, expiry, and `email_verified`. The email must already exist in `oauth_account`.
+        No account is created for an unknown email. Google `sub` is not stored.
+        The session lasts 12 hours from this call and does not slide. A store is not selected yet.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [credential]
+              properties:
+                credential:
+                  type: string
+                  description: Google ID token. Do not send a client secret.
+      responses:
+        '200':
+          description: "Session issued. Store the token and send it as Authorization Bearer."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthLoginResponse'
+        '401':
+          $ref: '#/components/responses/BusinessError'
+        '403':
+          $ref: '#/components/responses/BusinessError'
+        '503':
+          $ref: '#/components/responses/BusinessError'
+  /auth/stores:
+    get:
+      tags: [auth]
+      operationId: listStoresForLogin
+      summary: List stores before a store is selected
+      description: Allowed with a session that has not selected a store. Does not expose other business APIs.
+      responses:
+        '200':
+          description: Store names that can be selected
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StoreDto'
+  /auth/store:
+    post:
+      tags: [auth]
+      operationId: selectStore
+      summary: Select or switch the session store
+      description: |
+        Does not require a new Google sign-in. Switching is allowed with a non-empty cart;
+        the frontend warns and does not clear cart lines. The next checkout uses this store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [storeName]
+              properties:
+                storeName:
+                  type: string
+      responses:
+        '200':
+          description: Updated session state. The bearer token is unchanged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthStateResponse'
+        '400':
+          $ref: '#/components/responses/BusinessError'
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: Revoke the current session only
+      responses:
+        '200':
+          description: This token is revoked. Other devices stay signed in.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [loggedOut]
+                properties:
+                  loggedOut:
+                    type: boolean
+  /auth/me:
+    get:
+      tags: [auth]
+      operationId: currentSession
+      summary: Current user, role, store, and expiry
+      responses:
+        '200':
+          description: Session state without a new token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthStateResponse'
   /products:
     get:
       tags: [products]
@@ -442,7 +549,7 @@ paths:
         Maps to `ICheckoutService.createCheckoutOrder`.
 
         **Backend Atomic Lifecycle (Single DB Transaction)**:
-        1. **Identity & Branch Resolution**: Extract `cashierId`, `cashierName`, and active `storeId` from `BearerAuth` JWT token.
+        1. **Identity & Branch Resolution**: Require a session that already selected a `store_branch`. `cashierId` is the whitelist account id (`acct-...`), `cashierName` is the whitelist display name (or the email when that name is blank). `branchId` / `branchName` are that store's name. A body `branchId` is ignored. Stock is still the shared `門市現貨` shelf, not a per-store quantity.
         2. **Item Pricing & Subtotals**:
            - For positive purchases: verify `unitPrice` against `listPrice` or customer `vipPrice` unless `isManualPrice: true` (which requires `priceDiffReason`).
            - For pre-order items: verify `unitPrice` matches `quotedPrice` and `quantity <= qtyArrived - qtyDelivered`.
@@ -995,8 +1102,7 @@ components:
     BearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: JWT
-      description: Authenticated cashier / store staff token containing cashierId, name, and active store branch.
+      description: "POS session token from POST /auth/google. Not the Google ID token. Send it as Authorization Bearer."
 
   parameters:
     ProductId:
@@ -1096,6 +1202,20 @@ components:
         - INVALID_RETURN_CUSTOMER
         - IDEMPOTENCY_CONFLICT
         - PREORDER_QTY_EXCEEDED
+        - AUTH_REQUIRED
+        - AUTH_NOT_CONFIGURED
+        - AUTH_PROVIDER_UNAVAILABLE
+        - AUTH_INVALID_CREDENTIAL
+        - AUTH_ACCOUNT_NOT_ALLOWED
+        - AUTH_FORBIDDEN
+        - AUTH_SESSION_EXPIRED
+        - AUTH_SESSION_REVOKED
+        - AUTH_STORE_REQUIRED
+        - AUTH_STORE_INVALID
+        - ACCOUNT_ROLE_INVALID
+        - ACCOUNT_LAST_ADMIN
+        - ACCOUNT_SELF_PROTECTED
+        - ACCOUNT_NAME_REQUIRED
 
     ModelScale:
       type: string
@@ -1617,10 +1737,11 @@ components:
           example: SO-20261011-014430-0001
         branchId:
           type: string
-          enum: [branch-store, branch-online]
+          description: New orders use the selected store name. Older rows may still be `branch-store` or `branch-online`.
+          example: 奇可門市
         branchName:
           type: string
-          example: 台北旗艦店
+          example: 奇可門市
         cashierId:
           type: string
         cashierName:
@@ -1715,8 +1836,7 @@ components:
           type: string
         branchId:
           type: string
-          enum: [branch-store, branch-online]
-          default: branch-store
+          description: Ignored. The server uses the store selected on the session.
         items:
           type: array
           minItems: 1
@@ -2020,6 +2140,46 @@ components:
           type: integer
           example: 42
 
+    AuthUser:
+      type: object
+      required: [id, email, name, role]
+      properties:
+        id:
+          type: string
+          description: Stable whitelist account id (`acct-` + hex). Cart storage and cashierId use this.
+        email:
+          type: string
+          format: email
+        name:
+          type: string
+        role:
+          type: string
+          enum: [admin, staff]
+    AuthStateResponse:
+      type: object
+      required: [expiresAt, storeSelected, user]
+      properties:
+        expiresAt:
+          type: string
+          format: date-time
+        storeSelected:
+          type: boolean
+        storeName:
+          type: string
+          nullable: true
+        user:
+          $ref: '#/components/schemas/AuthUser'
+    AuthLoginResponse:
+      allOf:
+        - $ref: '#/components/schemas/AuthStateResponse'
+        - type: object
+          required: [token, tokenType]
+          properties:
+            token:
+              type: string
+            tokenType:
+              type: string
+              example: Bearer
     StoreDto:
       type: object
       required: [name]
@@ -2047,8 +2207,12 @@ components:
 
     OAuthAccountDto:
       type: object
-      required: [email, role]
+      required: [id, email, role]
       properties:
+        id:
+          type: string
+          description: Stable whitelist account id. Checkout cashierId and per-account carts use this, not the Google sub.
+          example: acct-0123456789abcdef0123456789abcdef
         email:
           type: string
           format: email

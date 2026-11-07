@@ -30,17 +30,15 @@ from src.schemas.checkout import (
     PaymentTender,
 )
 from src.schemas.common import BusinessErrorCode
+from src.services.auth_service import AuthService, Principal
 from src.services.customer_service import canonicalize_phone
 from src.services.product_service import normalize_sku
 
 POINTS_DISCOUNT_TWD = 360
+# 結帳扣的是這個共用貨架，不是 store_branch 各自的庫存。門市名稱只寫進訂單快照。
 STORE_LOCATION = "e1a10001-0000-4000-8000-000000000001"
 STORE_LOCATION_NAME = "門市現貨"
 TAIPEI = ZoneInfo("Asia/Taipei")
-BRANCH_NAMES = {
-    "branch-store": "台北旗艦店",
-    "branch-online": "官網",
-}
 
 
 @dataclass
@@ -75,6 +73,7 @@ def _new_id(prefix: str) -> str:
 
 def _body_hash(data: CreateOrderRequest) -> str:
     payload = data.model_dump(mode="json", by_alias=True)
+    payload.pop("branchId", None)
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
 
@@ -202,13 +201,15 @@ class CheckoutService:
         data: CreateOrderRequest,
         idempotency_key: Optional[str],
         *,
-        cashier_id: str,
-        cashier_name: str,
+        principal: Principal,
     ) -> CheckoutReceipt:
-        cashier_id = cashier_id.strip()
-        cashier_name = cashier_name.strip()
-        if not cashier_id or not cashier_name:
-            raise RuntimeError("目前使用者沒有收銀員身分")
+        # 在同一個交易裡重讀 session，換門市與結帳會串行。
+        current = AuthService(self.db).lock_for_checkout(principal.session_id)
+        cashier_id = current.account_id.strip()
+        cashier_name = current.name.strip()
+        branch_id = (current.store_name or "").strip()
+        if not cashier_id or not cashier_name or not branch_id:
+            raise RuntimeError("目前使用者沒有收銀員或門市身分")
         key = (idempotency_key or "").strip() or None
         body_hash = _body_hash(data)
         replay = self._replay_or_none(key, body_hash, cashier_id)
@@ -218,7 +219,9 @@ class CheckoutService:
         customer = self._load_customer(data.customer_id)
         drafts = self._build_lines(data, customer)
         try:
-            self._apply_writes(data, customer, drafts, key, body_hash, cashier_id, cashier_name)
+            self._apply_writes(
+                data, customer, drafts, key, body_hash, cashier_id, cashier_name, branch_id, branch_id
+            )
         except IntegrityError as exc:
             self.db.rollback()
             if key is not None and "idempotency_key" in str(exc).lower():
@@ -489,6 +492,8 @@ class CheckoutService:
         body_hash: str,
         cashier_id: str,
         cashier_name: str,
+        branch_id: str,
+        branch_name: str,
     ) -> None:
         items_subtotal = sum(line.subtotal for line in drafts)
         discount_amount = sum(
@@ -504,14 +509,13 @@ class CheckoutService:
         business_date = now_taipei.date()
         order_id = _new_id("ord")
         self._last_order_id = order_id
-        branch_id = data.branch_id.value
         order = CheckoutOrder(
             id=order_id,
             order_number=self._next_order_number(now_taipei),
             idempotency_key=idempotency_key,
             idempotency_body_hash=body_hash if idempotency_key else None,
             branch_id=branch_id,
-            branch_name=BRANCH_NAMES[branch_id],
+            branch_name=branch_name,
             cashier_id=cashier_id,
             cashier_name=cashier_name,
             status=OrderStatus.COMPLETED.value,

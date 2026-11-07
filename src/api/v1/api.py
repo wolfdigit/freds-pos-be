@@ -1,10 +1,13 @@
 from fastapi import APIRouter
-from src.api.v1.endpoints import checkout, customers, health, inventory, preorders, products, system
+from src.api.v1.endpoints import auth, checkout, customers, health, inventory, preorders, products, system
 
 api_router = APIRouter()
 
 # 掛載健康檢查模組
 api_router.include_router(health.router, tags=["Health"])
+
+# Google 登入與門市選擇。尚未選門市時只能用這裡的少數路由。
+api_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
 
 # 商品目錄
 api_router.include_router(products.router, prefix="/products", tags=["Products"])

@@ -1,31 +1,16 @@
-from typing import Any, Dict, Generator, Optional
+from typing import Generator, Optional
 
-from fastapi import Depends
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
+from src.core.exceptions import BusinessException
 from src.db.session import SessionFactory
-
-# 依賴注入 (Dependencies) 模組
-
-# OAuth2 / JWT 預留 (開發階段先不啟用，未來開啟 PyJWT 或 python-jose 即可啟用)
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
-
-# 登入尚未完成。結帳把這位使用者的 id / name 寫成收銀員快照。
-# 真正的員工登入上線後，只替換這個回傳值，不要再從結帳 body 收收銀員。
-DEMO_CASHIER: Dict[str, Any] = {
-    "id": "staff-001",
-    "name": "店長 Fred",
-    "username": "fred",
-    "role": "admin",
-}
+from src.schemas.common import BusinessErrorCode
+from src.services.auth_service import AuthService, Principal
 
 
 def get_db() -> Generator[Session, None, None]:
-    """
-    資料庫 Session 依賴注入。
-    確保每個 HTTP 請求開啟獨立 Session，並在請求結束後自動關閉釋放資源。
-    """
+    """每個請求一個 Session，結束時關閉。"""
     db = SessionFactory()
     try:
         yield db
@@ -33,12 +18,46 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-def get_current_user_optional(
-    _token: Optional[str] = Depends(oauth2_scheme),
-) -> Dict[str, Any]:
-    """
-    目前操作的員工。結帳的收銀員快照只讀這裡的 `id` 與 `name`。
-    登入尚未完成，有沒有 token 都回傳示範收銀員。之後改成 jwt.decode。
-    """
-    return DEMO_CASHIER
+def _bearer_token(request: Request) -> Optional[str]:
+    header = request.headers.get("authorization")
+    if not header:
+        return None
+    scheme, _, value = header.partition(" ")
+    if scheme.lower() != "bearer":
+        return None
+    token = value.strip()
+    return token or None
 
+
+def require_session_user(request: Request, db: Session = Depends(get_db)) -> Principal:
+    """已驗證身份，尚未選門市也可以。"""
+    return AuthService(db).authenticate(_bearer_token(request), require_store=False)
+
+
+def require_business_user(request: Request, db: Session = Depends(get_db)) -> Principal:
+    """業務 API：必須已登入且已選存在的門市。"""
+    return AuthService(db).authenticate(_bearer_token(request), require_store=True)
+
+
+def require_admin_user(user: Principal = Depends(require_business_user)) -> Principal:
+    if user.role != "admin":
+        raise BusinessException(
+            status_code=403,
+            code=BusinessErrorCode.AUTH_FORBIDDEN,
+            message="需要管理員權限",
+        )
+    return user
+
+
+def require_store_creator(request: Request, db: Session = Depends(get_db)) -> Principal:
+    """已選門市者皆可新增門市。還沒有門市時，只有管理員可建立第一間。"""
+    user = AuthService(db).authenticate(_bearer_token(request), require_store=False)
+    if user.store_name:
+        return user
+    if user.role != "admin":
+        raise BusinessException(
+            status_code=403,
+            code=BusinessErrorCode.AUTH_STORE_REQUIRED,
+            message="請先選擇門市",
+        )
+    return user

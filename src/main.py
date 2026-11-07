@@ -1,5 +1,7 @@
 import logging
+import re
 import traceback
+from contextlib import asynccontextmanager
 from typing import Any, Dict
 
 from fastapi import FastAPI, Request
@@ -8,11 +10,34 @@ from fastapi.responses import JSONResponse
 from src.core.config import settings
 from src.core.exceptions import BusinessException
 from src.api.v1.api import api_router
+from src.db.session import SessionFactory
+from src.services.bootstrap import bootstrap_admin_if_empty
 
 logger = logging.getLogger(__name__)
 
+_SECRET_RE = re.compile(
+    r"(Bearer\s+)\S+|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}",
+    re.IGNORECASE,
+)
+
+
+def _redact(text: str) -> str:
+    return _SECRET_RE.sub(lambda match: "Bearer [redacted]" if match.group(0).lower().startswith("bearer") else "[redacted-jwt]", text)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    db = SessionFactory()
+    try:
+        bootstrap_admin_if_empty(db)
+    finally:
+        db.close()
+    yield
+
+
 app = FastAPI(
     title=settings.PROJECT_NAME,
+    lifespan=lifespan,
     openapi_url=f"{settings.API_V1_STR}/openapi.json" if settings.DEBUG else None,
     docs_url="/docs" if settings.DEBUG else None,
     redoc_url="/redoc" if settings.DEBUG else None,
@@ -32,7 +57,7 @@ async def business_exception_handler(
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """未處理例外回 500。DEBUG 時把伺服器錯誤日誌一併放進 response。"""
-    error_log = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    error_log = _redact("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
     logger.error(
         "Unhandled exception on %s %s\n%s",
         request.method,

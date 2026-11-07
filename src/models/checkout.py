@@ -33,7 +33,7 @@ class CheckoutOrder(Base):
         String(128), nullable=True, unique=True
     )
     idempotency_body_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    branch_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    branch_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     branch_name: Mapped[str] = mapped_column(String(128), nullable=False)
     cashier_id: Mapped[str] = mapped_column(String(64), nullable=False)
     cashier_name: Mapped[str] = mapped_column(String(128), nullable=False)

@@ -19,6 +19,8 @@ class OAuthAccount(Base):
     __tablename__ = "oauth_account"
 
     email: Mapped[str] = mapped_column(String(256), primary_key=True)
+    # 穩定收銀員 id。結帳快照用這個值，不用 email，也不用 Google sub。
+    id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

@@ -3,7 +3,7 @@ from typing import List
 from fastapi import APIRouter, Depends, Path, status
 from sqlalchemy.orm import Session
 
-from src.api.deps import get_current_user_optional, get_db
+from src.api.deps import get_db, require_business_user
 from src.schemas.inventory import (
     BatchStockAdjustRequest,
     CreateStockLocationRequest,
@@ -22,12 +22,12 @@ router = APIRouter()
 
 
 @router.get("/locations", response_model=List[StockLocationDto], response_model_by_alias=True)
-def get_locations(db: Session = Depends(get_db), _user=Depends(get_current_user_optional)):
+def get_locations(db: Session = Depends(get_db), _user=Depends(require_business_user)):
     return InventoryService(db).get_locations()
 
 
 @router.post("/locations", response_model=StockLocationDto, response_model_by_alias=True, status_code=status.HTTP_201_CREATED)
-def create_location(body: CreateStockLocationRequest, db: Session = Depends(get_db), _user=Depends(get_current_user_optional)):
+def create_location(body: CreateStockLocationRequest, db: Session = Depends(get_db), _user=Depends(require_business_user)):
     return InventoryService(db).create_location(body)
 
 
@@ -36,7 +36,7 @@ def update_location(
     body: UpdateStockLocationRequest,
     locationId: str = Path(...),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_optional),
+    _user=Depends(require_business_user),
 ):
     return InventoryService(db).update_location(locationId, body)
 
@@ -46,29 +46,29 @@ def delete_location(
     body: DeleteStockLocationRequest,
     locationId: str = Path(...),
     db: Session = Depends(get_db),
-    _user=Depends(get_current_user_optional),
+    _user=Depends(require_business_user),
 ):
     return InventoryService(db).delete_location(locationId, body)
 
 
 @router.post("/transfers", response_model=OkResponse)
-def transfer_stock(body: InventoryTransferRequest, db: Session = Depends(get_db), _user=Depends(get_current_user_optional)):
+def transfer_stock(body: InventoryTransferRequest, db: Session = Depends(get_db), _user=Depends(require_business_user)):
     InventoryService(db).transfer(body)
     return OkResponse()
 
 
 @router.post("/adjustments", response_model=OkResponse)
-def adjust_stock(body: StockAdjustRequest, db: Session = Depends(get_db), _user=Depends(get_current_user_optional)):
+def adjust_stock(body: StockAdjustRequest, db: Session = Depends(get_db), _user=Depends(require_business_user)):
     InventoryService(db).adjust(body)
     return OkResponse()
 
 
 @router.post("/batch-adjustments", response_model=OkResponse)
-def batch_adjust(body: BatchStockAdjustRequest, db: Session = Depends(get_db), _user=Depends(get_current_user_optional)):
+def batch_adjust(body: BatchStockAdjustRequest, db: Session = Depends(get_db), _user=Depends(require_business_user)):
     InventoryService(db).batch_adjust(body)
     return OkResponse()
 
 
 @router.get("/adjustments/logs", response_model=List[StockAdjustmentLog], response_model_by_alias=True)
-def adjustment_logs(db: Session = Depends(get_db), _user=Depends(get_current_user_optional)):
+def adjustment_logs(db: Session = Depends(get_db), _user=Depends(require_business_user)):
     return InventoryService(db).logs()
