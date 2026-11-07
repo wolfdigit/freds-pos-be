@@ -35,7 +35,7 @@ from src.services.customer_service import canonicalize_phone
 from src.services.product_service import normalize_sku
 
 POINTS_DISCOUNT_TWD = 360
-# 結帳扣的是這個共用貨架，不是 store_branch 各自的庫存。門市名稱只寫進訂單快照。
+# 登入門市只寫進訂單歸屬。扣庫存仍是這個既有庫存地點，與 store_branch 無關。
 STORE_LOCATION = "e1a10001-0000-4000-8000-000000000001"
 STORE_LOCATION_NAME = "門市現貨"
 TAIPEI = ZoneInfo("Asia/Taipei")

@@ -325,7 +325,7 @@ def test_deleted_account_and_role_change_apply_on_the_next_request(client, googl
     assert denied.json()["code"] == "AUTH_ACCOUNT_NOT_ALLOWED"
 
 
-def test_checkout_uses_session_store_and_shared_shelf(client, google_jwks):
+def test_login_store_attributes_the_order_and_does_not_change_stock_location(client, google_jwks):
     account_id = _add_account(ADMIN_EMAIL, "admin", "櫃台小王")
     _add_store("奇可門市")
     _add_store("線上網購")
@@ -356,8 +356,24 @@ def test_checkout_uses_session_store_and_shared_shelf(client, google_jwks):
     assert order["branchName"] == "奇可門市"
     assert order["cashierId"] == account_id
     assert order["cashierName"] == "櫃台小王"
+    assert _stock_qty(product_id, STORE_LOCATION) == 0
+    assert "奇可門市" not in _stock_locations(product_id)
 
     _select(client, login["token"], "線上網購")
+    blocked = client.post(
+        "/api/v1/checkout/orders",
+        json={
+            "items": [{"productId": product_id, "quantity": 1}],
+            "shippingFee": 0,
+            "payments": [{"type": "cash", "name": "現金", "amount": 100}],
+        },
+        headers=_auth(login["token"]),
+    )
+    assert blocked.status_code == 409
+    assert blocked.json()["code"] == "INSUFFICIENT_STORE_STOCK"
+    assert _stock_qty(product_id, STORE_LOCATION) == 0
+
+    _set_store_stock(product_id, 1)
     second = client.post(
         "/api/v1/checkout/orders",
         json={
@@ -367,8 +383,11 @@ def test_checkout_uses_session_store_and_shared_shelf(client, google_jwks):
         },
         headers=_auth(login["token"]),
     )
-    assert second.status_code == 409
-    assert second.json()["code"] == "INSUFFICIENT_STORE_STOCK"
+    assert second.status_code == 201, second.text
+    assert second.json()["order"]["branchId"] == "線上網購"
+    assert second.json()["order"]["branchName"] == "線上網購"
+    assert _stock_qty(product_id, STORE_LOCATION) == 0
+    assert "線上網購" not in _stock_locations(product_id)
 
 
 def test_bootstrap_runs_once_and_refuses_demo_addresses(monkeypatch):
@@ -446,6 +465,29 @@ def _set_store_stock(product_id: str, quantity: int) -> None:
         )
         stock.quantity = quantity
         db.commit()
+    finally:
+        db.close()
+
+
+def _stock_qty(product_id: str, location: str) -> int:
+    db = SessionFactory()
+    try:
+        stock = db.scalar(
+            select(ProductStock).where(
+                ProductStock.product_id == product_id,
+                ProductStock.location == location,
+            )
+        )
+        return stock.quantity
+    finally:
+        db.close()
+
+
+def _stock_locations(product_id: str) -> set[str]:
+    db = SessionFactory()
+    try:
+        rows = db.scalars(select(ProductStock.location).where(ProductStock.product_id == product_id)).all()
+        return set(rows)
     finally:
         db.close()
 

@@ -13,7 +13,7 @@ info:
     - **Line-Item Return Traceability**: Returns/exchanges (negative quantities) must reference `originalOrderId` and `originalOrderItemId`, with cumulative `returnedQuantity` tracking.
     - **ACID Atomicity**: Checkout/return operations execute inside a single database transaction (locking store stock, updating pre-orders, updating customer spending, and creating orders).
     - **Idempotency**: `POST /checkout/orders` supports `X-Idempotency-Key` to prevent double-charging or double stock deduction.
-    - **Authentication**: `POST /auth/google` exchanges a Google ID token for a server session. Later calls send `Authorization: Bearer <session token>`. The session's selected store is the order branch. Body `branchId` is ignored.
+    - **Authentication**: `POST /auth/google` exchanges a Google ID token for a server session. Later calls send `Authorization: Bearer <session token>`. The selected login store is order attribution only (`branchId` / `branchName`). It is not an inventory location. Body `branchId` is ignored. Stock checks stay on the existing stock locations.
 
     **Conventions**
     - Amounts are TWD integers (no cents).
@@ -107,7 +107,8 @@ paths:
       summary: Select or switch the session store
       description: |
         Does not require a new Google sign-in. Switching is allowed with a non-empty cart;
-        the frontend warns and does not clear cart lines. The next checkout uses this store.
+        the frontend warns and does not clear cart lines. The next order is attributed to this
+        store. Switching does not change which stock location is deducted.
       requestBody:
         required: true
         content:
@@ -549,7 +550,7 @@ paths:
         Maps to `ICheckoutService.createCheckoutOrder`.
 
         **Backend Atomic Lifecycle (Single DB Transaction)**:
-        1. **Identity & Branch Resolution**: Require a session that already selected a `store_branch`. `cashierId` is the whitelist account id (`acct-...`), `cashierName` is the whitelist display name (or the email when that name is blank). `branchId` / `branchName` are that store's name. A body `branchId` is ignored. Stock is still the shared `門市現貨` shelf, not a per-store quantity.
+        1. **Identity & Branch Resolution**: Require a session that already selected a `store_branch`. `cashierId` is the whitelist account id (`acct-...`), `cashierName` is the whitelist display name (or the email when that name is blank). `branchId` / `branchName` record that login store on the order. A body `branchId` is ignored. The login store is not an inventory location and does not select a stock row.
         2. **Item Pricing & Subtotals**:
            - For positive purchases: verify `unitPrice` against `listPrice` or customer `vipPrice` unless `isManualPrice: true` (which requires `priceDiffReason`).
            - For pre-order items: verify `unitPrice` matches `quotedPrice` and `quantity <= qtyArrived - qtyDelivered`.
@@ -561,8 +562,8 @@ paths:
            - Calculate final `totalAmount = itemsSubtotal + shippingFee`.
            - Validate `sum(payments.amount) == totalAmount` (or `payments >= totalAmount` with cash change).
         4. **Inventory & Pre-Order Atomicity**:
-           - Positive items: lock and deduct `store` stock with row lock (`WHERE quantity >= :qty`).
-           - Negative items: if `restock: true`, increment `store` stock; increment `returnedQuantity` on original order.
+           - Stock location is independent of the login store. Positive items still lock and deduct the existing `store` / `門市現貨` location. Switching login store does not change this source and does not create per-store inventory.
+           - Negative items: if `restock: true`, increment that same `store` location; increment `returnedQuantity` on the original order.
            - Pre-order items: increment `qtyDelivered` and update pre-order status.
         5. **Member Asset Update**:
            - Update `customer.totalSpent += totalAmount`
@@ -1737,7 +1738,7 @@ components:
           example: SO-20261011-014430-0001
         branchId:
           type: string
-          description: New orders use the selected store name. Older rows may still be `branch-store` or `branch-online`.
+          description: Login store recorded on the order. Not an inventory location. Older rows may still be `branch-store` or `branch-online`.
           example: 奇可門市
         branchName:
           type: string
@@ -1836,7 +1837,7 @@ components:
           type: string
         branchId:
           type: string
-          description: Ignored. The server uses the store selected on the session.
+          description: Ignored. Order attribution comes from the session's login store. Stock location is unchanged.
         items:
           type: array
           minItems: 1
