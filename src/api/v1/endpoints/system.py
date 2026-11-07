@@ -3,7 +3,7 @@ from typing import List
 from fastapi import APIRouter, Depends, Path, status
 from sqlalchemy.orm import Session
 
-from src.api.deps import get_db, require_admin_user, require_business_user, require_store_creator
+from src.api.deps import get_db, require_admin_session, require_admin_user
 from src.schemas.system import (
     CreateOAuthAccountRequest,
     CreateStoreRequest,
@@ -17,18 +17,18 @@ router = APIRouter()
 
 
 @router.get("/stores", response_model=List[StoreDto], response_model_by_alias=True)
-def get_stores(db: Session = Depends(get_db), _user=Depends(require_business_user)):
+def get_stores(db: Session = Depends(get_db), _user=Depends(require_admin_session)):
     return SystemService(db).stores()
 
 
 @router.post("/stores", response_model=StoreDto, response_model_by_alias=True, status_code=status.HTTP_201_CREATED)
-def create_store(body: CreateStoreRequest, db: Session = Depends(get_db), _user=Depends(require_store_creator)):
-    return SystemService(db).create_store(body)
+def create_store(body: CreateStoreRequest, db: Session = Depends(get_db), user=Depends(require_admin_session)):
+    return SystemService(db).create_store(body, actor_role=user.role)
 
 
 @router.delete("/stores/{storeName}")
-def delete_store(storeName: str = Path(...), db: Session = Depends(get_db), _user=Depends(require_business_user)):
-    return SystemService(db).delete_store(storeName)
+def delete_store(storeName: str = Path(...), db: Session = Depends(get_db), user=Depends(require_admin_session)):
+    return SystemService(db).delete_store(storeName, actor_role=user.role)
 
 
 @router.get("/oauth/accounts", response_model=List[OAuthAccountDto], response_model_by_alias=True)

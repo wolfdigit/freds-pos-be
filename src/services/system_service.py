@@ -29,7 +29,8 @@ class SystemService:
         rows = list(self.db.scalars(select(StoreBranch).order_by(StoreBranch.name)).all())
         return [StoreDto(name=row.name, isDefault=row.is_default) for row in rows]
 
-    def create_store(self, data: CreateStoreRequest) -> StoreDto:
+    def create_store(self, data: CreateStoreRequest, *, actor_role: str) -> StoreDto:
+        self._require_actor_admin(actor_role)
         name = data.name.strip()
         if not name:
             _raise(400, BusinessErrorCode.INVALID_LOCATION_TRANSFER, "門市名稱不可空白")
@@ -40,7 +41,8 @@ class SystemService:
         self.db.commit()
         return StoreDto(name=row.name, isDefault=row.is_default)
 
-    def delete_store(self, name: str) -> dict:
+    def delete_store(self, name: str, *, actor_role: str) -> dict:
+        self._require_actor_admin(actor_role)
         self._lock_stores()
         rows = list(
             self.db.scalars(select(StoreBranch).execution_options(populate_existing=True)).all()

@@ -241,7 +241,7 @@ def test_staff_cannot_manage_whitelist_and_admin_guards_hold(client, google_jwks
     assert admin_id != staff_id
 
 
-def test_last_store_cannot_be_deleted_and_staff_may_still_delete_another(client, google_jwks):
+def test_last_store_cannot_be_deleted(client, google_jwks):
     _add_account(ADMIN_EMAIL, "admin", "管理員甲")
     _add_account(STAFF_EMAIL, "staff", "店員乙")
     _add_store("奇可門市")
@@ -252,10 +252,14 @@ def test_last_store_cannot_be_deleted_and_staff_may_still_delete_another(client,
     _select(client, staff["token"], "線上網購")
 
     missing = client.delete("/api/v1/system/stores/不存在的門市", headers=_auth(staff["token"]))
-    assert missing.status_code == 404
-    assert missing.json()["code"] == "LOCATION_NOT_FOUND"
+    assert missing.status_code == 403
+    assert missing.json()["code"] == "AUTH_FORBIDDEN"
 
-    deleted = client.delete("/api/v1/system/stores/線上網購", headers=_auth(staff["token"]))
+    denied = client.delete("/api/v1/system/stores/線上網購", headers=_auth(staff["token"]))
+    assert denied.status_code == 403
+    assert denied.json()["code"] == "AUTH_FORBIDDEN"
+
+    deleted = client.delete("/api/v1/system/stores/線上網購", headers=_auth(admin["token"]))
     assert deleted.status_code == 200
     assert deleted.json()["deletedStore"] == "線上網購"
     blocked = client.get("/api/v1/products", headers=_auth(staff["token"]))
@@ -269,6 +273,74 @@ def test_last_store_cannot_be_deleted_and_staff_may_still_delete_another(client,
     assert [row["name"] for row in remaining.json()] == ["奇可門市"]
 
 
+def test_staff_cannot_manage_store_list_but_can_choose_one(client, google_jwks):
+    _add_account(ADMIN_EMAIL, "admin", "管理員甲")
+    _add_account(STAFF_EMAIL, "staff", "店員乙")
+    _add_store("奇可門市")
+    _add_store("線上網購")
+    admin = _login(client, google_jwks, ADMIN_EMAIL)
+    staff = _login(client, google_jwks, STAFF_EMAIL)
+
+    before_selection = client.post(
+        "/api/v1/system/stores",
+        json={"name": "店員搶建"},
+        headers=_auth(staff["token"]),
+    )
+    assert before_selection.status_code == 403
+    assert before_selection.json()["code"] == "AUTH_FORBIDDEN"
+
+    _select(client, staff["token"], "線上網購")
+    _select(client, admin["token"], "奇可門市")
+
+    for response in (
+        client.get("/api/v1/system/stores", headers=_auth(staff["token"])),
+        client.post("/api/v1/system/stores", json={"name": "店員門市"}, headers=_auth(staff["token"])),
+        client.delete("/api/v1/system/stores/奇可門市", headers=_auth(staff["token"])),
+    ):
+        assert response.status_code == 403
+        assert response.json()["code"] == "AUTH_FORBIDDEN"
+
+    choices = client.get("/api/v1/auth/stores", headers=_auth(staff["token"]))
+    assert choices.status_code == 200
+    assert [row["name"] for row in choices.json()] == ["奇可門市", "線上網購"]
+    switched = client.post("/api/v1/auth/store", json={"storeName": "奇可門市"}, headers=_auth(staff["token"]))
+    assert switched.status_code == 200
+    assert switched.json()["storeName"] == "奇可門市"
+
+    created = client.post("/api/v1/system/stores", json={"name": "新門市"}, headers=_auth(admin["token"]))
+    assert created.status_code == 201
+    listed = client.get("/api/v1/system/stores", headers=_auth(admin["token"]))
+    assert listed.status_code == 200
+    assert [row["name"] for row in listed.json()] == ["奇可門市", "新門市", "線上網購"]
+
+    removed = client.delete("/api/v1/system/stores/新門市", headers=_auth(admin["token"]))
+    assert removed.status_code == 200
+    client.delete("/api/v1/system/stores/線上網購", headers=_auth(admin["token"]))
+    last = client.delete("/api/v1/system/stores/奇可門市", headers=_auth(admin["token"]))
+    assert last.status_code == 409
+    assert last.json()["code"] == "LAST_STORE"
+
+
+def test_store_management_follows_role_on_the_next_request(client, google_jwks):
+    _add_account(ADMIN_EMAIL, "admin", "管理員甲")
+    _add_account(STAFF_EMAIL, "admin", "管理員乙")
+    _add_store("奇可門市")
+    actor = _login(client, google_jwks, ADMIN_EMAIL)
+    other = _login(client, google_jwks, STAFF_EMAIL)
+    _select(client, other["token"], "奇可門市")
+    changed = client.put(
+        f"/api/v1/system/oauth/accounts/{ADMIN_EMAIL}",
+        json={"role": "staff"},
+        headers=_auth(other["token"]),
+    )
+    assert changed.status_code == 200
+    denied = client.post("/api/v1/system/stores", json={"name": "降權後"}, headers=_auth(actor["token"]))
+    assert denied.status_code == 403
+    assert denied.json()["code"] == "AUTH_FORBIDDEN"
+    still_there = client.get("/api/v1/auth/stores", headers=_auth(actor["token"]))
+    assert [row["name"] for row in still_there.json()] == ["奇可門市"]
+
+
 def test_concurrent_store_deletion_keeps_one_store(client):
     _add_store("甲門市")
     _add_store("乙門市")
@@ -277,7 +349,7 @@ def test_concurrent_store_deletion_keeps_one_store(client):
     def run(name: str) -> None:
         db = SessionFactory()
         try:
-            SystemService(db).delete_store(name)
+            SystemService(db).delete_store(name, actor_role="admin")
             results.append("ok")
         except Exception as exc:
             results.append(getattr(getattr(exc, "code", None), "value", str(exc)))

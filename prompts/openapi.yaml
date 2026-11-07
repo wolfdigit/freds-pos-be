@@ -925,7 +925,8 @@ paths:
       operationId: getStores
       summary: Get all store branches
       description: |
-        Retrieves all configured store branches (登入門市清單).
+        Admin-only management list. Staff retrieve choices from `GET /auth/stores`.
+        There is no update or set-default route. `isDefault` is informational.
       responses:
         '200':
           description: List of store branches
@@ -940,7 +941,8 @@ paths:
       operationId: createStore
       summary: Add a new store branch
       description: |
-        Adds a new store branch to the system.
+        Admin only. A signed-in admin may create the first store before selecting one.
+        Staff receive `403` `AUTH_FORBIDDEN`.
       requestBody:
         required: true
         content:
@@ -963,7 +965,8 @@ paths:
       operationId: deleteStore
       summary: Delete a store branch
       description: |
-        Removes a store branch from the system. The last remaining store cannot be deleted (`409` `LAST_STORE`). Admin and staff who already selected a store may call this.
+        Admin only. The last remaining store cannot be deleted (`409` `LAST_STORE`).
+        Staff receive `403` `AUTH_FORBIDDEN`. A missing name is `404` `LOCATION_NOT_FOUND`.
       parameters:
         - name: storeName
           in: path

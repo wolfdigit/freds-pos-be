@@ -49,15 +49,13 @@ def require_admin_user(user: Principal = Depends(require_business_user)) -> Prin
     return user
 
 
-def require_store_creator(request: Request, db: Session = Depends(get_db)) -> Principal:
-    """已選門市者皆可新增門市。還沒有門市時，只有管理員可建立第一間。"""
+def require_admin_session(request: Request, db: Session = Depends(get_db)) -> Principal:
+    """管理員。尚未選門市也可以，供建立第一間門市與門市清單維護。"""
     user = AuthService(db).authenticate(_bearer_token(request), require_store=False)
-    if user.store_name:
-        return user
     if user.role != "admin":
         raise BusinessException(
             status_code=403,
-            code=BusinessErrorCode.AUTH_STORE_REQUIRED,
-            message="請先選擇門市",
+            code=BusinessErrorCode.AUTH_FORBIDDEN,
+            message="需要管理員權限",
         )
     return user

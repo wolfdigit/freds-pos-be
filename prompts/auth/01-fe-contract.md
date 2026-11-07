@@ -97,7 +97,25 @@
 
 每次請求都會重讀白名單。角色變更下一筆請求就生效。
 
-`admin` 與 `staff` 目前都能使用商品、會員、庫存、結帳、預購、門市維護。只有白名單帳號（`/api/v1/system/oauth/accounts`）限 `admin`，staff 會得 `403` `AUTH_FORBIDDEN`。
+`admin` 與 `staff` 目前都能使用商品、會員、庫存、結帳、預購。白名單與門市清單維護只限 `admin`。
+
+## 權限
+
+| 端點 | 方法 | staff | admin | 狀態 |
+| --- | --- | --- | --- | --- |
+| `/api/v1/auth/stores` | GET | 可，含尚未選門市 | 可 | 200 門市清單 |
+| `/api/v1/auth/store` | POST | 可選、可換 | 可選、可換 | 200；不存在 400 `AUTH_STORE_INVALID` |
+| `/api/v1/system/stores` | GET | 不可 | 可，含尚未選門市 | staff 403 `AUTH_FORBIDDEN` |
+| `/api/v1/system/stores` | POST | 不可 | 可。沒有任何門市時，尚未選門市的管理員仍可建第一間 | 201；staff 403 `AUTH_FORBIDDEN` |
+| `/api/v1/system/stores/{storeName}` | DELETE | 不可 | 可 | 200 `{ "deletedStore" }`；最後一間 409 `LAST_STORE`；找不到 404 `LOCATION_NOT_FOUND`；staff 403 `AUTH_FORBIDDEN` |
+
+沒有更新門市或設定預設門市的 API。`isDefault` 只出現在清單回應。角色每次請求都從白名單重讀，降權的下一筆管理請求就是 403。
+
+庫存地點（`/api/v1/inventory/locations`）不是門市清單，規則不變。
+
+若管理員刪掉店員目前的登入門市，該店員下一筆業務請求是 `403` `AUTH_STORE_REQUIRED`，要再呼叫 `POST /api/v1/auth/store` 選另一間。這不影響庫存地點。
+
+登入與換門市請用 `/api/v1/auth/stores` 與 `/api/v1/auth/store`，不要用 `/api/v1/system/stores`。
 
 白名單回應多了穩定 `id`：
 
@@ -107,9 +125,7 @@
 
 建立時 `role` 只能是 `admin` 或 `staff`，且必須有顯示名稱。不能刪自己、不能改自己的角色。最後一位管理員不能被刪除或降權（`409` `ACCOUNT_LAST_ADMIN` 或 `ACCOUNT_SELF_PROTECTED`）。
 
-還沒有任何門市時，已登入但尚未選門市的管理員可以 `POST /api/v1/system/stores` 建立第一間。店員不行。
-
-`DELETE /api/v1/system/stores/{storeName}` 仍是已選門市的 admin 與 staff 都能呼叫。最後一間門市不能刪：`409`，body `{ "code": "LAST_STORE", "message": "至少要保留一間門市" }`。門市還有兩間以上時，刪其中一間仍是 `200` `{ "deletedStore": "<名稱>" }`。找不到是 `404` `LOCATION_NOT_FOUND`。若刪掉的是自己目前的登入門市，下一筆業務請求會是 `403` `AUTH_STORE_REQUIRED`，要再選另一間；這不影響庫存地點。
+還沒有任何門市時，已登入但尚未選門市的管理員可以 `POST /api/v1/system/stores` 建立第一間。店員不行，即使已經選了門市也不行。
 
 ## 結帳門市與庫存
 
