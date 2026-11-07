@@ -41,9 +41,15 @@ class SystemService:
         return StoreDto(name=row.name, isDefault=row.is_default)
 
     def delete_store(self, name: str) -> dict:
-        row = self.db.get(StoreBranch, name)
+        self._lock_stores()
+        rows = list(
+            self.db.scalars(select(StoreBranch).execution_options(populate_existing=True)).all()
+        )
+        row = next((item for item in rows if item.name == name), None)
         if row is None:
             _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市")
+        if len(rows) <= 1:
+            _raise(409, BusinessErrorCode.LAST_STORE, "至少要保留一間門市")
         self.db.delete(row)
         self.db.commit()
         return {"deletedStore": name}
@@ -103,6 +109,11 @@ class SystemService:
         self.db.delete(row)
         self.db.commit()
         return {"deletedEmail": key}
+
+    def _lock_stores(self) -> None:
+        # 更新成原值，讓同時刪除最後門市的請求在 SQLite 與 Postgres 都會排隊。
+        self.db.execute(update(StoreBranch).values(is_default=StoreBranch.is_default))
+        self.db.flush()
 
     def _lock_accounts(self) -> None:
         # 更新成原值，讓同時進行的降權／刪除在 SQLite 與 Postgres 都會排隊。

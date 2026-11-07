@@ -241,6 +241,66 @@ def test_staff_cannot_manage_whitelist_and_admin_guards_hold(client, google_jwks
     assert admin_id != staff_id
 
 
+def test_last_store_cannot_be_deleted_and_staff_may_still_delete_another(client, google_jwks):
+    _add_account(ADMIN_EMAIL, "admin", "管理員甲")
+    _add_account(STAFF_EMAIL, "staff", "店員乙")
+    _add_store("奇可門市")
+    _add_store("線上網購")
+    admin = _login(client, google_jwks, ADMIN_EMAIL)
+    staff = _login(client, google_jwks, STAFF_EMAIL)
+    _select(client, admin["token"], "奇可門市")
+    _select(client, staff["token"], "線上網購")
+
+    missing = client.delete("/api/v1/system/stores/不存在的門市", headers=_auth(staff["token"]))
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "LOCATION_NOT_FOUND"
+
+    deleted = client.delete("/api/v1/system/stores/線上網購", headers=_auth(staff["token"]))
+    assert deleted.status_code == 200
+    assert deleted.json()["deletedStore"] == "線上網購"
+    blocked = client.get("/api/v1/products", headers=_auth(staff["token"]))
+    assert blocked.status_code == 403
+    assert blocked.json()["code"] == "AUTH_STORE_REQUIRED"
+
+    last = client.delete("/api/v1/system/stores/奇可門市", headers=_auth(admin["token"]))
+    assert last.status_code == 409
+    assert last.json()["code"] == "LAST_STORE"
+    remaining = client.get("/api/v1/system/stores", headers=_auth(admin["token"]))
+    assert [row["name"] for row in remaining.json()] == ["奇可門市"]
+
+
+def test_concurrent_store_deletion_keeps_one_store(client):
+    _add_store("甲門市")
+    _add_store("乙門市")
+    results: list[str] = []
+
+    def run(name: str) -> None:
+        db = SessionFactory()
+        try:
+            SystemService(db).delete_store(name)
+            results.append("ok")
+        except Exception as exc:
+            results.append(getattr(getattr(exc, "code", None), "value", str(exc)))
+        finally:
+            db.close()
+
+    first = threading.Thread(target=run, args=("甲門市",))
+    second = threading.Thread(target=run, args=("乙門市",))
+    first.start()
+    second.start()
+    first.join()
+    second.join()
+
+    db = SessionFactory()
+    try:
+        names = [row.name for row in db.scalars(select(StoreBranch)).all()]
+    finally:
+        db.close()
+    assert len(names) == 1
+    assert results.count("ok") == 1
+    assert results.count("LAST_STORE") == 1
+
+
 def test_concurrent_demotion_cannot_remove_every_admin(client):
     _add_account("a@example.com", "admin", "甲")
     _add_account("b@example.com", "admin", "乙")

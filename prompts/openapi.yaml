@@ -963,7 +963,7 @@ paths:
       operationId: deleteStore
       summary: Delete a store branch
       description: |
-        Removes a store branch from the system. System requires at least one store branch to remain active.
+        Removes a store branch from the system. The last remaining store cannot be deleted (`409` `LAST_STORE`). Admin and staff who already selected a store may call this.
       parameters:
         - name: storeName
           in: path
@@ -989,6 +989,15 @@ paths:
           $ref: '#/components/responses/BusinessError'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: Last store cannot be deleted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessError'
+              example:
+                code: LAST_STORE
+                message: 至少要保留一間門市
 
   /system/oauth/accounts:
     get:
@@ -1215,6 +1224,7 @@ components:
         - AUTH_STORE_INVALID
         - ACCOUNT_ROLE_INVALID
         - ACCOUNT_LAST_ADMIN
+        - LAST_STORE
         - ACCOUNT_SELF_PROTECTED
         - ACCOUNT_NAME_REQUIRED
 

@@ -109,6 +109,8 @@
 
 還沒有任何門市時，已登入但尚未選門市的管理員可以 `POST /api/v1/system/stores` 建立第一間。店員不行。
 
+`DELETE /api/v1/system/stores/{storeName}` 仍是已選門市的 admin 與 staff 都能呼叫。最後一間門市不能刪：`409`，body `{ "code": "LAST_STORE", "message": "至少要保留一間門市" }`。門市還有兩間以上時，刪其中一間仍是 `200` `{ "deletedStore": "<名稱>" }`。找不到是 `404` `LOCATION_NOT_FOUND`。若刪掉的是自己目前的登入門市，下一筆業務請求會是 `403` `AUTH_STORE_REQUIRED`，要再選另一間；這不影響庫存地點。
+
 ## 結帳門市與庫存
 
 登入門市只做訂單歸屬，跟庫存位置無關。換門市不會改變扣庫存的地點，也不會產生每間門市各自的庫存。
