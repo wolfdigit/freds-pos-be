@@ -13,7 +13,7 @@ class OkResponse(BaseModel):
     ok: bool = True
 
 
-class StockLocationDto(BaseModel):
+class InventoryLocationDto(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
@@ -25,7 +25,7 @@ class StockLocationDto(BaseModel):
     returned_store_names: List[str] = Field(default_factory=list, alias="returnedStoreNames")
 
 
-class CreateStockLocationRequest(BaseModel):
+class CreateInventoryLocationRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     name: str
@@ -33,7 +33,7 @@ class CreateStockLocationRequest(BaseModel):
     display_order: Optional[int] = Field(None, alias="displayOrder")
 
 
-class UpdateStockLocationRequest(BaseModel):
+class UpdateInventoryLocationRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     name: Optional[str] = None
@@ -41,7 +41,7 @@ class UpdateStockLocationRequest(BaseModel):
     display_order: Optional[int] = Field(None, alias="displayOrder")
 
 
-class DeleteStockLocationRequest(BaseModel):
+class DeleteInventoryLocationRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     rebind_to_location: Optional[str] = Field(None, alias="rebindToLocation")
@@ -52,10 +52,10 @@ class ReboundStore(BaseModel):
 
     name: str
     binding: StoreBindingRole
-    stock_location_id: str = Field(..., alias="stockLocationId")
+    inventory_location_id: str = Field(..., alias="inventoryLocationId")
 
 
-class DeleteStockLocationResponse(BaseModel):
+class DeleteInventoryLocationResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     deleted_location: str = Field(..., alias="deletedLocation")
@@ -80,7 +80,7 @@ class MoveAllStockRequest(BaseModel):
     reason: Optional[str] = None
 
 
-class StockAdjustRequest(BaseModel):
+class InventoryAdjustRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     product_id: str = Field(..., alias="productId")
@@ -97,7 +97,7 @@ class StockAdjustRequest(BaseModel):
         return stripped
 
 
-class StockLocationChange(BaseModel):
+class InventoryLocationChange(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     location: str
@@ -107,7 +107,7 @@ class StockLocationChange(BaseModel):
     diff: int
 
 
-class StockItemAdjustment(BaseModel):
+class InventoryItemAdjustment(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     product_id: str = Field(..., alias="productId")
@@ -115,26 +115,34 @@ class StockItemAdjustment(BaseModel):
     barcode: Optional[str] = None
     name: str
     brand: str
-    changes: List[StockLocationChange]
+    changes: List[InventoryLocationChange]
     summary_text: str = Field(..., alias="summaryText")
 
 
-class BatchStockAdjustRequest(BaseModel):
+class BatchInventoryAdjustRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
     operator_name: Optional[str] = Field(None, alias="operatorName")
     timestamp: Optional[str] = None
-    note: Optional[str] = None
-    adjustments: List[StockItemAdjustment]
+    note: str
+    adjustments: List[InventoryItemAdjustment]
+
+    @field_validator("note")
+    @classmethod
+    def note_not_blank(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("note must not be empty")
+        return stripped
 
 
-class StockAdjustmentLog(BaseModel):
+class InventoryAdjustmentLog(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
     timestamp: datetime
     operator_name: str = Field(..., alias="operatorName")
-    items: List[StockItemAdjustment]
+    items: List[InventoryItemAdjustment]
     total_qty_change: int = Field(..., alias="totalQtyChange")
     note: Optional[str] = None
 
@@ -146,7 +154,7 @@ class ReceiptLineRequest(BaseModel):
     quantity: int = Field(..., ge=1)
 
 
-class CreateStockReceiptRequest(BaseModel):
+class CreateInventoryReceiptRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     location_id: str = Field(..., alias="locationId")
@@ -155,7 +163,7 @@ class CreateStockReceiptRequest(BaseModel):
     items: List[ReceiptLineRequest] = Field(..., min_length=1)
 
 
-class StockReceiptItem(BaseModel):
+class InventoryReceiptItem(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     product_id: str = Field(..., alias="productId")
@@ -164,7 +172,7 @@ class StockReceiptItem(BaseModel):
     quantity: int
 
 
-class StockReceipt(BaseModel):
+class InventoryReceipt(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
@@ -174,20 +182,20 @@ class StockReceipt(BaseModel):
     note: Optional[str] = None
     operator_name: str = Field(..., alias="operatorName")
     created_at: datetime = Field(..., alias="createdAt")
-    items: List[StockReceiptItem]
+    items: List[InventoryReceiptItem]
     total_quantity: int = Field(..., alias="totalQuantity")
 
 
-class StockReceiptPage(BaseModel):
+class InventoryReceiptPage(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    items: List[StockReceipt]
+    items: List[InventoryReceipt]
     page: int
     page_size: int = Field(..., alias="pageSize")
     total: int
 
 
-class StockMovement(BaseModel):
+class InventoryMovement(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     id: str
@@ -204,10 +212,10 @@ class StockMovement(BaseModel):
     created_at: datetime = Field(..., alias="createdAt")
 
 
-class StockMovementPage(BaseModel):
+class InventoryMovementPage(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    items: List[StockMovement]
+    items: List[InventoryMovement]
     page: int
     page_size: int = Field(..., alias="pageSize")
     total: int

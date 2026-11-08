@@ -5,19 +5,19 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional, Sequence
 
-from src.models.location import StockLocation
+from src.models.location import InventoryLocation
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.orm import Session, selectinload
 
 from src.core.exceptions import BusinessException
-from src.models.product import Product, ProductStock
+from src.models.product import Product, ProductInventory
 from src.models.system import StoreBranch
 from src.schemas.common import BusinessErrorCode
 from src.schemas.product import (
     CreateProductRequest,
-    LocationStock,
+    LocationInventory,
     Product as ProductSchema,
     UpdateProductRequest,
 )
@@ -49,7 +49,7 @@ def _actor_name(actor_name: Optional[str]) -> Optional[str]:
 
 # 將 ORM Product 轉成 API 的 ProductSchema（含庫存與預購待出）。
 # product: 已載入關聯的商品
-def _qty_at(stocks: Sequence[LocationStock], location_id: Optional[str]) -> int:
+def _qty_at(stocks: Sequence[LocationInventory], location_id: Optional[str]) -> int:
     if location_id is None:
         return 0
     row = next((item for item in stocks if item.location == location_id), None)
@@ -58,37 +58,35 @@ def _qty_at(stocks: Sequence[LocationStock], location_id: Optional[str]) -> int:
 
 def _to_product_schema(
     product: Product,
-    locations: Sequence[StockLocation],
+    locations: Sequence[InventoryLocation],
     *,
     login_location_id: Optional[str] = None,
     login_returned_location_id: Optional[str] = None,
-    sellable_location_ids: Optional[set[str]] = None,
 ) -> ProductSchema:
-    stocks: List[LocationStock] = []
+    inventories: List[LocationInventory] = []
     seen = set()
-    by_location = {row.location: row for row in product.stocks}
+    by_location = {row.location: row for row in product.inventories}
     for loc in locations:
         seen.add(loc.id)
         row = by_location.get(loc.id)
-        stocks.append(
-            LocationStock(
+        inventories.append(
+            LocationInventory(
                 location=loc.id,
                 locationName=row.location_name if row is not None else loc.name,
                 quantity=row.quantity if row is not None else 0,
             )
         )
-    for row in product.stocks:
+    for row in product.inventories:
         if row.location in seen:
             continue
         seen.add(row.location)
-        stocks.append(
-            LocationStock(location=row.location, locationName=row.location_name, quantity=row.quantity)
+        inventories.append(
+            LocationInventory(location=row.location, locationName=row.location_name, quantity=row.quantity)
         )
 
-    sellable = sellable_location_ids or set()
-    total_stock = sum(item.quantity for item in stocks if item.location in sellable)
-    login_store_quantity = _qty_at(stocks, login_location_id)
-    login_store_returned_quantity = _qty_at(stocks, login_returned_location_id)
+    total_inventory = sum(item.quantity for item in inventories)
+    login_store_quantity = _qty_at(inventories, login_location_id)
+    login_store_returned_quantity = _qty_at(inventories, login_returned_location_id)
     pending = (
         product.pre_order_pending.quantity
         if product.pre_order_pending is not None
@@ -109,8 +107,8 @@ def _to_product_schema(
         imageUrl=product.image_url,
         listPrice=product.list_price,
         vipPrice=product.vip_price,
-        stocks=stocks,
-        totalStock=total_stock,
+        inventories=inventories,
+        totalInventory=total_inventory,
         loginStoreQuantity=login_store_quantity,
         loginStoreReturnedQuantity=login_store_returned_quantity,
         preOrderPendingCount=pending,
@@ -142,7 +140,7 @@ class ProductService:
             Product,
             product_id,
             options=[
-                selectinload(Product.stocks),
+                selectinload(Product.inventories),
                 selectinload(Product.pre_order_pending),
             ],
         )
@@ -171,15 +169,13 @@ class ProductService:
 
     # 新增商品並建立各地點庫存列（數量 0）。
     # data: 建立商品的請求內容。
-    def _login_bindings(self, store_name: Optional[str]) -> tuple[Optional[str], Optional[str], set[str]]:
-        stores = list(self.db.scalars(select(StoreBranch)).all())
-        sellable = {row.stock_location_id for row in stores}
+    def _login_bindings(self, store_name: Optional[str]) -> tuple[Optional[str], Optional[str]]:
         if not store_name:
-            return None, None, sellable
-        store = next((row for row in stores if row.name == store_name), None)
+            return None, None
+        store = self.db.get(StoreBranch, store_name)
         if store is None:
-            return None, None, sellable
-        return store.stock_location_id, store.returned_stock_location_id, sellable
+            return None, None
+        return store.inventory_location_id, store.returned_inventory_location_id
 
     def create(
         self,
@@ -220,13 +216,12 @@ class ProductService:
 
     # 依 product_id (商品主鍵) 取得單一商品的 API 資料。
     def get_by_id(self, product_id: str, *, store_name: Optional[str] = None) -> ProductSchema:
-        normal_id, returned_id, sellable = self._login_bindings(store_name)
+        normal_id, returned_id = self._login_bindings(store_name)
         return _to_product_schema(
             self._get_by_id_or_raise(product_id),
             ensure_locations(self.db),
             login_location_id=normal_id,
             login_returned_location_id=returned_id,
-            sellable_location_ids=sellable,
         )
 
     # 更新指定商品已提供的欄位。
@@ -287,21 +282,21 @@ class ProductService:
     # 依條件搜尋商品。關鍵字／比例／品牌／庫存篩選都在 SQL 執行。
     # keyword: 關鍵字
     # scale/brand: 比例與品牌
-    # in_stock_only: 是否僅回傳有庫存者
+    # in_inventory_only: 是否僅回傳有庫存者
     def search(
         self,
         *,
         keyword: Optional[str] = None,
         scale: Optional[str] = None,
         brand: Optional[str] = None,
-        in_stock_only: bool = False,
+        in_inventory_only: bool = False,
         store_name: Optional[str] = None,
     ) -> List[ProductSchema]:
         stmt = (
             select(Product)
             .where(Product.status != "deleted")
             .options(
-                selectinload(Product.stocks),
+                selectinload(Product.inventories),
                 selectinload(Product.pre_order_pending),
             )
         )
@@ -311,18 +306,14 @@ class ProductService:
         if brand and brand != "ALL":
             stmt = stmt.where(Product.brand == brand)
 
-        if in_stock_only:
-            sellable_locations = select(StoreBranch.stock_location_id)
-            stock_sum = (
-                select(func.coalesce(func.sum(ProductStock.quantity), 0))
-                .where(
-                    ProductStock.product_id == Product.id,
-                    ProductStock.location.in_(sellable_locations),
-                )
+        if in_inventory_only:
+            inventory_sum = (
+                select(func.coalesce(func.sum(ProductInventory.quantity), 0))
+                .where(ProductInventory.product_id == Product.id)
                 .correlate(Product)
                 .scalar_subquery()
             )
-            stmt = stmt.where(stock_sum > 0)
+            stmt = stmt.where(inventory_sum > 0)
 
         trimmed_keyword = (keyword or "").strip()
         if trimmed_keyword:
@@ -344,14 +335,13 @@ class ProductService:
         stmt = stmt.order_by(Product.sku.asc())
         products = list(self.db.scalars(stmt).unique().all())
         locations = ensure_locations(self.db)
-        normal_id, returned_id, sellable = self._login_bindings(store_name)
+        normal_id, returned_id = self._login_bindings(store_name)
         return [
             _to_product_schema(
                 p,
                 locations,
                 login_location_id=normal_id,
                 login_returned_location_id=returned_id,
-                sellable_location_ids=sellable,
             )
             for p in products
         ]

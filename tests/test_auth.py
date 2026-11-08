@@ -10,7 +10,7 @@ from sqlalchemy import select
 from src.core.config import settings
 from src.db.session import SessionFactory
 from src.models.auth import AuthSession
-from src.models.product import ProductStock
+from src.models.product import ProductInventory
 from src.models.system import OAuthAccount, StoreBranch
 from src.schemas.common import BusinessErrorCode
 from src.schemas.system import UpdateOAuthAccountRequest
@@ -59,8 +59,8 @@ def _add_account(email: str, role: str = "admin", name: str = "收銀員", accou
 def _store_body(name: str) -> dict:
     return {
         "name": name,
-        "stockLocationId": DEFAULT_STORE_LOCATION_ID,
-        "returnedStockLocationId": RETURNED_LOCATION_ID,
+        "inventoryLocationId": DEFAULT_STORE_LOCATION_ID,
+        "returnedInventoryLocationId": RETURNED_LOCATION_ID,
     }
 
 
@@ -73,8 +73,8 @@ def _add_store(name: str) -> str:
             StoreBranch(
                 name=name,
                 is_default=False,
-                stock_location_id=location.id,
-                returned_stock_location_id=RETURNED_LOCATION_ID,
+                inventory_location_id=location.id,
+                returned_inventory_location_id=RETURNED_LOCATION_ID,
             )
         )
         db.commit()
@@ -510,7 +510,7 @@ def test_checkout_deducts_the_login_store_location_and_may_go_negative(client, g
     assert order["branchName"] == "奇可門市"
     assert order["cashierId"] == account_id
     assert order["cashierName"] == "櫃台小王"
-    assert order["items"][0]["stockLocationId"] == store_location
+    assert order["items"][0]["inventoryLocationId"] == store_location
     assert _stock_qty(product_id, store_location) == -1
 
     _select(client, login["token"], "線上網購")
@@ -525,7 +525,7 @@ def test_checkout_deducts_the_login_store_location_and_may_go_negative(client, g
     )
     assert second.status_code == 201, second.text
     assert second.json()["order"]["branchId"] == "線上網購"
-    assert second.json()["order"]["items"][0]["stockLocationId"] == online_location
+    assert second.json()["order"]["items"][0]["inventoryLocationId"] == online_location
     assert _stock_qty(product_id, online_location) == -1
     assert _stock_qty(product_id, store_location) == -1
 
@@ -721,9 +721,9 @@ def _stock_qty(product_id: str, location: str) -> int:
     db = SessionFactory()
     try:
         stock = db.scalar(
-            select(ProductStock).where(
-                ProductStock.product_id == product_id,
-                ProductStock.location == location,
+            select(ProductInventory).where(
+                ProductInventory.product_id == product_id,
+                ProductInventory.location == location,
             )
         )
         return 0 if stock is None else stock.quantity

@@ -11,12 +11,12 @@ Prefix `/api/v1`. Amounts and quantities are integers. A business failure uses `
 | Field | Required | Notes |
 | --- | --- | --- |
 | `name` | create only | New store name |
-| `stockLocationId` | yes | Existing location for normal goods |
-| `returnedStockLocationId` | yes | Existing location for returned goods |
+| `inventoryLocationId` | yes | Existing location for normal goods |
+| `returnedInventoryLocationId` | yes | Existing location for returned goods |
 
-The two ids must differ. An unknown id is `404` `LOCATION_NOT_FOUND`. The same id twice is `400` `INVALID_LOCATION_TRANSFER`. There is no `newLocation` field, and the server does not create a location during store create.
+An unknown id is `404` `LOCATION_NOT_FOUND`. The same id may be sent for both bindings. There is no `newLocation` field, and the server does not create a location during store create. `PUT /system/stores/{storeName}` is admin-only.
 
-`GET /system/stores` and `GET /auth/stores` include `stockLocationId`, `stockLocationName`, `returnedStockLocationId`, and `returnedStockLocationName`.
+`GET /system/stores` and `GET /auth/stores` include `inventoryLocationId`, `inventoryLocationName`, `returnedInventoryLocationId`, and `returnedInventoryLocationName`.
 
 A typed location name on `POST /inventory/locations` or a rename must not match an existing name. A match is `409` `LOCATION_NAME_TAKEN`. The comparison is the trimmed name.
 
@@ -33,8 +33,8 @@ Returns every location. Order by `displayOrder`, then `id`.
 | `icon` | string | |
 | `isDefault` | boolean | |
 | `displayOrder` | number | |
-| `storeNames` | string[] | Stores that use this id as `stockLocationId` |
-| `returnedStoreNames` | string[] | Stores that use this id as `returnedStockLocationId` |
+| `storeNames` | string[] | Stores that use this id as `inventoryLocationId` |
+| `returnedStoreNames` | string[] | Stores that use this id as `returnedInventoryLocationId` |
 
 There is no `isActive` field.
 
@@ -46,15 +46,15 @@ There is no `isActive` field.
 
 Body: optional `rebindToLocation`. This call does not move quantity.
 
-`409` `LAST_LOCATION` when two or fewer locations exist. `409` `LOCATION_NOT_EMPTY` when any quantity is not exactly `0`. A negative quantity blocks the delete. Transfer it or set it to `0` first.
+`409` `LAST_LOCATION` when this is the only location. `409` `LOCATION_NOT_EMPTY` when any quantity is not exactly `0`. A negative quantity blocks the delete. Transfer it or set it to `0` first. A returned location may be set to a negative quantity with the same adjustment calls.
 
-When every quantity is `0` or missing and at least three locations exist, each store that used this id for normal goods, returned goods, or both is bound to `rebindToLocation` on that same role. The field is required in this case, must be a different existing location, and must not make one store's two bindings identical. That failure is `400` `INVALID_LOCATION_TRANSFER`. The response `reboundStoreNames` lists `{ name, binding, stockLocationId }` where `binding` is `normal` or `returned`.
+When every quantity is `0` or missing and another location exists, each store that used this id for normal goods, returned goods, or both is bound to `rebindToLocation` on that same role. The field is required in this case and must be a different existing location. The same location may then hold both roles. A missing or invalid target is `400` `INVALID_LOCATION_TRANSFER`. The response `reboundStoreNames` lists `{ name, binding, inventoryLocationId }` where `binding` is `normal` or `returned`.
 
-If a store mapping still lands after the locks, the delete rolls back and returns `409` `STOCK_LOCATION_IN_USE`.
+If a store mapping still lands after the locks, the delete rolls back and returns `409` `INVENTORY_LOCATION_IN_USE`.
 
-## Product stock
+## Product inventory
 
-`stocks[]` has one entry per location:
+`inventories[]` has one entry per location:
 
 | Field | Notes |
 | --- | --- |
@@ -62,11 +62,11 @@ If a store mapping still lands after the locks, the delete rolls back and return
 | `locationName` | |
 | `quantity` | That location's quantity. A missing row is `0`. May be negative. |
 
-`totalStock` sums `quantity` at locations currently used as any store's normal location. `loginStoreQuantity` is the session store's normal location. `loginStoreReturnedQuantity` is the session store's returned location. Product create accepts no quantities.
+`totalInventory` sums `quantity` at every location, including warehouses, returned locations, and negatives. `inInventoryOnly` keeps products whose `totalInventory` is greater than `0`. `loginStoreQuantity` is the session store's normal location. `loginStoreReturnedQuantity` is the session store's returned location. Product create accepts no quantities.
 
 ## `POST /inventory/receipts`
 
-Adds quantity at `locationId`. Repeated lines for the same product add together. Optional `supplier` and `note`. Deleted products can still be received. Each line is stored as a `stock_movement` with `type=receipt`, plus `sku` and `name`. `GET /inventory/receipts` reads those movements back as `items`.
+Adds quantity at `locationId`. Repeated lines for the same product add together. Optional `supplier` and `note`. Deleted products can still be received. Each line is stored as an `inventory_movement` with `type=receipt`, plus `sku` and `name`. `GET /inventory/receipts` reads those movements back as `items`.
 
 ## `POST /inventory/transfers`
 
@@ -78,7 +78,7 @@ Adds quantity at `locationId`. Repeated lines for the same product add together.
 | `quantity` | yes | Integer ≥ 1 |
 | `reason` | no | |
 
-A short source is `409` `INSUFFICIENT_STOCK`. There is no partial move.
+A short source is `409` `INSUFFICIENT_INVENTORY`. There is no partial move.
 
 ## `POST /inventory/transfers/all`
 
@@ -95,7 +95,7 @@ A short source is `409` `INSUFFICIENT_STOCK`. There is no partial move.
 
 ## `POST /inventory/batch-adjustments`
 
-Each `changes[]` entry sets one location to `newQty`. There is no condition field. One bad row rolls the whole batch back.
+Each `changes[]` entry sets one location to `newQty`. `note` is required and must not be blank. `operatorName` and `timestamp` are ignored; the server uses the session operator and the server clock. One bad row rolls the whole batch back.
 
 ## `GET /inventory/movements`
 
@@ -104,8 +104,8 @@ Filters: `productId`, `locationId`, `type`, `page`, `pageSize`. Newest first. Ty
 ## Checkout stock
 
 1. Lock locations, then the login store.
-2. A positive line deducts `stockLocationId`. The result may be negative. The line snapshots that location.
-3. A negative line with `restock` omitted or `true` adds the count to `returnedStockLocationId` and snapshots that location.
+2. A positive line deducts `inventoryLocationId`. The result may be negative. The line snapshots that location.
+3. A negative line with `restock` omitted or `true` adds the count to `returnedInventoryLocationId` and snapshots that location.
 4. `restock: false` changes no stock and leaves the line's location fields empty.
 
 There is no condition-change endpoint.

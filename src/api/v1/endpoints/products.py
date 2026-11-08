@@ -20,7 +20,7 @@ def search_products(
     keyword: Optional[str] = Query(None, description="SKU / barcode / name / brand"),
     scale: Optional[str] = Query(None, description="ModelScale or ALL"),
     brand: Optional[str] = Query(None, description="Brand filter, or ALL"),
-    inStockOnly: bool = Query(False, description="Only products with totalStock > 0"),
+    inInventoryOnly: bool = Query(False, description="Only products with totalInventory > 0"),
     db: Session = Depends(get_db),
     user=Depends(require_business_user),
 ) -> List[Product]:
@@ -29,7 +29,7 @@ def search_products(
         keyword=keyword,
         scale=scale,
         brand=brand,
-        in_stock_only=inStockOnly,
+        in_inventory_only=inInventoryOnly,
         store_name=user.store_name,
     )
 

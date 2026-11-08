@@ -247,7 +247,7 @@ This catalog phase has no order/preorder tables, so the check cannot fire yet. C
 ### 33. SQL-only filters (customers + products)
 
 - Customer: `WHERE` + `ORDER BY` + `LIMIT`/`OFFSET` + `COUNT(*)` in the DB
-- Product: keyword / scale / brand / inStockOnly in SQL (see [`../products/03-search-rules.md`](../products/03-search-rules.md)); do **not** load candidates then filter in Python
+- Product: keyword / scale / brand / inInventoryOnly in SQL (see [`../products/03-search-rules.md`](../products/03-search-rules.md)); do **not** load candidates then filter in Python
 
 ### 34. Phone optional
 

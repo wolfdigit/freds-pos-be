@@ -9,7 +9,7 @@ Mirror FE mock [`mockProductService.searchProducts`](../../../freds-pos-fe/src/s
 | `keyword` | query string | Optional |
 | `scale` | query | `ModelScale` or `ALL` |
 | `brand` | query | Brand string or `ALL` |
-| `inStockOnly` | query boolean | Default `false` |
+| `inInventoryOnly` | query boolean | Default `false` |
 
 Filters are **AND**-combined. Within the keyword filter, match conditions are **OR**.
 
@@ -107,12 +107,12 @@ Keyword brand matching is substring/case-insensitive; the **`brand` query param*
 
 ## In-stock filter
 
-| `inStockOnly` | Behavior |
+| `inInventoryOnly` | Behavior |
 |---------------|----------|
 | missing / `false` | No filter |
-| `true` | Keep only products where `totalStock > 0` |
+| `true` | Keep only products where `totalInventory > 0` |
 
-`totalStock` = sum of `product_stock.quantity` for that product (same as FE `stocks.reduce`).
+`totalInventory` = sum of `product_inventory.quantity` for that product, across every location, including negatives. `inInventoryOnly` keeps products whose sum is greater than `0`.
 
 ---
 
@@ -131,14 +131,14 @@ All keyword, scale, brand, and in-stock filters run **in the database**. Do **no
 1. One SQLAlchemy/`SELECT` with:
    - exact `scale` when set and not `ALL`
    - exact `brand` when set and not `ALL`
-   - `inStockOnly` via `HAVING SUM(quantity) > 0` or a subquery/join aggregate
+   - `inInventoryOnly` via `HAVING SUM(quantity) > 0` or a subquery/join aggregate
    - keyword `OR` predicates when keyword is non-empty:
      - `normalized_sku LIKE %normalizeSku(keyword)%` when the normalized query is non-empty (if normalize emptied the query, skip this branch; do not treat it as “always match”)
      - `barcode LIKE %trim%` (raw, case-sensitive as in FE)
      - `LOWER(name) LIKE %lower(trim)%`
      - `LOWER(brand) LIKE %lower(trim)%`
 2. `ORDER BY sku ASC` in SQL.
-3. Map rows to full `Product` DTOs including four `stocks` and computed totals.
+3. Map rows to full `Product` DTOs including `inventories` and computed totals.
 
 SQLite: `LIKE` is case-insensitive for ASCII by default; if the engine is case-sensitive, use `LOWER(...)` on barcode only if product later requires it — until then keep barcode `LIKE` on the stored value to match FE `includes`.
 
@@ -147,5 +147,5 @@ SQLite: `LIKE` is case-insensitive for ASCII by default; if the engine is case-s
 ## Out of scope for search
 
 - Inventory transfer/adjust endpoints.
-- Filtering by location-level stock (only aggregate `totalStock`).
+- Filtering by location-level stock (only aggregate `totalInventory`).
 - Full-text / trigram ranking (not in mock).

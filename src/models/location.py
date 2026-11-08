@@ -13,10 +13,10 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class StockLocation(Base):
-    """Inventory place. `id` is the stock location key stored on product_stock."""
+class InventoryLocation(Base):
+    """Inventory place. `id` is the stock location key stored on product_inventory."""
 
-    __tablename__ = "stock_location"
+    __tablename__ = "inventory_location"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
@@ -25,8 +25,8 @@ class StockLocation(Base):
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
 
-class StockAdjustmentLog(Base):
-    __tablename__ = "stock_adjustment_log"
+class InventoryAdjustmentLog(Base):
+    __tablename__ = "inventory_adjustment_log"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now)
@@ -36,8 +36,8 @@ class StockAdjustmentLog(Base):
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
-class StockReceipt(Base):
-    __tablename__ = "stock_receipt"
+class InventoryReceipt(Base):
+    __tablename__ = "inventory_receipt"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     location_id: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -48,10 +48,10 @@ class StockReceipt(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now)
 
 
-class StockMovement(Base):
+class InventoryMovement(Base):
     """One quantity change. A receipt line lives here too, with sku and name."""
 
-    __tablename__ = "stock_movement"
+    __tablename__ = "inventory_movement"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     type: Mapped[str] = mapped_column(String(32), nullable=False)

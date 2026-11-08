@@ -13,17 +13,17 @@ class StoreBranch(Base):
 
     name: Mapped[str] = mapped_column(String(128), primary_key=True)
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    stock_location_id: Mapped[str] = mapped_column(
+    inventory_location_id: Mapped[str] = mapped_column(
         String(64),
-        ForeignKey("stock_location.id", name="fk_store_branch_stock_location", ondelete="RESTRICT"),
+        ForeignKey("inventory_location.id", name="fk_store_branch_inventory_location", ondelete="RESTRICT"),
         nullable=False,
         index=True,
     )
-    returned_stock_location_id: Mapped[str] = mapped_column(
+    returned_inventory_location_id: Mapped[str] = mapped_column(
         String(64),
         ForeignKey(
-            "stock_location.id",
-            name="fk_store_branch_returned_stock_location",
+            "inventory_location.id",
+            name="fk_store_branch_returned_inventory_location",
             ondelete="RESTRICT",
         ),
         nullable=False,

@@ -112,8 +112,8 @@ def _to_item_schema(item: CheckoutOrderItem) -> CheckoutOrderItemSchema:
         restock=item.restock,
         returnReason=item.return_reason,
         note=item.note,
-        stockLocationId=item.stock_location_id,
-        stockLocationName=item.stock_location_name,
+        inventoryLocationId=item.inventory_location_id,
+        inventoryLocationName=item.inventory_location_name,
     )
 
 
@@ -527,7 +527,7 @@ class CheckoutService:
 
         touched_orders: dict[str, CheckoutOrder] = {}
         for index, line in enumerate(drafts, start=1):
-            stock_location_id, stock_location_name = apply_checkout_stock(
+            inventory_location_id, inventory_location_name = apply_checkout_stock(
                 self.db,
                 product_id=line.product.id,
                 quantity=line.quantity,
@@ -565,8 +565,8 @@ class CheckoutService:
                     ),
                     return_reason=line.return_reason,
                     note=line.note,
-                    stock_location_id=stock_location_id,
-                    stock_location_name=stock_location_name,
+                    inventory_location_id=inventory_location_id,
+                    inventory_location_name=inventory_location_name,
                 )
             )
         for index, payment in enumerate(data.payments, start=1):

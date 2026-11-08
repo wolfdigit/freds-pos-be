@@ -19,7 +19,7 @@ class ProductStatus(str, Enum):
     DELETED = "deleted"
 
 
-class LocationStock(BaseModel):
+class LocationInventory(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     location: str
@@ -45,8 +45,8 @@ class Product(BaseModel):
     image_url: Optional[str] = Field(None, alias="imageUrl")
     list_price: int = Field(..., alias="listPrice", ge=0)
     vip_price: Optional[int] = Field(None, alias="vipPrice", ge=0)
-    stocks: List[LocationStock]
-    total_stock: int = Field(..., alias="totalStock")
+    inventories: List[LocationInventory]
+    total_inventory: int = Field(..., alias="totalInventory")
     login_store_quantity: int = Field(0, alias="loginStoreQuantity")
     login_store_returned_quantity: int = Field(0, alias="loginStoreReturnedQuantity")
     pre_order_pending_count: int = Field(..., alias="preOrderPendingCount", ge=0)

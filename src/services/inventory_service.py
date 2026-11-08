@@ -10,30 +10,30 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.exceptions import BusinessException
-from src.models.location import StockAdjustmentLog, StockLocation, StockMovement, StockReceipt
-from src.models.product import Product, ProductStock
+from src.models.location import InventoryAdjustmentLog, InventoryLocation, InventoryMovement, InventoryReceipt
+from src.models.product import Product, ProductInventory
 from src.models.system import StoreBranch
 from src.schemas.common import BusinessErrorCode
 from src.schemas.inventory import (
-    BatchStockAdjustRequest,
-    CreateStockLocationRequest,
-    CreateStockReceiptRequest,
-    DeleteStockLocationRequest,
-    DeleteStockLocationResponse,
+    BatchInventoryAdjustRequest,
+    CreateInventoryLocationRequest,
+    CreateInventoryReceiptRequest,
+    DeleteInventoryLocationRequest,
+    DeleteInventoryLocationResponse,
     InventoryTransferRequest,
     MoveAllStockRequest,
     ReboundStore,
-    StockAdjustRequest,
-    StockAdjustmentLog as StockAdjustmentLogSchema,
-    StockItemAdjustment,
-    StockLocationChange,
-    StockLocationDto,
-    StockMovement as StockMovementSchema,
-    StockMovementPage,
-    StockReceipt as StockReceiptSchema,
-    StockReceiptItem as StockReceiptItemSchema,
-    StockReceiptPage,
-    UpdateStockLocationRequest,
+    InventoryAdjustRequest,
+    InventoryAdjustmentLog as InventoryAdjustmentLogSchema,
+    InventoryItemAdjustment,
+    InventoryLocationChange,
+    InventoryLocationDto,
+    InventoryMovement as InventoryMovementSchema,
+    InventoryMovementPage,
+    InventoryReceipt as InventoryReceiptSchema,
+    InventoryReceiptItem as InventoryReceiptItemSchema,
+    InventoryReceiptPage,
+    UpdateInventoryLocationRequest,
 )
 from src.services.location_integrity import location_delete_blocked_by_store_fk
 
@@ -47,7 +47,7 @@ DEFAULT_LOCATIONS = (
 DEFAULT_STORE_LOCATION_ID = DEFAULT_LOCATIONS[0][0]
 RETURNED_LOCATION_ID = DEFAULT_LOCATIONS[4][0]
 LEGACY_LOCATION_IDS = {legacy: loc_id for loc_id, *_rest, legacy in DEFAULT_LOCATIONS}
-MIN_LOCATION_COUNT = 2
+MIN_LOCATION_COUNT = 1
 
 
 def _raise(status_code: int, code: BusinessErrorCode, message: str) -> None:
@@ -58,19 +58,19 @@ def _new_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex}"
 
 
-def list_locations(db: Session) -> List[StockLocation]:
+def list_locations(db: Session) -> List[InventoryLocation]:
     return list(
-        db.scalars(select(StockLocation).order_by(StockLocation.display_order, StockLocation.id)).all()
+        db.scalars(select(InventoryLocation).order_by(InventoryLocation.display_order, InventoryLocation.id)).all()
     )
 
 
-def ensure_locations(db: Session) -> List[StockLocation]:
+def ensure_locations(db: Session) -> List[InventoryLocation]:
     rows = list_locations(db)
     if rows:
         return rows
     for loc_id, name, icon, is_default, order, _legacy in DEFAULT_LOCATIONS:
         db.add(
-            StockLocation(
+            InventoryLocation(
                 id=loc_id,
                 name=name,
                 icon=icon,
@@ -82,44 +82,42 @@ def ensure_locations(db: Session) -> List[StockLocation]:
     return list_locations(db)
 
 
-def lock_all_locations(db: Session) -> List[StockLocation]:
+def lock_all_locations(db: Session) -> List[InventoryLocation]:
     """Lock every location in id order before a store row.
 
     Delete, rebind, and checkout share this order, so one waits for the other
     instead of each waiting for the other's row.
     """
 
-    ids = list(db.scalars(select(StockLocation.id).order_by(StockLocation.id)).all())
-    locked: List[StockLocation] = []
+    ids = list(db.scalars(select(InventoryLocation.id).order_by(InventoryLocation.id)).all())
+    locked: List[InventoryLocation] = []
     for loc_id in ids:
-        row = db.scalar(select(StockLocation).where(StockLocation.id == loc_id).with_for_update())
+        row = db.scalar(select(InventoryLocation).where(InventoryLocation.id == loc_id).with_for_update())
         if row is not None:
             locked.append(row)
     return locked
 
 
-def resolve_location_id(db: Session, raw: str) -> StockLocation:
+def resolve_location_id(db: Session, raw: str) -> InventoryLocation:
     key = LEGACY_LOCATION_IDS.get(raw, raw)
-    row = db.get(StockLocation, key)
+    row = db.get(InventoryLocation, key)
     if row is None:
         _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到庫存地點")
     return row
 
 
-def require_two_locations(db: Session, normal_id: str, returned_id: str) -> tuple[StockLocation, StockLocation]:
+def require_two_locations(db: Session, normal_id: str, returned_id: str) -> tuple[InventoryLocation, InventoryLocation]:
     ensure_locations(db)
     lock_all_locations(db)
     normal = resolve_location_id(db, normal_id)
     returned = resolve_location_id(db, returned_id)
-    if normal.id == returned.id:
-        _raise(400, BusinessErrorCode.INVALID_LOCATION_TRANSFER, "正常與退貨庫存點不能相同")
     return normal, returned
 
 
 def _name_taken(db: Session, name: str, *, exclude_id: Optional[str] = None) -> bool:
-    stmt = select(StockLocation.id).where(StockLocation.name == name)
+    stmt = select(InventoryLocation.id).where(InventoryLocation.name == name)
     if exclude_id is not None:
-        stmt = stmt.where(StockLocation.id != exclude_id)
+        stmt = stmt.where(InventoryLocation.id != exclude_id)
     return db.scalar(stmt) is not None
 
 
@@ -129,7 +127,7 @@ def insert_location(
     *,
     icon: Optional[str] = None,
     display_order: Optional[int] = None,
-) -> StockLocation:
+) -> InventoryLocation:
     ensure_locations(db)
     cleaned = name.strip()
     if not cleaned:
@@ -137,9 +135,9 @@ def insert_location(
     if _name_taken(db, cleaned):
         _raise(409, BusinessErrorCode.LOCATION_NAME_TAKEN, "庫存點名稱已存在")
     current = list_locations(db)
-    pending = [obj for obj in db.new if isinstance(obj, StockLocation)]
+    pending = [obj for obj in db.new if isinstance(obj, InventoryLocation)]
     last_order = max([row.display_order for row in current] + [obj.display_order for obj in pending] + [0])
-    row = StockLocation(
+    row = InventoryLocation(
         id=str(uuid.uuid4()),
         name=cleaned,
         icon=icon or "📍",
@@ -151,15 +149,15 @@ def insert_location(
     return row
 
 
-def _lock_stock(db: Session, product_id: str, location: StockLocation) -> ProductStock:
+def _lock_stock(db: Session, product_id: str, location: InventoryLocation) -> ProductInventory:
     stmt = (
-        select(ProductStock)
-        .where(ProductStock.product_id == product_id, ProductStock.location == location.id)
+        select(ProductInventory)
+        .where(ProductInventory.product_id == product_id, ProductInventory.location == location.id)
         .with_for_update()
     )
     row = db.scalar(stmt)
     if row is None:
-        row = ProductStock(
+        row = ProductInventory(
             product_id=product_id,
             location=location.id,
             location_name=location.name,
@@ -193,7 +191,7 @@ def _write_movement(
     name: Optional[str] = None,
 ) -> None:
     db.add(
-        StockMovement(
+        InventoryMovement(
             id=_new_id("mov"),
             type=movement_type,
             product_id=product_id,
@@ -226,7 +224,7 @@ def apply_checkout_stock(
     if store is None:
         _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市")
     if quantity > 0:
-        location = db.get(StockLocation, store.stock_location_id)
+        location = db.get(InventoryLocation, store.inventory_location_id)
         if location is None:
             _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市的正常庫存點")
         row = _lock_stock(db, product_id, location)
@@ -247,7 +245,7 @@ def apply_checkout_stock(
         return location.id, location.name
     if restock is False:
         return None, None
-    location = db.get(StockLocation, store.returned_stock_location_id)
+    location = db.get(InventoryLocation, store.returned_inventory_location_id)
     if location is None:
         _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市的退貨庫存點")
     returned = abs(quantity)
@@ -274,13 +272,13 @@ def _bindings_by_location(db: Session) -> tuple[dict[str, List[str]], dict[str, 
     returned: dict[str, List[str]] = {}
     rows = db.scalars(select(StoreBranch).order_by(StoreBranch.name)).all()
     for store in rows:
-        normal.setdefault(store.stock_location_id, []).append(store.name)
-        returned.setdefault(store.returned_stock_location_id, []).append(store.name)
+        normal.setdefault(store.inventory_location_id, []).append(store.name)
+        returned.setdefault(store.returned_inventory_location_id, []).append(store.name)
     return normal, returned
 
 
-def _to_dto(row: StockLocation, normal_names: Sequence[str], returned_names: Sequence[str]) -> StockLocationDto:
-    return StockLocationDto(
+def _to_dto(row: InventoryLocation, normal_names: Sequence[str], returned_names: Sequence[str]) -> InventoryLocationDto:
+    return InventoryLocationDto(
         id=row.id,
         name=row.name,
         icon=row.icon,
@@ -291,7 +289,7 @@ def _to_dto(row: StockLocation, normal_names: Sequence[str], returned_names: Seq
     )
 
 
-def _pair(source: StockLocation, target: StockLocation) -> None:
+def _pair(source: InventoryLocation, target: InventoryLocation) -> None:
     if source.id == target.id:
         _raise(400, BusinessErrorCode.INVALID_LOCATION_TRANSFER, "調出與調入地點不可相同")
 
@@ -300,8 +298,8 @@ def _move_quantity(
     db: Session,
     *,
     product_id: str,
-    source: StockLocation,
-    target: StockLocation,
+    source: InventoryLocation,
+    target: InventoryLocation,
     quantity: int,
     source_id: str,
     reason: Optional[str],
@@ -309,7 +307,7 @@ def _move_quantity(
 ) -> None:
     src_row = _lock_stock(db, product_id, source)
     if src_row.quantity < quantity:
-        _raise(409, BusinessErrorCode.INSUFFICIENT_STOCK, "調出地點庫存不足")
+        _raise(409, BusinessErrorCode.INSUFFICIENT_INVENTORY, "調出地點庫存不足")
     dest_row = _lock_stock(db, product_id, target)
     src_row.quantity -= quantity
     dest_row.quantity += quantity
@@ -345,18 +343,18 @@ class InventoryService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def get_locations(self) -> List[StockLocationDto]:
+    def get_locations(self) -> List[InventoryLocationDto]:
         rows = ensure_locations(self.db)
         normal, returned = _bindings_by_location(self.db)
         return [_to_dto(row, normal.get(row.id, []), returned.get(row.id, [])) for row in rows]
 
-    def create_location(self, data: CreateStockLocationRequest) -> StockLocationDto:
+    def create_location(self, data: CreateInventoryLocationRequest) -> InventoryLocationDto:
         row = insert_location(self.db, data.name, icon=data.icon, display_order=data.display_order)
         self.db.commit()
         return _to_dto(row, [], [])
 
-    def update_location(self, location_id: str, data: UpdateStockLocationRequest) -> StockLocationDto:
-        row = self.db.get(StockLocation, location_id)
+    def update_location(self, location_id: str, data: UpdateInventoryLocationRequest) -> InventoryLocationDto:
+        row = self.db.get(InventoryLocation, location_id)
         if row is None:
             _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到庫存地點")
         if data.name is not None:
@@ -367,7 +365,7 @@ class InventoryService:
                 _raise(409, BusinessErrorCode.LOCATION_NAME_TAKEN, "庫存點名稱已存在")
             row.name = cleaned
             self.db.execute(
-                update(ProductStock).where(ProductStock.location == row.id).values(location_name=cleaned)
+                update(ProductInventory).where(ProductInventory.location == row.id).values(location_name=cleaned)
             )
         if data.icon is not None:
             row.icon = data.icon
@@ -377,16 +375,16 @@ class InventoryService:
         normal, returned = _bindings_by_location(self.db)
         return _to_dto(row, normal.get(row.id, []), returned.get(row.id, []))
 
-    def delete_location(self, location_id: str, data: DeleteStockLocationRequest) -> DeleteStockLocationResponse:
+    def delete_location(self, location_id: str, data: DeleteInventoryLocationRequest) -> DeleteInventoryLocationResponse:
         locked = lock_all_locations(self.db)
         source = next((row for row in locked if row.id == location_id), None)
         if source is None:
             _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到欲刪除的庫存地點")
         if len(locked) <= MIN_LOCATION_COUNT:
-            _raise(409, BusinessErrorCode.LAST_LOCATION, "至少要保留一組庫存點（正常與退貨）")
+            _raise(409, BusinessErrorCode.LAST_LOCATION, "至少要保留一個庫存點")
         stock_rows = list(
             self.db.scalars(
-                select(ProductStock).where(ProductStock.location == source.id).with_for_update()
+                select(ProductInventory).where(ProductInventory.location == source.id).with_for_update()
             ).all()
         )
         if any(row.quantity != 0 for row in stock_rows):
@@ -396,8 +394,8 @@ class InventoryService:
                 select(StoreBranch)
                 .where(
                     or_(
-                        StoreBranch.stock_location_id == source.id,
-                        StoreBranch.returned_stock_location_id == source.id,
+                        StoreBranch.inventory_location_id == source.id,
+                        StoreBranch.returned_inventory_location_id == source.id,
                     )
                 )
                 .order_by(StoreBranch.name)
@@ -405,7 +403,7 @@ class InventoryService:
             ).all()
         )
         rebound: List[ReboundStore] = []
-        target: Optional[StockLocation] = None
+        target: Optional[InventoryLocation] = None
         if stores:
             if not data.rebind_to_location:
                 _raise(400, BusinessErrorCode.INVALID_LOCATION_TRANSFER, "請指定這些門市要改綁的庫存點")
@@ -413,16 +411,12 @@ class InventoryService:
             if target.id == source.id:
                 _raise(400, BusinessErrorCode.INVALID_LOCATION_TRANSFER, "改綁目標不能是即將刪除的庫存點")
             for store in stores:
-                if store.stock_location_id == source.id:
-                    if store.returned_stock_location_id == target.id:
-                        _raise(400, BusinessErrorCode.INVALID_LOCATION_TRANSFER, "改綁後正常與退貨庫存點不能相同")
-                    store.stock_location_id = target.id
-                    rebound.append(ReboundStore(name=store.name, binding="normal", stockLocationId=target.id))
-                if store.returned_stock_location_id == source.id:
-                    if store.stock_location_id == target.id:
-                        _raise(400, BusinessErrorCode.INVALID_LOCATION_TRANSFER, "改綁後正常與退貨庫存點不能相同")
-                    store.returned_stock_location_id = target.id
-                    rebound.append(ReboundStore(name=store.name, binding="returned", stockLocationId=target.id))
+                if store.inventory_location_id == source.id:
+                    store.inventory_location_id = target.id
+                    rebound.append(ReboundStore(name=store.name, binding="normal", inventoryLocationId=target.id))
+                if store.returned_inventory_location_id == source.id:
+                    store.returned_inventory_location_id = target.id
+                    rebound.append(ReboundStore(name=store.name, binding="returned", inventoryLocationId=target.id))
         for row in stock_rows:
             self.db.delete(row)
         deleted_id = source.id
@@ -431,9 +425,9 @@ class InventoryService:
             self.db.commit()
         except IntegrityError as exc:
             if location_delete_blocked_by_store_fk(self.db, exc, deleted_id):
-                _raise(409, BusinessErrorCode.STOCK_LOCATION_IN_USE, "仍有門市對應此地點，請改綁後再刪")
+                _raise(409, BusinessErrorCode.INVENTORY_LOCATION_IN_USE, "仍有門市對應此地點，請改綁後再刪")
             raise
-        return DeleteStockLocationResponse(deletedLocation=deleted_id, reboundStoreNames=rebound)
+        return DeleteInventoryLocationResponse(deletedLocation=deleted_id, reboundStoreNames=rebound)
 
     def transfer(self, data: InventoryTransferRequest, *, operator_name: str) -> None:
         lock_all_locations(self.db)
@@ -460,8 +454,8 @@ class InventoryService:
         _pair(source, target)
         rows = list(
             self.db.scalars(
-                select(ProductStock)
-                .where(ProductStock.location == source.id, ProductStock.quantity != 0)
+                select(ProductInventory)
+                .where(ProductInventory.location == source.id, ProductInventory.quantity != 0)
                 .with_for_update()
             ).all()
         )
@@ -499,7 +493,7 @@ class InventoryService:
             )
         self.db.commit()
 
-    def adjust(self, data: StockAdjustRequest, *, operator_name: str) -> None:
+    def adjust(self, data: InventoryAdjustRequest, *, operator_name: str) -> None:
         lock_all_locations(self.db)
         product = _require_product(self.db, data.product_id)
         location = resolve_location_id(self.db, data.location)
@@ -509,14 +503,14 @@ class InventoryService:
         row.location_name = location.name
         diff = data.new_quantity - old_qty
         log_id = _new_id("adj")
-        change = StockLocationChange(
+        change = InventoryLocationChange(
             location=location.id,
             locationName=location.name,
             oldQty=old_qty,
             newQty=data.new_quantity,
             diff=diff,
         )
-        item = StockItemAdjustment(
+        item = InventoryItemAdjustment(
             productId=product.id,
             sku=product.sku,
             barcode=product.barcode,
@@ -526,7 +520,7 @@ class InventoryService:
             summaryText=f"{location.name} {old_qty} → {data.new_quantity}",
         )
         self.db.add(
-            StockAdjustmentLog(
+            InventoryAdjustmentLog(
                 id=log_id,
                 operator_name=operator_name,
                 items_json=json.dumps([item.model_dump(by_alias=True)], ensure_ascii=False),
@@ -548,14 +542,14 @@ class InventoryService:
         )
         self.db.commit()
 
-    def batch_adjust(self, data: BatchStockAdjustRequest, *, operator_name: str) -> None:
+    def batch_adjust(self, data: BatchInventoryAdjustRequest, *, operator_name: str) -> None:
         lock_all_locations(self.db)
-        logged: List[StockItemAdjustment] = []
+        logged: List[InventoryItemAdjustment] = []
         total_diff = 0
         log_id = _new_id("adj")
         for item in data.adjustments:
             product = _require_product(self.db, item.product_id)
-            changes: List[StockLocationChange] = []
+            changes: List[InventoryLocationChange] = []
             for change in item.changes:
                 location = resolve_location_id(self.db, change.location)
                 row = _lock_stock(self.db, item.product_id, location)
@@ -565,7 +559,7 @@ class InventoryService:
                 diff = change.new_qty - old_qty
                 total_diff += diff
                 changes.append(
-                    StockLocationChange(
+                    InventoryLocationChange(
                         location=location.id,
                         locationName=location.name,
                         oldQty=old_qty,
@@ -574,7 +568,7 @@ class InventoryService:
                     )
                 )
             logged.append(
-                StockItemAdjustment(
+                InventoryItemAdjustment(
                     productId=product.id,
                     sku=product.sku,
                     barcode=product.barcode,
@@ -585,7 +579,7 @@ class InventoryService:
                 )
             )
         self.db.add(
-            StockAdjustmentLog(
+            InventoryAdjustmentLog(
                 id=log_id,
                 operator_name=operator_name,
                 items_json=json.dumps([item.model_dump(by_alias=True) for item in logged], ensure_ascii=False),
@@ -609,33 +603,33 @@ class InventoryService:
                 )
         self.db.commit()
 
-    def logs(self) -> List[StockAdjustmentLogSchema]:
-        rows: Sequence[StockAdjustmentLog] = self.db.scalars(
-            select(StockAdjustmentLog).order_by(StockAdjustmentLog.timestamp.desc())
+    def logs(self) -> List[InventoryAdjustmentLogSchema]:
+        rows: Sequence[InventoryAdjustmentLog] = self.db.scalars(
+            select(InventoryAdjustmentLog).order_by(InventoryAdjustmentLog.timestamp.desc())
         ).all()
-        result: List[StockAdjustmentLogSchema] = []
+        result: List[InventoryAdjustmentLogSchema] = []
         for row in rows:
             raw_items = json.loads(row.items_json)
             result.append(
-                StockAdjustmentLogSchema(
+                InventoryAdjustmentLogSchema(
                     id=row.id,
                     timestamp=row.timestamp,
                     operatorName=row.operator_name,
-                    items=[StockItemAdjustment.model_validate(item) for item in raw_items],
+                    items=[InventoryItemAdjustment.model_validate(item) for item in raw_items],
                     totalQtyChange=row.total_qty_change,
                     note=row.note,
                 )
             )
         return result
 
-    def create_receipt(self, data: CreateStockReceiptRequest, *, operator_name: str) -> StockReceiptSchema:
+    def create_receipt(self, data: CreateInventoryReceiptRequest, *, operator_name: str) -> InventoryReceiptSchema:
         lock_all_locations(self.db)
         location = resolve_location_id(self.db, data.location_id)
         totals: dict[str, int] = {}
         for line in data.items:
             totals[line.product_id] = totals.get(line.product_id, 0) + line.quantity
         receipt_id = _new_id("rcv")
-        item_rows: List[StockReceiptItemSchema] = []
+        item_rows: List[InventoryReceiptItemSchema] = []
         for product_id, quantity in totals.items():
             product = _require_product(self.db, product_id)
             row = _lock_stock(self.db, product_id, location)
@@ -656,11 +650,11 @@ class InventoryService:
                 operator_name=operator_name,
             )
             item_rows.append(
-                StockReceiptItemSchema(productId=product.id, sku=product.sku, name=product.name, quantity=quantity)
+                InventoryReceiptItemSchema(productId=product.id, sku=product.sku, name=product.name, quantity=quantity)
             )
         created_at = datetime.now(timezone.utc)
         self.db.add(
-            StockReceipt(
+            InventoryReceipt(
                 id=receipt_id,
                 location_id=location.id,
                 location_name=location.name,
@@ -671,7 +665,7 @@ class InventoryService:
             )
         )
         self.db.commit()
-        return StockReceiptSchema(
+        return InventoryReceiptSchema(
             id=receipt_id,
             locationId=location.id,
             locationName=location.name,
@@ -690,26 +684,26 @@ class InventoryService:
         product_id: Optional[str],
         page: int,
         page_size: int,
-    ) -> StockReceiptPage:
-        stmt = select(StockReceipt)
+    ) -> InventoryReceiptPage:
+        stmt = select(InventoryReceipt)
         if location_id:
-            stmt = stmt.where(StockReceipt.location_id == location_id)
+            stmt = stmt.where(InventoryReceipt.location_id == location_id)
         if product_id:
             stmt = stmt.where(
-                StockReceipt.id.in_(
-                    select(StockMovement.source_id).where(
-                        StockMovement.source_type == "receipt",
-                        StockMovement.product_id == product_id,
+                InventoryReceipt.id.in_(
+                    select(InventoryMovement.source_id).where(
+                        InventoryMovement.source_type == "receipt",
+                        InventoryMovement.product_id == product_id,
                     )
                 )
             )
         total = self.db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
         rows = list(
             self.db.scalars(
-                stmt.order_by(StockReceipt.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+                stmt.order_by(InventoryReceipt.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
             ).all()
         )
-        return StockReceiptPage(
+        return InventoryReceiptPage(
             items=[self._receipt_schema(row) for row in rows],
             page=page,
             pageSize=page_size,
@@ -724,23 +718,23 @@ class InventoryService:
         movement_type: Optional[str],
         page: int,
         page_size: int,
-    ) -> StockMovementPage:
-        stmt = select(StockMovement)
+    ) -> InventoryMovementPage:
+        stmt = select(InventoryMovement)
         if product_id:
-            stmt = stmt.where(StockMovement.product_id == product_id)
+            stmt = stmt.where(InventoryMovement.product_id == product_id)
         if location_id:
-            stmt = stmt.where(StockMovement.location_id == location_id)
+            stmt = stmt.where(InventoryMovement.location_id == location_id)
         if movement_type:
-            stmt = stmt.where(StockMovement.type == movement_type)
+            stmt = stmt.where(InventoryMovement.type == movement_type)
         total = self.db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
         rows = list(
             self.db.scalars(
-                stmt.order_by(StockMovement.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+                stmt.order_by(InventoryMovement.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
             ).all()
         )
-        return StockMovementPage(
+        return InventoryMovementPage(
             items=[
-                StockMovementSchema(
+                InventoryMovementSchema(
                     id=row.id,
                     type=row.type,
                     productId=row.product_id,
@@ -761,16 +755,16 @@ class InventoryService:
             total=total,
         )
 
-    def _receipt_schema(self, row: StockReceipt) -> StockReceiptSchema:
+    def _receipt_schema(self, row: InventoryReceipt) -> InventoryReceiptSchema:
         movements = list(
             self.db.scalars(
-                select(StockMovement)
-                .where(StockMovement.source_type == "receipt", StockMovement.source_id == row.id)
-                .order_by(StockMovement.id)
+                select(InventoryMovement)
+                .where(InventoryMovement.source_type == "receipt", InventoryMovement.source_id == row.id)
+                .order_by(InventoryMovement.id)
             ).all()
         )
         schemas = [
-            StockReceiptItemSchema(
+            InventoryReceiptItemSchema(
                 productId=item.product_id,
                 sku=item.sku or "",
                 name=item.name or "",
@@ -778,7 +772,7 @@ class InventoryService:
             )
             for item in movements
         ]
-        return StockReceiptSchema(
+        return InventoryReceiptSchema(
             id=row.id,
             locationId=row.location_id,
             locationName=row.location_name,

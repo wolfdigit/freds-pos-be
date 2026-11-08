@@ -5,21 +5,21 @@ from sqlalchemy.orm import Session
 
 from src.api.deps import get_db, require_business_user
 from src.schemas.inventory import (
-    BatchStockAdjustRequest,
-    CreateStockLocationRequest,
-    CreateStockReceiptRequest,
-    DeleteStockLocationRequest,
-    DeleteStockLocationResponse,
+    BatchInventoryAdjustRequest,
+    CreateInventoryLocationRequest,
+    CreateInventoryReceiptRequest,
+    DeleteInventoryLocationRequest,
+    DeleteInventoryLocationResponse,
     InventoryTransferRequest,
     MoveAllStockRequest,
     OkResponse,
-    StockAdjustRequest,
-    StockAdjustmentLog,
-    StockLocationDto,
-    StockMovementPage,
-    StockReceipt,
-    StockReceiptPage,
-    UpdateStockLocationRequest,
+    InventoryAdjustRequest,
+    InventoryAdjustmentLog,
+    InventoryLocationDto,
+    InventoryMovementPage,
+    InventoryReceipt,
+    InventoryReceiptPage,
+    UpdateInventoryLocationRequest,
 )
 from src.services.auth_service import Principal
 from src.services.inventory_service import InventoryService
@@ -27,23 +27,23 @@ from src.services.inventory_service import InventoryService
 router = APIRouter()
 
 
-@router.get("/locations", response_model=List[StockLocationDto], response_model_by_alias=True)
+@router.get("/locations", response_model=List[InventoryLocationDto], response_model_by_alias=True)
 def get_locations(db: Session = Depends(get_db), _user: Principal = Depends(require_business_user)):
     return InventoryService(db).get_locations()
 
 
-@router.post("/locations", response_model=StockLocationDto, response_model_by_alias=True, status_code=status.HTTP_201_CREATED)
+@router.post("/locations", response_model=InventoryLocationDto, response_model_by_alias=True, status_code=status.HTTP_201_CREATED)
 def create_location(
-    body: CreateStockLocationRequest,
+    body: CreateInventoryLocationRequest,
     db: Session = Depends(get_db),
     _user: Principal = Depends(require_business_user),
 ):
     return InventoryService(db).create_location(body)
 
 
-@router.put("/locations/{locationId}", response_model=StockLocationDto, response_model_by_alias=True)
+@router.put("/locations/{locationId}", response_model=InventoryLocationDto, response_model_by_alias=True)
 def update_location(
-    body: UpdateStockLocationRequest,
+    body: UpdateInventoryLocationRequest,
     locationId: str = Path(...),
     db: Session = Depends(get_db),
     _user: Principal = Depends(require_business_user),
@@ -51,9 +51,9 @@ def update_location(
     return InventoryService(db).update_location(locationId, body)
 
 
-@router.delete("/locations/{locationId}", response_model=DeleteStockLocationResponse, response_model_by_alias=True)
+@router.delete("/locations/{locationId}", response_model=DeleteInventoryLocationResponse, response_model_by_alias=True)
 def delete_location(
-    body: DeleteStockLocationRequest,
+    body: DeleteInventoryLocationRequest,
     locationId: str = Path(...),
     db: Session = Depends(get_db),
     _user: Principal = Depends(require_business_user),
@@ -83,7 +83,7 @@ def move_all_stock(
 
 @router.post("/adjustments", response_model=OkResponse)
 def adjust_stock(
-    body: StockAdjustRequest,
+    body: InventoryAdjustRequest,
     db: Session = Depends(get_db),
     user: Principal = Depends(require_business_user),
 ):
@@ -93,7 +93,7 @@ def adjust_stock(
 
 @router.post("/batch-adjustments", response_model=OkResponse)
 def batch_adjust(
-    body: BatchStockAdjustRequest,
+    body: BatchInventoryAdjustRequest,
     db: Session = Depends(get_db),
     user: Principal = Depends(require_business_user),
 ):
@@ -101,21 +101,21 @@ def batch_adjust(
     return OkResponse()
 
 
-@router.get("/adjustments/logs", response_model=List[StockAdjustmentLog], response_model_by_alias=True)
+@router.get("/adjustments/logs", response_model=List[InventoryAdjustmentLog], response_model_by_alias=True)
 def adjustment_logs(db: Session = Depends(get_db), _user: Principal = Depends(require_business_user)):
     return InventoryService(db).logs()
 
 
-@router.post("/receipts", response_model=StockReceipt, response_model_by_alias=True, status_code=status.HTTP_201_CREATED)
+@router.post("/receipts", response_model=InventoryReceipt, response_model_by_alias=True, status_code=status.HTTP_201_CREATED)
 def create_receipt(
-    body: CreateStockReceiptRequest,
+    body: CreateInventoryReceiptRequest,
     db: Session = Depends(get_db),
     user: Principal = Depends(require_business_user),
 ):
     return InventoryService(db).create_receipt(body, operator_name=user.name)
 
 
-@router.get("/receipts", response_model=StockReceiptPage, response_model_by_alias=True)
+@router.get("/receipts", response_model=InventoryReceiptPage, response_model_by_alias=True)
 def search_receipts(
     locationId: Optional[str] = Query(None),
     productId: Optional[str] = Query(None),
@@ -132,7 +132,7 @@ def search_receipts(
     )
 
 
-@router.get("/movements", response_model=StockMovementPage, response_model_by_alias=True)
+@router.get("/movements", response_model=InventoryMovementPage, response_model_by_alias=True)
 def search_movements(
     productId: Optional[str] = Query(None),
     locationId: Optional[str] = Query(None),

@@ -8,7 +8,7 @@
 
 ## Create or rebind a store
 
-1. Require `stockLocationId` and `returnedStockLocationId`. Both must already exist and must differ.
+1. Require `inventoryLocationId` and `returnedInventoryLocationId`. Both must already exist. They may be the same id.
 2. Lock every location in id order, then lock the store row on rebind.
 3. Save both ids. Do not move quantity and do not insert a location.
 4. If the location disappears before commit, return `404` `LOCATION_NOT_FOUND`.
@@ -18,12 +18,12 @@
 1. Lock locations, then resolve `locationId`.
 2. Sum repeated lines for the same product.
 3. Add that quantity. Insert a `0` row when it is missing.
-4. Insert one `stock_receipt` and one `receipt` movement per product, with `sku` and `name`.
+4. Insert one `inventory_receipt` and one `receipt` movement per product, with `sku` and `name`.
 
 ## Transfer one product
 
 1. Lock locations.
-2. Lock the source row. If its quantity is less than the requested amount, return `INSUFFICIENT_STOCK`.
+2. Lock the source row. If its quantity is less than the requested amount, return `INSUFFICIENT_INVENTORY`.
 3. Decrease the source and increase the target. Insert `0` at the target when that row is missing.
 4. Write `transfer_out` and `transfer_in`.
 
@@ -37,11 +37,11 @@
 ## Delete a location
 
 1. Lock every location in id order.
-2. If two or fewer locations exist, return `LAST_LOCATION`.
+2. If this is the only location, return `LAST_LOCATION`.
 3. Lock the stock rows at this location. If any quantity is not exactly `0`, return `LOCATION_NOT_EMPTY`.
 4. Lock the stores that use this id as either binding. `rebindToLocation` must be a different existing location. Set the matching column. Refuse a result where one store's two ids match.
 5. Delete the zero stock rows and the location.
-6. If a store foreign key still fails, roll back and return `STOCK_LOCATION_IN_USE`.
+6. If a store foreign key still fails, roll back and return `INVENTORY_LOCATION_IN_USE`.
 
 ## Manual quantity
 
@@ -52,13 +52,13 @@
 ## Checkout sale
 
 1. Lock locations, then the login store.
-2. Deduct the positive quantity at `stock_location_id`. The result may be negative.
+2. Deduct the positive quantity at `inventory_location_id`. The result may be negative.
 3. Write `sale`. Snapshot that location on the line. Idempotent replay does not deduct again.
 
 ## Checkout return
 
 1. Use the return order's login store, not the original sale store.
-2. When `restock` is omitted or `true`, add the count at `returned_stock_location_id` and write `return_restock`. Snapshot that location.
+2. When `restock` is omitted or `true`, add the count at `returned_inventory_location_id` and write `return_restock`. Snapshot that location.
 3. When `restock` is `false`, skip stock and leave the location fields empty.
 4. The original sale line's `returnedQuantity` still increases under the checkout rules.
 

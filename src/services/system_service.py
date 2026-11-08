@@ -10,7 +10,7 @@ from src.core.exceptions import BusinessException
 from src.models.system import OAuthAccount, StoreBranch
 from src.schemas.common import BusinessErrorCode
 from src.services.bootstrap import new_account_id
-from src.models.location import StockLocation
+from src.models.location import InventoryLocation
 from src.schemas.system import (
     CreateOAuthAccountRequest,
     CreateStoreRequest,
@@ -32,11 +32,11 @@ class SystemService:
 
     def stores(self) -> List[StoreDto]:
         rows = list(self.db.scalars(select(StoreBranch).order_by(StoreBranch.name)).all())
-        locations = {row.id: row for row in self.db.scalars(select(StockLocation)).all()}
+        locations = {row.id: row for row in self.db.scalars(select(InventoryLocation)).all()}
         result: List[StoreDto] = []
         for row in rows:
-            normal = locations.get(row.stock_location_id)
-            returned = locations.get(row.returned_stock_location_id)
+            normal = locations.get(row.inventory_location_id)
+            returned = locations.get(row.returned_inventory_location_id)
             if normal is None or returned is None:
                 _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市對應的庫存地點")
             result.append(self._store_dto(row, normal, returned))
@@ -50,13 +50,13 @@ class SystemService:
         if self.db.get(StoreBranch, name) is not None:
             _raise(400, BusinessErrorCode.INVALID_LOCATION_TRANSFER, "門市已存在")
         normal, returned = require_two_locations(
-            self.db, data.stock_location_id, data.returned_stock_location_id
+            self.db, data.inventory_location_id, data.returned_inventory_location_id
         )
         row = StoreBranch(
             name=name,
             is_default=False,
-            stock_location_id=normal.id,
-            returned_stock_location_id=returned.id,
+            inventory_location_id=normal.id,
+            returned_inventory_location_id=returned.id,
         )
         self.db.add(row)
         self._commit_store_location()
@@ -65,13 +65,13 @@ class SystemService:
     def rebind_store(self, name: str, data: UpdateStoreBindingRequest, *, actor_role: str) -> StoreDto:
         self._require_actor_admin(actor_role)
         normal, returned = require_two_locations(
-            self.db, data.stock_location_id, data.returned_stock_location_id
+            self.db, data.inventory_location_id, data.returned_inventory_location_id
         )
         row = self.db.scalar(select(StoreBranch).where(StoreBranch.name == name).with_for_update())
         if row is None:
             _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市")
-        row.stock_location_id = normal.id
-        row.returned_stock_location_id = returned.id
+        row.inventory_location_id = normal.id
+        row.returned_inventory_location_id = returned.id
         self._commit_store_location()
         return self._store_dto(row, normal, returned)
 
@@ -146,14 +146,14 @@ class SystemService:
         self.db.commit()
         return {"deletedEmail": key}
 
-    def _store_dto(self, row: StoreBranch, normal: StockLocation, returned: StockLocation) -> StoreDto:
+    def _store_dto(self, row: StoreBranch, normal: InventoryLocation, returned: InventoryLocation) -> StoreDto:
         return StoreDto(
             name=row.name,
             isDefault=row.is_default,
-            stockLocationId=normal.id,
-            stockLocationName=normal.name,
-            returnedStockLocationId=returned.id,
-            returnedStockLocationName=returned.name,
+            inventoryLocationId=normal.id,
+            inventoryLocationName=normal.name,
+            returnedInventoryLocationId=returned.id,
+            returnedInventoryLocationName=returned.name,
         )
 
     def _commit_store_location(self) -> None:

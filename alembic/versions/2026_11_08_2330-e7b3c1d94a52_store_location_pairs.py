@@ -139,8 +139,8 @@ def downgrade() -> None:
         batch.add_column(sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()))
     with op.batch_alter_table("checkout_order_item") as batch:
         batch.add_column(sa.Column("stock_condition", sa.String(length=16), nullable=True))
+    op.execute("DROP INDEX IF EXISTS ix_stock_movement_source_id")
     with op.batch_alter_table("stock_movement") as batch:
-        batch.drop_index("ix_stock_movement_source_id")
         batch.add_column(sa.Column("condition", sa.String(length=16), nullable=False, server_default="normal"))
         batch.drop_column("sku")
         batch.drop_column("name")
@@ -160,8 +160,8 @@ def downgrade() -> None:
             "uq_product_stock_product_location_condition",
             ["product_id", "location", "condition"],
         )
-    op.drop_index("ix_store_branch_returned_stock_location_id", table_name="store_branch")
-    op.drop_index("ix_store_branch_stock_location_id", table_name="store_branch")
+    op.execute("DROP INDEX IF EXISTS ix_store_branch_returned_stock_location_id")
+    op.execute("DROP INDEX IF EXISTS ix_store_branch_stock_location_id")
     with op.batch_alter_table("store_branch") as batch:
         batch.drop_constraint("fk_store_branch_returned_stock_location", type_="foreignkey")
         batch.drop_column("returned_stock_location_id")
