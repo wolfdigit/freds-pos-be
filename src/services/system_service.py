@@ -3,12 +3,14 @@ from __future__ import annotations
 from typing import List
 
 from sqlalchemy import func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.exceptions import BusinessException
 from src.models.location import StockLocation
 from src.models.system import OAuthAccount, StoreBranch
 from src.services.inventory_service import DEFAULT_STORE_LOCATION_ID, ensure_locations
+from src.services.location_integrity import is_store_location_fk_violation
 from src.schemas.common import BusinessErrorCode
 from src.services.bootstrap import new_account_id
 from src.schemas.system import (
@@ -38,22 +40,31 @@ class SystemService:
             _raise(400, BusinessErrorCode.INVALID_LOCATION_TRANSFER, "門市名稱不可空白")
         if self.db.get(StoreBranch, name) is not None:
             _raise(400, BusinessErrorCode.INVALID_LOCATION_TRANSFER, "門市已存在")
-        location = self._location_for_store(data.stock_location_id)
+        location = self._location_for_store(data.stock_location_id, lock=True)
         row = StoreBranch(name=name, is_default=False, stock_location_id=location.id)
         self.db.add(row)
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            self._reraise_missing_location(exc)
         return self._store_dto(row)
 
     def update_stock_location(
         self, store_name: str, stock_location_id: str, *, actor_role: str
     ) -> StoreDto:
         self._require_actor_admin(actor_role)
-        row = self.db.get(StoreBranch, store_name)
+        # 與刪除地點相同，先鎖地點再鎖門市。
+        location = self._existing_location(stock_location_id, lock=True)
+        row = self.db.scalar(
+            select(StoreBranch).where(StoreBranch.name == store_name).with_for_update()
+        )
         if row is None:
             _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市")
-        location = self._existing_location(stock_location_id)
         row.stock_location_id = location.id
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            self._reraise_missing_location(exc)
         return self._store_dto(row)
 
     def delete_store(self, name: str, *, actor_role: str) -> dict:
@@ -158,21 +169,27 @@ class SystemService:
             stockLocationName=location.name if location is not None else "",
         )
 
-    def _location_for_store(self, requested_id: str | None) -> StockLocation:
+    def _location_for_store(self, requested_id: str | None, *, lock: bool) -> StockLocation:
         if requested_id is not None and requested_id.strip():
-            return self._existing_location(requested_id)
-        return self._shared_location()
+            return self._existing_location(requested_id, lock=lock)
+        return self._shared_location(lock=lock)
 
-    def _existing_location(self, location_id: str) -> StockLocation:
-        row = self.db.get(StockLocation, location_id.strip())
+    def _existing_location(self, location_id: str, *, lock: bool = False) -> StockLocation:
+        stmt = select(StockLocation).where(StockLocation.id == location_id.strip())
+        if lock:
+            stmt = stmt.with_for_update()
+        row = self.db.scalar(stmt)
         if row is None:
             _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到庫存地點")
         return row
 
-    def _shared_location(self) -> StockLocation:
+    def _shared_location(self, *, lock: bool) -> StockLocation:
         if self.db.scalar(select(func.count()).select_from(StockLocation)) == 0:
             ensure_locations(self.db)
-        row = self.db.get(StockLocation, DEFAULT_STORE_LOCATION_ID)
+        stmt = select(StockLocation).where(StockLocation.id == DEFAULT_STORE_LOCATION_ID)
+        if lock:
+            stmt = stmt.with_for_update()
+        row = self.db.scalar(stmt)
         if row is None:
             _raise(
                 409,
@@ -180,6 +197,13 @@ class SystemService:
                 "請指定 stockLocationId；既有的門市現貨庫存地點不存在",
             )
         return row
+
+    def _reraise_missing_location(self, exc: IntegrityError) -> None:
+        # store_branch 只有這一條外鍵。不是這條時，把原來的 IntegrityError 再丟出去。
+        self.db.rollback()
+        if is_store_location_fk_violation(exc):
+            _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到庫存地點")
+        raise exc
 
     def _require_actor_admin(self, actor_role: str) -> None:
         if actor_role != "admin":

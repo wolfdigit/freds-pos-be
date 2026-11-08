@@ -1,12 +1,24 @@
 import uuid
+from contextlib import contextmanager
 
-from sqlalchemy import select
+import pytest
 
-from src.db.session import SessionFactory
+from sqlalchemy import event, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session as OrmSession
+
+from src.db.session import SessionFactory, engine
 from src.models.location import StockLocation
 from src.models.product import ProductStock
+from src.models.system import StoreBranch
 from src.services.checkout_service import STORE_LOCATION
 from src.services.inventory_service import DEFAULT_STORE_LOCATION_ID
+from src.services.location_integrity import (
+    is_named_store_location_fk,
+    is_store_location_fk_violation,
+    is_unnamed_sqlite_fk,
+    location_delete_blocked_by_store_fk,
+)
 from tests.test_auth import (
     ADMIN_EMAIL,
     STAFF_EMAIL,
@@ -282,3 +294,243 @@ def test_store_without_location_requires_explicit_id_when_shared_row_is_gone(cli
     )
     assert explicit.status_code == 201, explicit.text
     assert explicit.json()["stockLocationId"] == other
+
+
+class _PgError(Exception):
+    def __init__(self, sqlstate: str, constraint_name: str) -> None:
+        super().__init__(f"{sqlstate} {constraint_name}")
+        self.pgcode = sqlstate
+        self.diag = type("Diag", (), {"constraint_name": constraint_name})()
+
+
+def test_only_the_store_location_foreign_key_is_recognized():
+    unique = IntegrityError("INSERT", {}, Exception("UNIQUE constraint failed: store_branch.name"))
+    product_fk = IntegrityError("DELETE", {}, _PgError("23503", "product_stock_product_id_fkey"))
+    store_fk = IntegrityError("DELETE", {}, _PgError("23503", "fk_store_branch_stock_location"))
+    sqlite_fk = IntegrityError("DELETE", {}, Exception("FOREIGN KEY constraint failed"))
+
+    assert is_store_location_fk_violation(unique) is False
+    assert is_named_store_location_fk(product_fk) is False
+    assert is_named_store_location_fk(store_fk) is True
+    assert is_unnamed_sqlite_fk(sqlite_fk) is True
+    assert is_named_store_location_fk(sqlite_fk) is False
+
+
+def test_unnamed_sqlite_fk_blocks_delete_only_when_a_store_is_mapped(client):
+    """SQLite does not name the constraint. A product foreign key must stay a product foreign key."""
+    _add_store("甲店")
+    spare = _add_location("未對應倉")
+    sqlite_fk = IntegrityError("DELETE", {}, Exception("FOREIGN KEY constraint failed"))
+    db = SessionFactory()
+    try:
+        assert location_delete_blocked_by_store_fk(db, sqlite_fk, spare) is False
+        assert location_delete_blocked_by_store_fk(db, sqlite_fk, DEFAULT_STORE_LOCATION_ID) is True
+        unique = IntegrityError("INSERT", {}, Exception("UNIQUE constraint failed: store_branch.name"))
+        assert location_delete_blocked_by_store_fk(db, unique, DEFAULT_STORE_LOCATION_ID) is False
+    finally:
+        db.close()
+
+
+def test_unmapped_location_delete_still_moves_stock(client, google_jwks):
+    _add_account(ADMIN_EMAIL)
+    spare = _add_location("可刪倉")
+    _add_store("甲店")
+    login = _login(client, google_jwks)
+    _select(client, login["token"], "甲店")
+    product = client.post(
+        "/api/v1/products",
+        json={"sku": "SKU-MOVE", "barcode": "777", "brand": "Brand", "name": "車", "listPrice": 100},
+        headers=_auth(login["token"]),
+    )
+    product_id = product.json()["id"]
+    _set_qty(product_id, spare, 4)
+    _set_qty(product_id, DEFAULT_STORE_LOCATION_ID, 1)
+    deleted = client.request(
+        "DELETE",
+        f"/api/v1/inventory/locations/{spare}",
+        json={"transferToLocation": DEFAULT_STORE_LOCATION_ID, "reason": "整併"},
+        headers=_auth(login["token"]),
+    )
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["totalQuantityTransferred"] == 4
+    assert _qty(product_id, spare) == 0
+    assert _qty(product_id, DEFAULT_STORE_LOCATION_ID) == 5
+    db = SessionFactory()
+    try:
+        assert db.get(StockLocation, spare) is None
+    finally:
+        db.close()
+
+
+@contextmanager
+def _sqlite_foreign_keys():
+    """The suite leaves SQLite foreign keys off. Postgres enforces them without this pragma."""
+
+    def _on_connect(dbapi_connection, _record) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.execute("PRAGMA busy_timeout=2000")
+        cursor.close()
+
+    event.listen(engine, "connect", _on_connect)
+    engine.dispose()
+    try:
+        yield
+    finally:
+        event.remove(engine, "connect", _on_connect)
+        engine.dispose()
+
+
+def test_remap_during_location_delete_returns_409_and_keeps_stock(client, google_jwks):
+    """A mapping committed after the in-use check still aborts the delete.
+
+    SQLite drops FOR UPDATE, so this window exists here. The test turns foreign
+    keys on and commits the remap from the delete transaction's before_commit
+    hook. Postgres row locks make that window unreachable for a remap that locks
+    the location first; this suite does not run Postgres. The injected commit is
+    what a second connection can do on SQLite, and the foreign-key error is the
+    same one Postgres raises if a mapping lands without that lock.
+    """
+    _add_account(ADMIN_EMAIL)
+    spare = _add_location("競態倉")
+    _add_store("甲店")
+    login = _login(client, google_jwks)
+    _select(client, login["token"], "甲店")
+    product = client.post(
+        "/api/v1/products",
+        json={"sku": "SKU-RACE", "barcode": "888", "brand": "Brand", "name": "車", "listPrice": 100},
+        headers=_auth(login["token"]),
+    )
+    product_id = product.json()["id"]
+    _set_qty(product_id, spare, 0)
+    _set_qty(product_id, DEFAULT_STORE_LOCATION_ID, 6)
+    planted = {"done": False}
+
+    def _plant(session) -> None:
+        if planted["done"]:
+            return
+        doomed = [obj.id for obj in session.deleted if isinstance(obj, StockLocation) and obj.id == spare]
+        if not doomed:
+            return
+        planted["done"] = True
+        other = SessionFactory()
+        try:
+            store = other.get(StoreBranch, "甲店")
+            assert store is not None
+            store.stock_location_id = spare
+            other.commit()
+        finally:
+            other.close()
+
+    event.listen(OrmSession, "before_commit", _plant)
+    try:
+        with _sqlite_foreign_keys():
+            blocked = client.request(
+                "DELETE",
+                f"/api/v1/inventory/locations/{spare}",
+                json={"transferToLocation": DEFAULT_STORE_LOCATION_ID, "reason": "競態"},
+                headers=_auth(login["token"]),
+            )
+    finally:
+        event.remove(OrmSession, "before_commit", _plant)
+
+    assert planted["done"] is True
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["code"] == "STOCK_LOCATION_IN_USE"
+    assert _qty(product_id, spare) == 0
+    assert _qty(product_id, DEFAULT_STORE_LOCATION_ID) == 6
+    db = SessionFactory()
+    try:
+        assert db.get(StockLocation, spare) is not None
+        store = db.get(StoreBranch, "甲店")
+        assert store is not None
+        assert store.stock_location_id == spare
+    finally:
+        db.close()
+
+
+def test_location_removed_during_store_create_is_not_found(client, google_jwks):
+    """SQLite allows the location delete to commit before the store insert flushes."""
+    _add_account(ADMIN_EMAIL)
+    spare = _add_location("臨時倉")
+    _add_store("甲店")
+    login = _login(client, google_jwks)
+    _select(client, login["token"], "甲店")
+    removed = {"done": False}
+
+    def _remove(session) -> None:
+        if removed["done"]:
+            return
+        creating = [obj for obj in session.new if isinstance(obj, StoreBranch) and obj.name == "丙店"]
+        if not creating:
+            return
+        removed["done"] = True
+        other = SessionFactory()
+        try:
+            location = other.get(StockLocation, spare)
+            assert location is not None
+            other.delete(location)
+            other.commit()
+        finally:
+            other.close()
+
+    event.listen(OrmSession, "before_commit", _remove)
+    try:
+        with _sqlite_foreign_keys():
+            created = client.post(
+                "/api/v1/system/stores",
+                json={"name": "丙店", "stockLocationId": spare},
+                headers=_auth(login["token"]),
+            )
+    finally:
+        event.remove(OrmSession, "before_commit", _remove)
+
+    assert removed["done"] is True
+    assert created.status_code == 404, created.text
+    assert created.json()["code"] == "LOCATION_NOT_FOUND"
+    db = SessionFactory()
+    try:
+        assert db.get(StoreBranch, "丙店") is None
+        assert db.get(StockLocation, spare) is None
+        store = db.get(StoreBranch, "甲店")
+        assert store is not None
+        assert store.stock_location_id == DEFAULT_STORE_LOCATION_ID
+    finally:
+        db.close()
+
+
+def test_unrelated_integrity_error_on_delete_is_not_in_use(client, google_jwks, monkeypatch):
+    _add_account(ADMIN_EMAIL)
+    spare = _add_location("別的錯誤倉")
+    _add_store("甲店")
+    login = _login(client, google_jwks)
+    _select(client, login["token"], "甲店")
+    product = client.post(
+        "/api/v1/products",
+        json={"sku": "SKU-UNIQ", "barcode": "999", "brand": "Brand", "name": "車", "listPrice": 100},
+        headers=_auth(login["token"]),
+    )
+    product_id = product.json()["id"]
+    _set_qty(product_id, spare, 3)
+    real_commit = OrmSession.commit
+
+    def _commit(self) -> None:
+        if any(isinstance(obj, StockLocation) for obj in self.deleted):
+            raise IntegrityError("DELETE", {}, Exception("UNIQUE constraint failed: product_stock.product_id"))
+        real_commit(self)
+
+    monkeypatch.setattr(OrmSession, "commit", _commit)
+    with pytest.raises(IntegrityError):
+        client.request(
+            "DELETE",
+            f"/api/v1/inventory/locations/{spare}",
+            json={"transferToLocation": DEFAULT_STORE_LOCATION_ID, "reason": "不該吞掉"},
+            headers=_auth(login["token"]),
+        )
+    assert _qty(product_id, spare) == 3
+    assert _qty(product_id, DEFAULT_STORE_LOCATION_ID) == 0
+    db = SessionFactory()
+    try:
+        assert db.get(StockLocation, spare) is not None
+    finally:
+        db.close()

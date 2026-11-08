@@ -5,12 +5,14 @@ import uuid
 from typing import List, Optional, Sequence
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.exceptions import BusinessException
 from src.models.location import StockAdjustmentLog, StockLocation
 from src.models.product import Product, ProductStock
 from src.models.system import StoreBranch
+from src.services.location_integrity import location_delete_blocked_by_store_fk
 from src.schemas.common import BusinessErrorCode
 from src.schemas.inventory import (
     BatchStockAdjustRequest,
@@ -144,10 +146,20 @@ class InventoryService:
         return _to_dto(row)
 
     def delete_location(self, location_id: str, data: DeleteStockLocationRequest) -> DeleteStockLocationResponse:
-        source = self.db.get(StockLocation, location_id)
+        # 先鎖地點，再鎖仍指向它的門市。改對應也是先鎖地點，避免兩邊互相等待。
+        # Postgres 的 FOR UPDATE 讓改對應排在刪除後面，刪除會看到新對應。
+        # SQLite 會拿掉 FOR UPDATE，所以提交時仍可能撞上外鍵。
+        source = self.db.scalar(
+            select(StockLocation).where(StockLocation.id == location_id).with_for_update()
+        )
         if source is None:
             _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到欲刪除的庫存地點")
-        mapped = self.db.scalar(select(StoreBranch).where(StoreBranch.stock_location_id == source.id))
+        mapped = self.db.scalar(
+            select(StoreBranch.name)
+            .where(StoreBranch.stock_location_id == source.id)
+            .limit(1)
+            .with_for_update()
+        )
         if mapped is not None:
             _raise(409, BusinessErrorCode.STOCK_LOCATION_IN_USE, "仍有門市對應此地點，請先改門市的庫存地點")
         if location_id == data.transfer_to_location:
@@ -168,11 +180,18 @@ class InventoryService:
             self.db.delete(row)
         if source.is_default:
             target.is_default = True
+        deleted_id = source.id
+        transferred_to = target.id
         self.db.delete(source)
-        self.db.commit()
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            if location_delete_blocked_by_store_fk(self.db, exc, deleted_id):
+                _raise(409, BusinessErrorCode.STOCK_LOCATION_IN_USE, "仍有門市對應此地點，請先改門市的庫存地點")
+            raise
         return DeleteStockLocationResponse(
-            deletedLocation=source.id,
-            transferredToLocation=target.id,
+            deletedLocation=deleted_id,
+            transferredToLocation=transferred_to,
             affectedProductsCount=affected,
             totalQuantityTransferred=moved,
             message=f"成功刪除地點並將 {affected} 項商品共 {moved} 台庫存轉移",
