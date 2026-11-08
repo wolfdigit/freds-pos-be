@@ -11,7 +11,9 @@ from src.core.config import settings
 from src.db.session import SessionFactory
 from src.models.auth import AuthSession
 from src.models.product import ProductStock
+from src.models.location import StockLocation
 from src.models.system import OAuthAccount, StoreBranch
+from src.services.inventory_service import DEFAULT_STORE_LOCATION_ID
 from src.schemas.common import BusinessErrorCode
 from src.schemas.system import UpdateOAuthAccountRequest
 from src.services.bootstrap import bootstrap_admin_if_empty
@@ -51,10 +53,22 @@ def _add_account(email: str, role: str = "admin", name: str = "收銀員", accou
     return account_id
 
 
-def _add_store(name: str) -> None:
+def _add_store(name: str, location_id: str | None = None) -> None:
     db = SessionFactory()
     try:
-        db.add(StoreBranch(name=name, is_default=False))
+        loc_id = location_id or DEFAULT_STORE_LOCATION_ID
+        if db.get(StockLocation, loc_id) is None:
+            db.add(
+                StockLocation(
+                    id=loc_id,
+                    name="門市現貨" if loc_id == DEFAULT_STORE_LOCATION_ID else loc_id,
+                    icon="🏪",
+                    is_default=loc_id == DEFAULT_STORE_LOCATION_ID,
+                    display_order=1,
+                    is_active=True,
+                )
+            )
+        db.add(StoreBranch(name=name, is_default=False, stock_location_id=loc_id))
         db.commit()
     finally:
         db.close()

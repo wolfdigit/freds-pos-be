@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from src.core.exceptions import BusinessException
 from src.models.location import StockAdjustmentLog, StockLocation
 from src.models.product import Product, ProductStock
+from src.models.system import StoreBranch
 from src.schemas.common import BusinessErrorCode
 from src.schemas.inventory import (
     BatchStockAdjustRequest,
@@ -146,6 +147,9 @@ class InventoryService:
         source = self.db.get(StockLocation, location_id)
         if source is None:
             _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到欲刪除的庫存地點")
+        mapped = self.db.scalar(select(StoreBranch).where(StoreBranch.stock_location_id == source.id))
+        if mapped is not None:
+            _raise(409, BusinessErrorCode.STOCK_LOCATION_IN_USE, "仍有門市對應此地點，請先改門市的庫存地點")
         if location_id == data.transfer_to_location:
             _raise(400, BusinessErrorCode.INVALID_LOCATION_TRANSFER, "轉移目標地點不能與被刪除地點相同")
         target = resolve_location_id(self.db, data.transfer_to_location)

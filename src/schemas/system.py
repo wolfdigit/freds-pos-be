@@ -8,10 +8,21 @@ class StoreDto(BaseModel):
 
     name: str
     is_default: bool = Field(False, alias="isDefault")
+    stock_location_id: str = Field(..., alias="stockLocationId")
+    stock_location_name: str = Field(..., alias="stockLocationName")
 
 
 class CreateStoreRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str
+    stock_location_id: Optional[str] = Field(None, alias="stockLocationId")
+
+
+class UpdateStoreStockLocationRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    stock_location_id: str = Field(..., alias="stockLocationId", min_length=1)
 
 
 class OAuthAccountDto(BaseModel):

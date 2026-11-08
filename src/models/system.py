@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from sqlalchemy import Boolean, String, Text
+from sqlalchemy import Boolean, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.db.base_class import Base
@@ -13,6 +13,9 @@ class StoreBranch(Base):
 
     name: Mapped[str] = mapped_column(String(128), primary_key=True)
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    stock_location_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("stock_location.id"), nullable=False, index=True
+    )
 
 
 class OAuthAccount(Base):

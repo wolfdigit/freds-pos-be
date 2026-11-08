@@ -562,7 +562,7 @@ paths:
            - Calculate final `totalAmount = itemsSubtotal + shippingFee`.
            - Validate `sum(payments.amount) == totalAmount` (or `payments >= totalAmount` with cash change).
         4. **Inventory & Pre-Order Atomicity**:
-           - Stock location is independent of the login store. Positive items still lock and deduct the existing `store` / `門市現貨` location. Switching login store does not change this source and does not create per-store inventory.
+           - Positive items lock and deduct `normal` quantity at the stock location currently mapped to the session's login store. The client cannot choose a different deduction location. A shortage is still `409` `INSUFFICIENT_STORE_STOCK`; quantity is not allowed to go negative. A restocked return adds quantity at the location mapped to the current login store, not the original sale store. `restock: false` changes no stock row. Changing the mapping later does not rewrite the order or repeat the deduction.
            - Negative items: if `restock: true`, increment that same `store` location; increment `returnedQuantity` on the original order.
            - Pre-order items: increment `qtyDelivered` and update pre-order status.
         5. **Member Asset Update**:
@@ -943,6 +943,9 @@ paths:
       description: |
         Admin only. A signed-in admin may create the first store before selecting one.
         Staff receive `403` `AUTH_FORBIDDEN`.
+        Omit `stockLocationId` to bind the existing shared location
+        `e1a10001-0000-4000-8000-000000000001` when that row exists.
+        If it does not, the response is `409` `STOCK_LOCATION_REQUIRED`.
       requestBody:
         required: true
         content:
@@ -1001,6 +1004,39 @@ paths:
               example:
                 code: LAST_STORE
                 message: 至少要保留一間門市
+
+  /system/stores/{storeName}/stock-location:
+    put:
+      tags: [system]
+      operationId: updateStoreStockLocation
+      summary: Change the inventory location mapped to a login store
+      description: |
+        Admin only. One store maps to one existing stock location. Many stores may use the same location.
+        Staff receive `403` `AUTH_FORBIDDEN`. This does not rewrite past orders or move quantities already deducted.
+        The next checkout or restock uses the new mapping. Location options are `GET /inventory/locations`.
+      parameters:
+        - name: storeName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStoreStockLocationRequest'
+      responses:
+        '200':
+          description: Updated store mapping
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoreDto'
+        '403':
+          $ref: '#/components/responses/BusinessError'
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /system/oauth/accounts:
     get:
@@ -1228,6 +1264,8 @@ components:
         - ACCOUNT_ROLE_INVALID
         - ACCOUNT_LAST_ADMIN
         - LAST_STORE
+        - STOCK_LOCATION_REQUIRED
+        - STOCK_LOCATION_IN_USE
         - ACCOUNT_SELF_PROTECTED
         - ACCOUNT_NAME_REQUIRED
 
@@ -2204,6 +2242,11 @@ components:
         isDefault:
           type: boolean
           default: false
+        stockLocationId:
+          type: string
+          description: Inventory location this login store deducts and restocks. Many stores may share one id.
+        stockLocationName:
+          type: string
 
     CreateStoreRequest:
       type: object
@@ -2212,6 +2255,19 @@ components:
         name:
           type: string
           example: 高雄巨蛋店
+        stockLocationId:
+          type: string
+          description: |
+            Optional. When omitted, the server uses the existing shared location
+            `e1a10001-0000-4000-8000-000000000001` if that row still exists.
+            If it does not, the response is `409` `STOCK_LOCATION_REQUIRED`.
+
+    UpdateStoreStockLocationRequest:
+      type: object
+      required: [stockLocationId]
+      properties:
+        stockLocationId:
+          type: string
 
     OAuthRole:
       type: string

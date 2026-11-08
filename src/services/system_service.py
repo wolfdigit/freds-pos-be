@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from typing import List
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from src.core.exceptions import BusinessException
+from src.models.location import StockLocation
 from src.models.system import OAuthAccount, StoreBranch
+from src.services.inventory_service import DEFAULT_STORE_LOCATION_ID, ensure_locations
 from src.schemas.common import BusinessErrorCode
 from src.services.bootstrap import new_account_id
 from src.schemas.system import (
@@ -27,7 +29,7 @@ class SystemService:
 
     def stores(self) -> List[StoreDto]:
         rows = list(self.db.scalars(select(StoreBranch).order_by(StoreBranch.name)).all())
-        return [StoreDto(name=row.name, isDefault=row.is_default) for row in rows]
+        return [self._store_dto(row) for row in rows]
 
     def create_store(self, data: CreateStoreRequest, *, actor_role: str) -> StoreDto:
         self._require_actor_admin(actor_role)
@@ -36,10 +38,23 @@ class SystemService:
             _raise(400, BusinessErrorCode.INVALID_LOCATION_TRANSFER, "門市名稱不可空白")
         if self.db.get(StoreBranch, name) is not None:
             _raise(400, BusinessErrorCode.INVALID_LOCATION_TRANSFER, "門市已存在")
-        row = StoreBranch(name=name, is_default=False)
+        location = self._location_for_store(data.stock_location_id)
+        row = StoreBranch(name=name, is_default=False, stock_location_id=location.id)
         self.db.add(row)
         self.db.commit()
-        return StoreDto(name=row.name, isDefault=row.is_default)
+        return self._store_dto(row)
+
+    def update_stock_location(
+        self, store_name: str, stock_location_id: str, *, actor_role: str
+    ) -> StoreDto:
+        self._require_actor_admin(actor_role)
+        row = self.db.get(StoreBranch, store_name)
+        if row is None:
+            _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市")
+        location = self._existing_location(stock_location_id)
+        row.stock_location_id = location.id
+        self.db.commit()
+        return self._store_dto(row)
 
     def delete_store(self, name: str, *, actor_role: str) -> dict:
         self._require_actor_admin(actor_role)
@@ -133,6 +148,38 @@ class SystemService:
         if actor is None or (actor.role or "").strip().lower() != "admin":
             _raise(403, BusinessErrorCode.AUTH_FORBIDDEN, "需要管理員權限")
         return actor
+
+    def _store_dto(self, row: StoreBranch) -> StoreDto:
+        location = self.db.get(StockLocation, row.stock_location_id)
+        return StoreDto(
+            name=row.name,
+            isDefault=row.is_default,
+            stockLocationId=row.stock_location_id,
+            stockLocationName=location.name if location is not None else "",
+        )
+
+    def _location_for_store(self, requested_id: str | None) -> StockLocation:
+        if requested_id is not None and requested_id.strip():
+            return self._existing_location(requested_id)
+        return self._shared_location()
+
+    def _existing_location(self, location_id: str) -> StockLocation:
+        row = self.db.get(StockLocation, location_id.strip())
+        if row is None:
+            _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到庫存地點")
+        return row
+
+    def _shared_location(self) -> StockLocation:
+        if self.db.scalar(select(func.count()).select_from(StockLocation)) == 0:
+            ensure_locations(self.db)
+        row = self.db.get(StockLocation, DEFAULT_STORE_LOCATION_ID)
+        if row is None:
+            _raise(
+                409,
+                BusinessErrorCode.STOCK_LOCATION_REQUIRED,
+                "請指定 stockLocationId；既有的門市現貨庫存地點不存在",
+            )
+        return row
 
     def _require_actor_admin(self, actor_role: str) -> None:
         if actor_role != "admin":

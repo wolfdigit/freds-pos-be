@@ -10,6 +10,7 @@ from src.schemas.system import (
     OAuthAccountDto,
     StoreDto,
     UpdateOAuthAccountRequest,
+    UpdateStoreStockLocationRequest,
 )
 from src.services.system_service import SystemService
 
@@ -29,6 +30,16 @@ def create_store(body: CreateStoreRequest, db: Session = Depends(get_db), user=D
 @router.delete("/stores/{storeName}")
 def delete_store(storeName: str = Path(...), db: Session = Depends(get_db), user=Depends(require_admin_session)):
     return SystemService(db).delete_store(storeName, actor_role=user.role)
+
+
+@router.put("/stores/{storeName}/stock-location", response_model=StoreDto, response_model_by_alias=True)
+def update_store_stock_location(
+    body: UpdateStoreStockLocationRequest,
+    storeName: str = Path(...),
+    db: Session = Depends(get_db),
+    user=Depends(require_admin_session),
+):
+    return SystemService(db).update_stock_location(storeName, body.stock_location_id, actor_role=user.role)
 
 
 @router.get("/oauth/accounts", response_model=List[OAuthAccountDto], response_model_by_alias=True)

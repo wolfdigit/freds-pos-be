@@ -108,10 +108,19 @@
 | `/api/v1/system/stores` | GET | 不可 | 可，含尚未選門市 | staff 403 `AUTH_FORBIDDEN` |
 | `/api/v1/system/stores` | POST | 不可 | 可。沒有任何門市時，尚未選門市的管理員仍可建第一間 | 201；staff 403 `AUTH_FORBIDDEN` |
 | `/api/v1/system/stores/{storeName}` | DELETE | 不可 | 可 | 200 `{ "deletedStore" }`；最後一間 409 `LAST_STORE`；找不到 404 `LOCATION_NOT_FOUND`；staff 403 `AUTH_FORBIDDEN` |
+| `/api/v1/system/stores/{storeName}/stock-location` | PUT | 不可 | 可 | 200 門市與新的 `stockLocationId`；地點不存在 404 `LOCATION_NOT_FOUND`；staff 403 `AUTH_FORBIDDEN` |
 
 沒有更新門市或設定預設門市的 API。`isDefault` 只出現在清單回應。角色每次請求都從白名單重讀，降權的下一筆管理請求就是 403。
 
-庫存地點（`/api/v1/inventory/locations`）不是門市清單，規則不變。
+每間登入門市對應一個庫存地點，多間門市可以共用同一個地點。店員可以從 `GET /api/v1/auth/stores` 看到 `stockLocationId` 與 `stockLocationName`，但不能改。地點選項用既有的 `GET /api/v1/inventory/locations`。
+
+`POST /api/v1/system/stores` 的 body 是 `{ "name": "高雄店", "stockLocationId": "可省略" }`。省略時，只有既有地點 `e1a10001-0000-4000-8000-000000000001`（門市現貨）還在，才綁這個地點。該列已不在且還有其他地點時，回 `409` `STOCK_LOCATION_REQUIRED`，不要猜別的地點。地點 id 不存在回 `404` `LOCATION_NOT_FOUND`。
+
+`PUT /api/v1/system/stores/{storeName}/stock-location` 的 body 是 `{ "stockLocationId": "<inventory location id>" }`。成功 `200` 是帶新對應的 `StoreDto`。這不改舊訂單，也不把已扣的數量搬回去。下一筆結帳與有入庫的退貨才用新地點。
+
+刪除庫存地點時，若仍有門市指向它，回 `409` `STOCK_LOCATION_IN_USE`，庫存與門市都不改。要先改對應，才能刪地點。
+
+結帳扣庫存與 `restock` 不是 `false` 的退貨入庫，都用這一筆請求當下登入門市的對應地點。前端不能指定扣哪個庫存地點。庫存不足仍是 `409` `INSUFFICIENT_STORE_STOCK`，數量不可變成負數。
 
 若管理員刪掉店員目前的登入門市，該店員下一筆業務請求是 `403` `AUTH_STORE_REQUIRED`，要再呼叫 `POST /api/v1/auth/store` 選另一間。這不影響庫存地點。
 

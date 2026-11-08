@@ -17,7 +17,9 @@ from sqlalchemy.sql.elements import ColumnElement
 from src.core.exceptions import BusinessException
 from src.models.checkout import CheckoutOrder, CheckoutOrderItem, CheckoutPayment
 from src.models.customer import Customer
+from src.models.location import StockLocation
 from src.models.product import Product, ProductStock
+from src.models.system import StoreBranch
 from src.schemas.checkout import (
     CheckoutOrder as CheckoutOrderSchema,
     CheckoutOrderItem as CheckoutOrderItemSchema,
@@ -35,7 +37,7 @@ from src.services.customer_service import canonicalize_phone
 from src.services.product_service import normalize_sku
 
 POINTS_DISCOUNT_TWD = 360
-# 登入門市只寫進訂單歸屬。扣庫存仍是這個既有庫存地點，與 store_branch 無關。
+# 既有共用庫存地點。新門市未指定對應時，只有這個地點仍存在才會當成預設。
 STORE_LOCATION = "e1a10001-0000-4000-8000-000000000001"
 STORE_LOCATION_NAME = "門市現貨"
 TAIPEI = ZoneInfo("Asia/Taipei")
@@ -351,12 +353,23 @@ class CheckoutService:
             _raise(404, BusinessErrorCode.CUSTOMER_NOT_FOUND, "找不到指定的會員")
         return customer
 
-    def _lock_store_stock(self, product_id: str) -> Optional[ProductStock]:
+    def _lock_mapped_location(self, store_name: str) -> StockLocation:
+        store = self.db.scalar(
+            select(StoreBranch).where(StoreBranch.name == store_name).with_for_update()
+        )
+        if store is None:
+            _raise(403, BusinessErrorCode.AUTH_STORE_REQUIRED, "請先選擇門市")
+        location = self.db.get(StockLocation, store.stock_location_id)
+        if location is None:
+            _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到登入門市對應的庫存地點")
+        return location
+
+    def _lock_stock(self, product_id: str, location_id: str) -> Optional[ProductStock]:
         return self.db.scalar(
             select(ProductStock)
             .where(
                 ProductStock.product_id == product_id,
-                ProductStock.location == STORE_LOCATION,
+                ProductStock.location == location_id,
             )
             .with_for_update()
         )
@@ -534,10 +547,11 @@ class CheckoutService:
             updated_by=cashier_name,
         )
         self.db.add(order)
+        location = self._lock_mapped_location(branch_id)
 
         touched_orders: dict[str, CheckoutOrder] = {}
         for index, line in enumerate(drafts, start=1):
-            self._move_stock(line)
+            self._move_stock(line, location)
             if line.original_item is not None:
                 line.original_item.returned_quantity += abs(line.quantity)
                 touched_orders[line.original_item.order_id] = line.original_item.order
@@ -603,19 +617,19 @@ class CheckoutService:
             customer.updated_at = now
         self.db.commit()
 
-    def _move_stock(self, line: _DraftLine) -> None:
+    def _move_stock(self, line: _DraftLine, location: StockLocation) -> None:
         if line.quantity > 0:
             delta = -line.quantity
         elif line.restock is False:
             return
         else:
             delta = abs(line.quantity)
-        stock = self._lock_store_stock(line.product.id)
+        stock = self._lock_stock(line.product.id, location.id)
         if stock is None:
             stock = ProductStock(
                 product_id=line.product.id,
-                location=STORE_LOCATION,
-                location_name=STORE_LOCATION_NAME,
+                location=location.id,
+                location_name=location.name,
                 quantity=0,
             )
             self.db.add(stock)
