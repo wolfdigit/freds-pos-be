@@ -32,7 +32,7 @@ Stop sending fields the server ignores for non-manual lines as if they were auth
 
 ## Display gaps vs this contract
 
-The current `CheckoutOrder` type has no `branchId`, `branchName`, line `id`, or `updatedAt`. Add them when the adapter is wired. Do not add an invoice. The `201` body is `{ order, receiptPrintHtml }`. `branchName` is `台北旗艦店` or `官網`. `orderNumber` looks like `SO-20261011-014430-0001`. Payment types follow the frontend OpenAPI: `cash`, `credit_card`, `line_pay`, `bank_transfer`, `cod`. `cod` is accepted.
+The current `CheckoutOrder` type has no `branchId`, `branchName`, line `id`, or `updatedAt`. Add them when the adapter is wired. Do not add an invoice. The `201` body is `{ order }`. The server does not return receipt HTML. `branchName` is `台北旗艦店` or `官網`. `orderNumber` looks like `SO-20261011-014430-0001`. Payment types follow the frontend OpenAPI: `cash`, `credit_card`, `line_pay`, `bank_transfer`, `cod`. `cod` is accepted.
 
 The catalog and the sale line do not record `costPrice`. Do not add a cashier-facing cost column from this API.
 

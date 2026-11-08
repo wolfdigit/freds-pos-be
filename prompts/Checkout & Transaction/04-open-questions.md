@@ -40,7 +40,7 @@ Added the same day, then corrected: the NT$360 points exchange is **per product 
 | 26 | Implementation | **Backend checkout API** in this pass: models, migration, `POST/GET /checkout/orders`, stock, `totalSpent`. Frontend wiring stays later. |
 | 27 | Discount floor | Floor the sale total at 0 only when points discounts wipe out a non-negative gross. A return total stays negative. |
 | 28 | Invoice | **None.** No invoice number, type, carrier, tax id, or buyer title. No `invoiceNumber` query. No invoice on the receipt. |
-| 29 | Receipt body | **`201` is `{ order, receiptPrintHtml }`.** The server returns the thermal HTML. There is no invoice. |
+| 29 | Receipt body | **`201` is `{ order }`.** The server does not return receipt HTML. There is no invoice. |
 | 30 | Product delete | **Soft delete through `PUT /products/{productId}`.** `deleted: true` hides the row from search and from a new sale. `deleted: false` restores it. No `DELETE` route and no row removal. Sale line `product_id` is required and **`ON DELETE RESTRICT`**. A return always requires the request `productId` to equal the original line's `product_id`, including when that product is hidden. |
 | 31 | OpenAPI source | Checkout shapes follow `freds-pos-fe/docs/openapi.yaml`, plus branch, points discount, the per-second order number, paged history, soft-deleted products, and idempotent replay. The receipt includes HTML. |
 

@@ -522,6 +522,57 @@ def test_login_store_attributes_the_order_and_does_not_change_stock_location(cli
     assert "線上網購" not in _stock_locations(product_id)
 
 
+def test_checkout_response_and_replay_are_structured_data_only(client, google_jwks):
+    _add_account(ADMIN_EMAIL, "admin", "櫃台小王")
+    _add_store("奇可門市")
+    login = _login(client, google_jwks)
+    _select(client, login["token"], "奇可門市")
+    created = client.post(
+        "/api/v1/products",
+        json={"sku": "SKU-SLIP", "barcode": "333", "brand": "Brand", "name": "車", "listPrice": 100},
+        headers=_auth(login["token"]),
+    )
+    assert created.status_code == 201, created.text
+    product_id = created.json()["id"]
+    _set_store_stock(product_id, 2)
+    payload = {
+        "items": [{"productId": product_id, "quantity": 1, "isManualPrice": True, "unitPrice": 80, "priceDiffReason": "改價"}],
+        "shippingFee": 20,
+        "payments": [{"type": "cash", "name": "現金", "amount": 100}],
+    }
+    headers = {**_auth(login["token"]), "X-Idempotency-Key": "slip-replay-1"}
+
+    first = client.post("/api/v1/checkout/orders", json=payload, headers=headers)
+    assert first.status_code == 201, first.text
+    first_body = first.json()
+    assert set(first_body) == {"order"}
+    assert "receiptPrintHtml" not in first.text
+    order = first_body["order"]
+    assert order["itemsSubtotal"] == 80
+    assert order["discountAmount"] == 20
+    assert order["shippingFee"] == 20
+    assert order["totalAmount"] == 100
+    assert order["items"][0]["unitPrice"] == 80
+    assert order["items"][0]["subtotal"] == 80
+    assert order["cashierName"] == "櫃台小王"
+    assert order["branchName"] == "奇可門市"
+    assert _stock_qty(product_id, STORE_LOCATION) == 1
+
+    replay = client.post("/api/v1/checkout/orders", json=payload, headers=headers)
+    assert replay.status_code == 201, replay.text
+    replay_body = replay.json()
+    assert set(replay_body) == {"order"}
+    assert "receiptPrintHtml" not in replay.text
+    assert replay_body["order"]["id"] == order["id"]
+    assert replay_body["order"]["orderNumber"] == order["orderNumber"]
+    assert replay_body["order"]["itemsSubtotal"] == 80
+    assert replay_body["order"]["discountAmount"] == 20
+    assert replay_body["order"]["totalAmount"] == 100
+    assert replay_body["order"]["cashierName"] == "櫃台小王"
+    assert replay_body["order"]["branchName"] == "奇可門市"
+    assert _stock_qty(product_id, STORE_LOCATION) == 1
+
+
 def test_bootstrap_runs_once_and_refuses_demo_addresses(monkeypatch):
     monkeypatch.setattr(settings, "AUTH_BOOTSTRAP_ADMIN_EMAIL", "fred@gmail.com")
     monkeypatch.setattr(settings, "AUTH_BOOTSTRAP_ADMIN_NAME", "不該寫入")

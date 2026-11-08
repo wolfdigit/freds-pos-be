@@ -96,12 +96,11 @@ class CheckoutOrder(BaseModel):
 
 
 class CheckoutReceipt(BaseModel):
-    """Recorded order plus the thermal slip HTML."""
+    """Recorded order. The client formats the slip from these fields."""
 
     model_config = ConfigDict(populate_by_name=True)
 
     order: CheckoutOrder
-    receipt_print_html: str = Field(..., alias="receiptPrintHtml")
 
 
 class CreateOrderItem(BaseModel):
