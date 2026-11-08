@@ -57,7 +57,7 @@
 | 503 | `AUTH_PROVIDER_UNAVAILABLE` | 暫時拿不到 Google 公鑰 |
 
 `GET /api/v1/auth/stores`  
-需要 Bearer。還沒選門市也可以。回應 `[{ "name", "isDefault" }]`。這是唯一在選門市前要拿的門市清單。不要改打其他業務 API。
+需要 Bearer。還沒選門市也可以。回應 `[{ "name", "isDefault", "stockLocationId", "stockLocationName" }]`。`stockLocationId` 是這間登入門市結帳扣庫、退貨入庫要用的庫存地點，不是門市名稱。這是唯一在選門市前要拿的門市清單。不要改打其他業務 API。
 
 `POST /api/v1/auth/store`
 
@@ -114,7 +114,7 @@
 
 每間登入門市對應一個庫存地點，多間門市可以共用同一個地點。店員可以從 `GET /api/v1/auth/stores` 看到 `stockLocationId` 與 `stockLocationName`，但不能改。地點選項用既有的 `GET /api/v1/inventory/locations`。
 
-`POST /api/v1/system/stores` 的 body 是 `{ "name": "高雄店", "stockLocationId": "可省略" }`。省略時，只有既有地點 `e1a10001-0000-4000-8000-000000000001`（門市現貨）還在，才綁這個地點。該列已不在且還有其他地點時，回 `409` `STOCK_LOCATION_REQUIRED`，不要猜別的地點。地點 id 不存在回 `404` `LOCATION_NOT_FOUND`。
+`POST /api/v1/system/stores` 的 body 是 `{ "name": "高雄店", "stockLocationId": "可省略" }`。省略時，只有既有地點 `e1a10001-0000-4000-8000-000000000001`（門市現貨）還在，才綁這個地點。庫存地點表是空的時，會先寫入既有的四個標準地點，再綁門市現貨。該列已不在、而且還有其他地點時，回 `409` `STOCK_LOCATION_REQUIRED`，不要猜別的地點。地點 id 不存在回 `404` `LOCATION_NOT_FOUND`。
 
 `PUT /api/v1/system/stores/{storeName}/stock-location` 的 body 是 `{ "stockLocationId": "<inventory location id>" }`。成功 `200` 是帶新對應的 `StoreDto`。這不改舊訂單，也不把已扣的數量搬回去。下一筆結帳與有入庫的退貨才用新地點。
 
@@ -138,14 +138,17 @@
 
 ## 結帳門市與庫存
 
-登入門市只做訂單歸屬，跟庫存位置無關。換門市不會改變扣庫存的地點，也不會產生每間門市各自的庫存。
+登入門市有兩件事：訂單歸屬，以及這一筆請求要使用的庫存地點。地點是該門市的 `stockLocationId`，不是門市名稱，也不是 body 裡的欄位。多間門市可以對應同一個地點；這時換門市仍扣同一列 `product_stock`。對應不同地點時，換門市之後的下一筆結帳改扣新門市的地點。
 
-- 不要再依賴 body 的 `branchId`。後端會忽略它。
-- 訂單的 `branchId` 與 `branchName` 都是目前 session 的門市名稱。這只記這筆訂單屬於哪一間登入門市。
+- 不要再依賴 body 的 `branchId`。後端會忽略它，也不能用它指定扣哪個庫存地點。
+- 訂單的 `branchId` 與 `branchName` 都是目前 session 的門市名稱。這只記這筆訂單屬於哪一間登入門市。之後改對應不會改這兩個欄位，也不會把已扣數量搬去新地點。
 - `cashierId` 是 `user.id`。`cashierName` 是白名單顯示名稱；該欄空白時用帳號 email。已寫入的舊訂單不會被改寫。
-- 扣庫存與庫存不足規則維持原樣：結帳仍鎖定並增減既有庫存地點「門市現貨」（`store`），不是 `store_branch`。庫存不足仍是 `409` `INSUFFICIENT_STORE_STOCK`。換門市不會改這個扣減來源。
+- 正數品項鎖定並扣減目前登入門市對應地點的 `product_stock.quantity`。沒有另一個 `normal` 數量或退貨桶。庫存不足是 `409` `INSUFFICIENT_STORE_STOCK`，數量不會變成負數。
+- 退貨仍須帶 `originalOrderId` 與 `originalOrderItemId`，並累加原明細的 `returnedQuantity`。`restock` 省略或 `true` 時，數量加到這一筆退貨當下登入門市的對應地點，不是原銷售門市，也不是當初扣庫的地點。`restock: false` 不改任何庫存列。
+- 同一把 `X-Idempotency-Key`、同一個收銀員、同一份內容會直接回已建立的收據，不會再扣一次。改對應之後重送這把 key 也一樣。
+- 預購的建立、到貨、交貨不改 `product_stock`。結帳也不更新預購的 `qtyDelivered`。develop 提案裡的負庫存與退貨桶沒有實作。
 
-換門市時若購物車有商品：前端顯示提示即可，不要擋住，也不要清掉數量。後端不接收購物車。下一筆成功結帳的訂單歸屬改為新門市，庫存檢查與扣減仍走原來的庫存地點。
+換門市時若購物車有商品：前端顯示提示即可，不要擋住，也不要清掉數量。後端不接收購物車。下一筆成功結帳的訂單歸屬改為新門市，庫存檢查與扣減改走新門市當下的 `stockLocationId`。
 
 ## 購物車（只在前端）
 

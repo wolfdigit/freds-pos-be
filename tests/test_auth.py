@@ -471,7 +471,12 @@ def test_deleted_account_and_role_change_apply_on_the_next_request(client, googl
     assert denied.json()["code"] == "AUTH_ACCOUNT_NOT_ALLOWED"
 
 
-def test_login_store_attributes_the_order_and_does_not_change_stock_location(client, google_jwks):
+def test_stores_sharing_the_default_location_deduct_that_same_row(client, google_jwks):
+    """Both stores keep the default mapping, so switching stores does not switch the stock row.
+
+    The store name is order attribution only in this case because it is not a location id.
+    A store mapped to another location deducts that other location; see test_store_location_mapping.
+    """
     account_id = _add_account(ADMIN_EMAIL, "admin", "櫃台小王")
     _add_store("奇可門市")
     _add_store("線上網購")

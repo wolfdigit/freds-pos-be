@@ -13,7 +13,7 @@ info:
     - **Line-Item Return Traceability**: Returns/exchanges (negative quantities) must reference `originalOrderId` and `originalOrderItemId`, with cumulative `returnedQuantity` tracking.
     - **ACID Atomicity**: Checkout/return operations execute inside a single database transaction (locking store stock, updating pre-orders, updating customer spending, and creating orders).
     - **Idempotency**: `POST /checkout/orders` supports `X-Idempotency-Key` to prevent double-charging or double stock deduction.
-    - **Authentication**: `POST /auth/google` exchanges a Google ID token for a server session. Later calls send `Authorization: Bearer <session token>`. The selected login store is order attribution only (`branchId` / `branchName`). It is not an inventory location. Body `branchId` is ignored. Stock checks stay on the existing stock locations.
+    - **Authentication**: `POST /auth/google` exchanges a Google ID token for a server session. Later calls send `Authorization: Bearer <session token>`. The selected login store is stored on the order as `branchId` / `branchName`. Body `branchId` is ignored and cannot choose a stock row. Stock for that request uses the inventory location mapped to the selected store. Many stores may share one location.
 
     **Conventions**
     - Amounts are TWD integers (no cents).
@@ -90,7 +90,9 @@ paths:
       tags: [auth]
       operationId: listStoresForLogin
       summary: List stores before a store is selected
-      description: Allowed with a session that has not selected a store. Does not expose other business APIs.
+      description: |
+        Allowed with a session that has not selected a store. Does not expose other business APIs.
+        Each item includes `stockLocationId` and `stockLocationName` for that login store.
       responses:
         '200':
           description: Store names that can be selected
@@ -108,7 +110,9 @@ paths:
       description: |
         Does not require a new Google sign-in. Switching is allowed with a non-empty cart;
         the frontend warns and does not clear cart lines. The next order is attributed to this
-        store. Switching does not change which stock location is deducted.
+        store and uses this store's mapped stock location. Switching does not move quantities
+        already deducted and does not rewrite past orders. Two stores mapped to the same
+        location keep using that same stock row.
       requestBody:
         required: true
         content:
@@ -436,8 +440,10 @@ paths:
       operationId: deleteLocation
       summary: Delete a stock location and migrate its inventory
       description: |
-        Maps to `ILocationService.deleteLocation`. Removes the specified location from active stock locations
-        and atomically transfers all existing inventory quantities from this location to `transferToLocation`.
+        Maps to `ILocationService.deleteLocation`. If any login store still maps to this location,
+        the response is `409` `STOCK_LOCATION_IN_USE`: the location stays, and no quantity moves.
+        Change those stores first. Otherwise this removes the location and transfers its inventory
+        quantities to `transferToLocation`.
       parameters:
         - name: locationId
           in: path
@@ -463,6 +469,15 @@ paths:
           $ref: '#/components/responses/BusinessError'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          description: A login store still maps to this location
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessError'
+              example:
+                code: STOCK_LOCATION_IN_USE
+                message: 仍有門市對應此地點，請先改門市的庫存地點
 
   /checkout/orders:
     get:
@@ -550,21 +565,21 @@ paths:
         Maps to `ICheckoutService.createCheckoutOrder`.
 
         **Backend Atomic Lifecycle (Single DB Transaction)**:
-        1. **Identity & Branch Resolution**: Require a session that already selected a `store_branch`. `cashierId` is the whitelist account id (`acct-...`), `cashierName` is the whitelist display name (or the email when that name is blank). `branchId` / `branchName` record that login store on the order. A body `branchId` is ignored. The login store is not an inventory location and does not select a stock row.
+        1. **Identity & Branch Resolution**: Require a session that already selected a `store_branch`. `cashierId` is the whitelist account id (`acct-...`), `cashierName` is the whitelist display name (or the email when that name is blank). `branchId` / `branchName` record that login store name on the order. A body `branchId` is ignored. The store name is not an inventory location id; the server reads that store's `stockLocationId`.
         2. **Item Pricing & Subtotals**:
            - For positive purchases: verify `unitPrice` against `listPrice` or customer `vipPrice` unless `isManualPrice: true` (which requires `priceDiffReason`).
-           - For pre-order items: verify `unitPrice` matches `quotedPrice` and `quantity <= qtyArrived - qtyDelivered`.
-           - For return/exchange items (`quantity < 0`): verify `originalOrderId` & `originalOrderItemId`, ensuring `abs(quantity) <= (qtySold - qtyReturned)`. Also enforce member ownership: if the checkout is bound to customer A, the original order cannot belong to customer B (`customerId` mismatch raises `INVALID_RETURN_CUSTOMER`; unattached guest original orders are permitted).
+           - Checkout has no pre-order line fields. A positive line is a normal sale against the mapped stock location. Pre-order arrival and fulfill do not change `product_stock`.
+           - For return/exchange items (`quantity < 0`): verify `originalOrderId` & `originalOrderItemId`, ensuring `abs(quantity) <= (quantity sold - returnedQuantity)`. Also enforce member ownership: if the checkout is bound to customer A, the original order cannot belong to customer B (`customerId` mismatch raises `INVALID_RETURN_CUSTOMER`; unattached guest original orders are permitted).
            - Compute `subtotal = unitPrice * quantity` for each line.
         3. **Order Total**:
            - `itemsSubtotal = sum(subtotals)`
            - `discountAmount = sum((originalPrice - unitPrice) * quantity)`
            - Calculate final `totalAmount = itemsSubtotal + shippingFee`.
            - Validate `sum(payments.amount) == totalAmount` (or `payments >= totalAmount` with cash change).
-        4. **Inventory & Pre-Order Atomicity**:
-           - Positive items lock and deduct `normal` quantity at the stock location currently mapped to the session's login store. The client cannot choose a different deduction location. A shortage is still `409` `INSUFFICIENT_STORE_STOCK`; quantity is not allowed to go negative. A restocked return adds quantity at the location mapped to the current login store, not the original sale store. `restock: false` changes no stock row. Changing the mapping later does not rewrite the order or repeat the deduction.
-           - Negative items: if `restock: true`, increment that same `store` location; increment `returnedQuantity` on the original order.
-           - Pre-order items: increment `qtyDelivered` and update pre-order status.
+        4. **Inventory**:
+           - Positive items lock and deduct `product_stock.quantity` at the stock location currently mapped to the session's login store. There is no separate `normal` quantity. The client cannot choose a different deduction location. A shortage is still `409` `INSUFFICIENT_STORE_STOCK`; quantity is not allowed to go negative.
+           - Return lines still require `originalOrderId` and `originalOrderItemId`, and they increase `returnedQuantity` on that original line. When `restock` is omitted or `true`, quantity is added at the location mapped to the current session store, not the original sale store and not the location deducted on the sale. `restock: false` changes no stock row. Changing the mapping later does not rewrite the order, move deducted quantity, or repeat the deduction. Negative stock and a returned-stock bucket are not implemented.
+           - This request does not update pre-order `qtyDelivered`. Pre-order create, arrival, and fulfill do not change `product_stock`.
         5. **Member Asset Update**:
            - Update `customer.totalSpent += totalAmount`
         6. **Receipt & Persistence**:
@@ -945,7 +960,9 @@ paths:
         Staff receive `403` `AUTH_FORBIDDEN`.
         Omit `stockLocationId` to bind the existing shared location
         `e1a10001-0000-4000-8000-000000000001` when that row exists.
-        If it does not, the response is `409` `STOCK_LOCATION_REQUIRED`.
+        An empty location table is seeded with the four canonical locations first, then that id is used.
+        If other locations exist and that shared row does not, the response is `409` `STOCK_LOCATION_REQUIRED`.
+        An unknown id is `404` `LOCATION_NOT_FOUND`.
       requestBody:
         required: true
         content:
@@ -2234,7 +2251,7 @@ components:
               example: Bearer
     StoreDto:
       type: object
-      required: [name]
+      required: [name, stockLocationId, stockLocationName]
       properties:
         name:
           type: string
@@ -2260,7 +2277,8 @@ components:
           description: |
             Optional. When omitted, the server uses the existing shared location
             `e1a10001-0000-4000-8000-000000000001` if that row still exists.
-            If it does not, the response is `409` `STOCK_LOCATION_REQUIRED`.
+            An empty location table is seeded with the four canonical locations first.
+            If other locations exist and that shared row does not, the response is `409` `STOCK_LOCATION_REQUIRED`.
 
     UpdateStoreStockLocationRequest:
       type: object

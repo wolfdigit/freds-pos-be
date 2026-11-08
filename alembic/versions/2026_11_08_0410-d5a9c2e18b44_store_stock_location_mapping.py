@@ -4,6 +4,19 @@ Revision ID: d5a9c2e18b44
 Revises: c8e2a4b71d90
 Create Date: 2026-11-08 04:10:00.000000
 
+Apply this revision before the application build that inserts stock_location_id.
+The new column is NOT NULL and has no server default.
+
+The previous store insert is exactly:
+INSERT INTO store_branch (name, is_default) VALUES (%(name)s, %(is_default)s)
+After this revision, PostgreSQL rejects it with SQLSTATE 23502
+(null value in column "stock_location_id"). No store row is written.
+Running the new application before this revision fails instead with
+SQLSTATE 42703 because stock_location_id does not exist yet.
+
+upgrade() raises and adds nothing when stock location
+e1a10001-0000-4000-8000-000000000001 is missing.
+
 """
 from typing import Sequence, Union
 
