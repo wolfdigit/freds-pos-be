@@ -118,6 +118,8 @@ class CheckoutOrderItem(Base):
     restock: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
     return_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    stock_location_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    stock_location_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
     order: Mapped["CheckoutOrder"] = relationship(
         "CheckoutOrder",

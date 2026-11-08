@@ -3,19 +3,24 @@ from __future__ import annotations
 from typing import List
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.exceptions import BusinessException
 from src.models.system import OAuthAccount, StoreBranch
 from src.schemas.common import BusinessErrorCode
 from src.services.bootstrap import new_account_id
+from src.models.location import StockLocation
 from src.schemas.system import (
     CreateOAuthAccountRequest,
     CreateStoreRequest,
     OAuthAccountDto,
     StoreDto,
     UpdateOAuthAccountRequest,
+    UpdateStoreBindingRequest,
 )
+from src.services.inventory_service import require_two_locations
+from src.services.location_integrity import is_store_location_fk_violation
 
 def _raise(status_code: int, code: BusinessErrorCode, message: str) -> None:
     raise BusinessException(status_code=status_code, code=code, message=message)
@@ -27,7 +32,15 @@ class SystemService:
 
     def stores(self) -> List[StoreDto]:
         rows = list(self.db.scalars(select(StoreBranch).order_by(StoreBranch.name)).all())
-        return [StoreDto(name=row.name, isDefault=row.is_default) for row in rows]
+        locations = {row.id: row for row in self.db.scalars(select(StockLocation)).all()}
+        result: List[StoreDto] = []
+        for row in rows:
+            normal = locations.get(row.stock_location_id)
+            returned = locations.get(row.returned_stock_location_id)
+            if normal is None or returned is None:
+                _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市對應的庫存地點")
+            result.append(self._store_dto(row, normal, returned))
+        return result
 
     def create_store(self, data: CreateStoreRequest, *, actor_role: str) -> StoreDto:
         self._require_actor_admin(actor_role)
@@ -36,10 +49,31 @@ class SystemService:
             _raise(400, BusinessErrorCode.INVALID_LOCATION_TRANSFER, "門市名稱不可空白")
         if self.db.get(StoreBranch, name) is not None:
             _raise(400, BusinessErrorCode.INVALID_LOCATION_TRANSFER, "門市已存在")
-        row = StoreBranch(name=name, is_default=False)
+        normal, returned = require_two_locations(
+            self.db, data.stock_location_id, data.returned_stock_location_id
+        )
+        row = StoreBranch(
+            name=name,
+            is_default=False,
+            stock_location_id=normal.id,
+            returned_stock_location_id=returned.id,
+        )
         self.db.add(row)
-        self.db.commit()
-        return StoreDto(name=row.name, isDefault=row.is_default)
+        self._commit_store_location()
+        return self._store_dto(row, normal, returned)
+
+    def rebind_store(self, name: str, data: UpdateStoreBindingRequest, *, actor_role: str) -> StoreDto:
+        self._require_actor_admin(actor_role)
+        normal, returned = require_two_locations(
+            self.db, data.stock_location_id, data.returned_stock_location_id
+        )
+        row = self.db.scalar(select(StoreBranch).where(StoreBranch.name == name).with_for_update())
+        if row is None:
+            _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市")
+        row.stock_location_id = normal.id
+        row.returned_stock_location_id = returned.id
+        self._commit_store_location()
+        return self._store_dto(row, normal, returned)
 
     def delete_store(self, name: str, *, actor_role: str) -> dict:
         self._require_actor_admin(actor_role)
@@ -111,6 +145,25 @@ class SystemService:
         self.db.delete(row)
         self.db.commit()
         return {"deletedEmail": key}
+
+    def _store_dto(self, row: StoreBranch, normal: StockLocation, returned: StockLocation) -> StoreDto:
+        return StoreDto(
+            name=row.name,
+            isDefault=row.is_default,
+            stockLocationId=normal.id,
+            stockLocationName=normal.name,
+            returnedStockLocationId=returned.id,
+            returnedStockLocationName=returned.name,
+        )
+
+    def _commit_store_location(self) -> None:
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            if is_store_location_fk_violation(exc):
+                _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到庫存地點")
+            raise
 
     def _lock_stores(self) -> None:
         # 更新成原值，讓同時刪除最後門市的請求在 SQLite 與 Postgres 都會排隊。

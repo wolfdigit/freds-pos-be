@@ -1,88 +1,81 @@
 # Inventory — Data Model
 
-Quantity changes and their documents commit in one database transaction. Stock rows do not store a second copy of the total for convenience. The product API computes `totalStock` when it reads.
-
 ## `stock_location`
-
-The location master does not store which store uses it. Stores point at a location.
 
 | Column | Notes |
 | --- | --- |
-| `id` | Primary key. The existing four locations keep their current ids. |
-| `name` | Required |
-| `icon` | Nullable |
-| `is_default` | Display only |
+| `id` | Primary key |
+| `name` | Unique, trimmed |
+| `icon` | |
+| `is_default` | |
 | `display_order` | |
-| `is_active` | Stays `true`. This design does not deactivate a location. |
 
-Existing locations stay: `門市現貨`, `後方倉庫`, `公司總倉`, `調度暫存`. Quantity in `門市現貨` stays there and is not split.
+There is no `is_active` column.
+
+Seeded rows:
+
+| id | name |
+| --- | --- |
+| `e1a10001-0000-4000-8000-000000000001` | 門市現貨 |
+| `e1a10002-0000-4000-8000-000000000002` | 後方倉庫 |
+| `e1a10003-0000-4000-8000-000000000003` | 公司總倉 |
+| `e1a10004-0000-4000-8000-000000000004` | 調度暫存 |
+| `e1a10005-0000-4000-8000-000000000005` | 退貨品 |
+
+`門市現貨` quantity is not split. Returned quantity that used to sit in a `condition = returned` row is summed onto `退貨品` for the same product.
 
 ## `store_branch`
-
-Add the checkout binding. The store name remains the primary key.
 
 | Column | Notes |
 | --- | --- |
 | `name` | Primary key |
-| `is_default` | Unchanged |
-| `stock_location_id` | Required. References `stock_location.id`. Many stores may share one id. |
+| `is_default` | |
+| `stock_location_id` | Required. Normal goods. FK `fk_store_branch_stock_location`. |
+| `returned_stock_location_id` | Required. Returned goods. FK `fk_store_branch_returned_stock_location`. |
 
-A new store is stored with `stock_location_id` set. `台北旗艦店` and `官網` are both set to the existing `門市現貨` location. They share its `normal` and `returned` quantities until one of them is rebound or that location is deleted. Deleting it is refused while any quantity there is not `0`. After the quantity has been moved, each of those stores is bound to a new location of its own. The name is the store name, or the next numbered name when that name is taken.
+Both foreign keys use `ON DELETE RESTRICT`. The two ids on one store must differ. `台北旗艦店` and `官網` both use `門市現貨` and `退貨品` until an admin rebinds them.
+
+Deleting a location is refused while any quantity there is not exactly `0`, and while fewer than three locations would remain. Stores that pointed at it are updated to `rebindToLocation` on the binding they used.
 
 ## `product_stock`
 
-One row is one product, one location, and one condition.
+One row is one product and one location.
 
 | Column | Notes |
 | --- | --- |
-| `id` | Surrogate key |
-| `product_id` | References `product.id`, `ON DELETE RESTRICT` |
-| `location` | References `stock_location.id` |
-| `condition` | `normal` or `returned` |
-| `quantity` | Required. A checkout sale may set `normal` below `0`. A manual edit may set either bucket below `0`. A transfer refuses to take a source below the moved amount. |
-| `location_name` | Copy of the location name. A rename updates these copies. |
+| `product_id` | |
+| `location` | FK to `stock_location.id` |
+| `location_name` | Copy of the location name |
+| `quantity` | Integer. May be negative. |
 
-Unique key: `(product_id, location, condition)`.
+Unique key: `(product_id, location)`. A missing row means `0`. The first receipt, transfer, manual edit, or checkout that touches the pair inserts it.
 
-A missing row means quantity `0`. The first receipt, transfer, manual edit, condition change, or checkout that touches a bucket inserts it.
+## `stock_receipt`
 
-Soft-deleting a product does not delete these rows. A product with `status: deleted` cannot be sold as new stock. It can still be received, transferred, adjusted, and restocked from a return.
-
-## `stock_receipt` / `stock_receipt_item`
-
-A receiving document. Deleting a product or a location does not delete the history. The location columns keep the id and the name from that time.
-
-`stock_receipt`: `id`, `location_id`, `location_name`, `supplier`, `note`, `operator_name`, `created_at`.
-
-`stock_receipt_item`: `id`, `receipt_id`, `product_id`, `sku`, `name`, `quantity`. `quantity` ≥ 1.
+The receipt header: location, optional supplier, optional note, operator, and time. Lines are not stored in a separate item table.
 
 ## `stock_movement`
 
-One change to one bucket.
+One row is one quantity change. A receipt line is a movement with `type = receipt`, `source_type = receipt`, `source_id` equal to the receipt id, and `sku` / `name` filled in.
 
 | Column | Notes |
 | --- | --- |
-| `id` | `mov-` plus 32 hex characters |
-| `type` | `receipt`, `transfer_out`, `transfer_in`, `adjust`, `condition_out`, `condition_in`, `sale`, `return_restock` |
+| `type` | `receipt`, `transfer_out`, `transfer_in`, `adjust`, `sale`, `return_restock` |
 | `product_id` | |
+| `sku`, `name` | Set for receipt lines |
 | `location_id` | |
-| `condition` | The bucket this row changes |
-| `quantity_delta` | May be negative |
-| `quantity_after` | That bucket's quantity after the change |
-| `reason` | Nullable |
-| `source_type` | `receipt`, `transfer`, `adjustment`, `condition_change`, `checkout_order` |
-| `source_id` | Id of the related document |
-| `operator_name` | Checkout uses the cashier snapshot. Other writes use the session. |
-| `created_at` | |
+| `quantity_delta` | Signed |
+| `quantity_after` | |
+| `source_type` | `receipt`, `transfer`, `adjustment`, `checkout_order` |
+| `source_id` | Groups the rows of one operation |
+| `operator_name` | Session operator |
 
-A transfer writes two rows with the same `source_id`: `transfer_out` at the source (negative delta) and `transfer_in` at the target (positive delta). A condition change writes `condition_out` and `condition_in` the same way.
+A transfer writes `transfer_out` and `transfer_in` with the same `source_id`.
 
 ## `stock_adjustment_log`
 
-Manual and batch edits still write this summary for the current adjustment-log API. Receipts, transfers, checkout, and condition changes write `stock_movement` only.
+Manual and batch edits still write this summary. The change entries have location, old quantity, new quantity, and diff. They do not carry a condition.
 
-## Checkout keeps a snapshot, not a live link
+## Checkout line
 
-`checkout_order.branch_name` still stores the login store name. Each line that changes stock also stores the location used at that moment: `stock_location_id`, `stock_location_name`, and `stock_condition`. If the store is later bound to a different location, old lines still point at the location they used.
-
-A sale line's `stock_condition` is `normal`. A restocked return line's is `returned`. A return line with `restock: false` leaves both location fields empty.
+`checkout_order.branch_name` stores the login store name. A line that changes stock stores `stock_location_id` and `stock_location_name` for the location used at that moment. A later rebind does not rewrite the line or move quantity already posted. A return with `restock: false` leaves both location fields empty.

@@ -19,11 +19,10 @@ class StockLocation(Base):
     __tablename__ = "stock_location"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
     icon: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
 class StockAdjustmentLog(Base):
@@ -35,3 +34,35 @@ class StockAdjustmentLog(Base):
     items_json: Mapped[str] = mapped_column(Text, nullable=False)
     total_qty_change: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class StockReceipt(Base):
+    __tablename__ = "stock_receipt"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    location_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    location_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    supplier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    operator_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now)
+
+
+class StockMovement(Base):
+    """One quantity change. A receipt line lives here too, with sku and name."""
+
+    __tablename__ = "stock_movement"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    type: Mapped[str] = mapped_column(String(32), nullable=False)
+    product_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    sku: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    name: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    location_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    quantity_delta: Mapped[int] = mapped_column(Integer, nullable=False)
+    quantity_after: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    operator_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utc_now, index=True)

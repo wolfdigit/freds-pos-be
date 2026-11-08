@@ -17,7 +17,7 @@ from sqlalchemy.sql.elements import ColumnElement
 from src.core.exceptions import BusinessException
 from src.models.checkout import CheckoutOrder, CheckoutOrderItem, CheckoutPayment
 from src.models.customer import Customer
-from src.models.product import Product, ProductStock
+from src.models.product import Product
 from src.schemas.checkout import (
     CheckoutOrder as CheckoutOrderSchema,
     CheckoutOrderItem as CheckoutOrderItemSchema,
@@ -32,12 +32,10 @@ from src.schemas.checkout import (
 from src.schemas.common import BusinessErrorCode
 from src.services.auth_service import AuthService, Principal
 from src.services.customer_service import canonicalize_phone
+from src.services.inventory_service import apply_checkout_stock
 from src.services.product_service import normalize_sku
 
 POINTS_DISCOUNT_TWD = 360
-# 登入門市只寫進訂單歸屬。扣庫存仍是這個既有庫存地點，與 store_branch 無關。
-STORE_LOCATION = "e1a10001-0000-4000-8000-000000000001"
-STORE_LOCATION_NAME = "門市現貨"
 TAIPEI = ZoneInfo("Asia/Taipei")
 
 
@@ -114,6 +112,8 @@ def _to_item_schema(item: CheckoutOrderItem) -> CheckoutOrderItemSchema:
         restock=item.restock,
         returnReason=item.return_reason,
         note=item.note,
+        stockLocationId=item.stock_location_id,
+        stockLocationName=item.stock_location_name,
     )
 
 
@@ -351,16 +351,6 @@ class CheckoutService:
             _raise(404, BusinessErrorCode.CUSTOMER_NOT_FOUND, "找不到指定的會員")
         return customer
 
-    def _lock_store_stock(self, product_id: str) -> Optional[ProductStock]:
-        return self.db.scalar(
-            select(ProductStock)
-            .where(
-                ProductStock.product_id == product_id,
-                ProductStock.location == STORE_LOCATION,
-            )
-            .with_for_update()
-        )
-
     def _build_lines(
         self, data: CreateOrderRequest, customer: Optional[Customer]
     ) -> List[_DraftLine]:
@@ -537,7 +527,15 @@ class CheckoutService:
 
         touched_orders: dict[str, CheckoutOrder] = {}
         for index, line in enumerate(drafts, start=1):
-            self._move_stock(line)
+            stock_location_id, stock_location_name = apply_checkout_stock(
+                self.db,
+                product_id=line.product.id,
+                quantity=line.quantity,
+                restock=line.restock,
+                store_name=branch_name,
+                order_id=order_id,
+                operator_name=cashier_name,
+            )
             if line.original_item is not None:
                 line.original_item.returned_quantity += abs(line.quantity)
                 touched_orders[line.original_item.order_id] = line.original_item.order
@@ -567,6 +565,8 @@ class CheckoutService:
                     ),
                     return_reason=line.return_reason,
                     note=line.note,
+                    stock_location_id=stock_location_id,
+                    stock_location_name=stock_location_name,
                 )
             )
         for index, payment in enumerate(data.payments, start=1):
@@ -602,27 +602,6 @@ class CheckoutService:
             customer.total_spent = max(0, customer.total_spent + total_amount)
             customer.updated_at = now
         self.db.commit()
-
-    def _move_stock(self, line: _DraftLine) -> None:
-        if line.quantity > 0:
-            delta = -line.quantity
-        elif line.restock is False:
-            return
-        else:
-            delta = abs(line.quantity)
-        stock = self._lock_store_stock(line.product.id)
-        if stock is None:
-            stock = ProductStock(
-                product_id=line.product.id,
-                location=STORE_LOCATION,
-                location_name=STORE_LOCATION_NAME,
-                quantity=0,
-            )
-            self.db.add(stock)
-            self.db.flush()
-        if delta < 0 and stock.quantity + delta < 0:
-            _raise(409, BusinessErrorCode.INSUFFICIENT_STORE_STOCK, "門市庫存不足")
-        stock.quantity += delta
 
     def _check_payments(self, payments: Sequence[PaymentTender], total_amount: int) -> None:
         paid = sum(payment.amount for payment in payments)

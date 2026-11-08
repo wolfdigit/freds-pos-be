@@ -304,6 +304,126 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /inventory/transfers/all:
+    post:
+      tags: [products]
+      operationId: moveAllStock
+      summary: Move every bucket at one location to another
+      description: |
+        Moves every non-zero quantity at the source. A negative quantity moves too.
+        The source location and its store bindings stay.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MoveAllStockRequest'
+      responses:
+        '200':
+          description: Move succeeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OkResponse'
+        '400':
+          $ref: '#/components/responses/BusinessError'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /inventory/receipts:
+    post:
+      tags: [products]
+      operationId: createStockReceipt
+      summary: Receive stock into a location
+      description: Adds quantity at the chosen location and keeps a receipt. Receipt lines are stock movements. It does not replace the current quantity.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateStockReceiptRequest'
+      responses:
+        '201':
+          description: Receipt created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockReceipt'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    get:
+      tags: [products]
+      operationId: searchStockReceipts
+      summary: List stock receipts
+      parameters:
+        - name: locationId
+          in: query
+          schema:
+            type: string
+        - name: productId
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Receipt page, newest first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockReceiptPage'
+
+  /inventory/movements:
+    get:
+      tags: [products]
+      operationId: searchStockMovements
+      summary: List stock movements
+      parameters:
+        - name: productId
+          in: query
+          schema:
+            type: string
+        - name: locationId
+          in: query
+          schema:
+            type: string
+        - name: type
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Movement page, newest first
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StockMovementPage'
+
   /inventory/adjustments:
     post:
       tags: [products]
@@ -406,7 +526,7 @@ paths:
       operationId: updateLocation
       summary: Update a stock location
       description: |
-        Maps to `ILocationService.updateLocation`. Updates name, icon, display order, or active state of a location.
+        Maps to `ILocationService.updateLocation`. Updates name, icon, or display order.
       parameters:
         - name: locationId
           in: path
@@ -434,10 +554,11 @@ paths:
     delete:
       tags: [products]
       operationId: deleteLocation
-      summary: Delete a stock location and migrate its inventory
+      summary: Delete an empty stock location
       description: |
-        Maps to `ILocationService.deleteLocation`. Removes the specified location from active stock locations
-        and atomically transfers all existing inventory quantities from this location to `transferToLocation`.
+        Refuses with `409` `LAST_LOCATION` when fewer than two locations would remain.
+        Refuses with `409` `LOCATION_NOT_EMPTY` when any quantity is not exactly zero. A negative quantity is not zero.
+        Stores that used this location as their normal or returned location are bound to `rebindToLocation`. No new location is created.
       parameters:
         - name: locationId
           in: path
@@ -454,7 +575,7 @@ paths:
               $ref: '#/components/schemas/DeleteStockLocationRequest'
       responses:
         '200':
-          description: Location deleted and stock migrated
+          description: Location deleted and its stores rebound
           content:
             application/json:
               schema:
@@ -550,7 +671,7 @@ paths:
         Maps to `ICheckoutService.createCheckoutOrder`.
 
         **Backend Atomic Lifecycle (Single DB Transaction)**:
-        1. **Identity & Branch Resolution**: Require a session that already selected a `store_branch`. `cashierId` is the whitelist account id (`acct-...`), `cashierName` is the whitelist display name (or the email when that name is blank). `branchId` / `branchName` record that login store on the order. A body `branchId` is ignored. The login store is not an inventory location and does not select a stock row.
+        1. **Identity & Branch Resolution**: Require a session that already selected a `store_branch`. `cashierId` is the whitelist account id (`acct-...`), `cashierName` is the whitelist display name (or the email when that name is blank). `branchId` / `branchName` record that login store on the order. A body `branchId` is ignored. Stock comes from that store's two bound locations.
         2. **Item Pricing & Subtotals**:
            - For positive purchases: verify `unitPrice` against `listPrice` or customer `vipPrice` unless `isManualPrice: true` (which requires `priceDiffReason`).
            - For pre-order items: verify `unitPrice` matches `quotedPrice` and `quantity <= qtyArrived - qtyDelivered`.
@@ -562,8 +683,8 @@ paths:
            - Calculate final `totalAmount = itemsSubtotal + shippingFee`.
            - Validate `sum(payments.amount) == totalAmount` (or `payments >= totalAmount` with cash change).
         4. **Inventory & Pre-Order Atomicity**:
-           - Stock location is independent of the login store. Positive items still lock and deduct the existing `store` / `門市現貨` location. Switching login store does not change this source and does not create per-store inventory.
-           - Negative items: if `restock: true`, increment that same `store` location; increment `returnedQuantity` on the original order.
+           - Positive items deduct the login store's normal location (`stockLocationId`). The sale still completes when that quantity becomes negative.
+           - Negative items: if `restock` is omitted or `true`, add the count to the login store's returned location (`returnedStockLocationId`). `restock: false` changes no stock row. The line stores `stockLocationId` and `stockLocationName` for the location that changed.
            - Pre-order items: increment `qtyDelivered` and update pre-order status.
         5. **Member Asset Update**:
            - Update `customer.totalSpent += totalAmount`
@@ -960,6 +1081,33 @@ paths:
           $ref: '#/components/responses/BusinessError'
 
   /system/stores/{storeName}:
+    put:
+      tags: [system]
+      operationId: rebindStore
+      summary: Point a store at another stock location
+      description: |
+        Admin only. Quantity stays at the previous location.
+      parameters:
+        - name: storeName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStoreBindingRequest'
+      responses:
+        '200':
+          description: Store rebound
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoreDto'
+        '404':
+          $ref: '#/components/responses/NotFound'
     delete:
       tags: [system]
       operationId: deleteStore
@@ -1166,8 +1314,8 @@ components:
           examples:
             insufficientStock:
               value:
-                code: INSUFFICIENT_STORE_STOCK
-                message: 門市現貨不足，請先從倉庫調撥
+                code: INSUFFICIENT_STOCK
+                message: 調出地點庫存不足
             returnQty:
               value:
                 code: RETURN_QTY_EXCEEDED
@@ -1199,6 +1347,11 @@ components:
       type: string
       enum:
         - INSUFFICIENT_STORE_STOCK
+        - INSUFFICIENT_STOCK
+        - LOCATION_NOT_EMPTY
+        - LAST_LOCATION
+        - LOCATION_NAME_TAKEN
+        - STOCK_LOCATION_IN_USE
         - RETURN_QTY_EXCEEDED
         - PAYMENT_INSUFFICIENT
         - PRODUCT_NOT_FOUND
@@ -1273,9 +1426,18 @@ components:
         displayOrder:
           type: integer
           default: 1
-        isActive:
-          type: boolean
-          default: true
+        storeNames:
+          type: array
+          items:
+            type: string
+          readOnly: true
+          description: Stores that use this location for normal goods.
+        returnedStoreNames:
+          type: array
+          items:
+            type: string
+          readOnly: true
+          description: Stores that use this location for returned goods.
 
     CreateStockLocationRequest:
       type: object
@@ -1289,9 +1451,6 @@ components:
           example: 🏬
         displayOrder:
           type: integer
-        isActive:
-          type: boolean
-          default: true
 
     UpdateStockLocationRequest:
       type: object
@@ -1305,42 +1464,35 @@ components:
         displayOrder:
           type: integer
           example: 1
-        isActive:
-          type: boolean
-          example: true
 
     DeleteStockLocationRequest:
       type: object
-      required: [transferToLocation]
       properties:
-        transferToLocation:
-          $ref: '#/components/schemas/StockLocation'
-        reason:
+        rebindToLocation:
           type: string
-          example: 撤點整併至後方倉庫
+          description: |
+            Required when any store is bound to the location being deleted.
+            Must be a different existing location. Those stores are bound to it.
 
     DeleteStockLocationResponse:
       type: object
-      required: [success, deletedLocation, transferredToLocation, affectedProductsCount, totalQuantityTransferred]
+      required: [deletedLocation, reboundStoreNames]
       properties:
-        success:
-          type: boolean
-          example: true
         deletedLocation:
           type: string
-          example: store_2
-        transferredToLocation:
-          type: string
-          example: warehouse
-        affectedProductsCount:
-          type: integer
-          example: 15
-        totalQuantityTransferred:
-          type: integer
-          example: 42
-        message:
-          type: string
-          example: 成功刪除地點並將 15 項商品共 42 台庫存轉移至後方倉庫
+        reboundStoreNames:
+          type: array
+          items:
+            type: object
+            required: [name, binding, stockLocationId]
+            properties:
+              name:
+                type: string
+              binding:
+                type: string
+                enum: [normal, returned]
+              stockLocationId:
+                type: string
 
     LocationStock:
       type: object
@@ -1353,6 +1505,7 @@ components:
           example: 門市現貨
         quantity:
           type: integer
+          description: Quantity at this location. May be negative. A missing row is 0.
 
     Product:
       type: object
@@ -1366,6 +1519,8 @@ components:
         - listPrice
         - stocks
         - totalStock
+        - loginStoreQuantity
+        - loginStoreReturnedQuantity
         - deleted
         - status
       properties:
@@ -1407,6 +1562,13 @@ components:
             $ref: '#/components/schemas/LocationStock'
         totalStock:
           type: integer
+          description: Sum of quantity at locations currently bound as any store's normal location. Each location is counted once.
+        loginStoreQuantity:
+          type: integer
+          description: Quantity at the session store's normal location. `0` when that row is missing.
+        loginStoreReturnedQuantity:
+          type: integer
+          description: Quantity at the session store's returned location. `0` when that row is missing.
         note:
           type: string
         createdAt:
@@ -1542,8 +1704,138 @@ components:
           minimum: 1
         reason:
           type: string
-        operatorId:
+
+    MoveAllStockRequest:
+      type: object
+      required: [fromLocation, toLocation]
+      properties:
+        fromLocation:
           type: string
+        toLocation:
+          type: string
+        reason:
+          type: string
+
+    CreateStockReceiptRequest:
+      type: object
+      required: [locationId, items]
+      properties:
+        locationId:
+          type: string
+        note:
+          type: string
+        supplier:
+          type: string
+        items:
+          type: array
+          minItems: 1
+          items:
+            type: object
+            required: [productId, quantity]
+            properties:
+              productId:
+                type: string
+              quantity:
+                type: integer
+                minimum: 1
+
+    StockReceipt:
+      type: object
+      required: [id, locationId, locationName, operatorName, createdAt, items, totalQuantity]
+      properties:
+        id:
+          type: string
+        locationId:
+          type: string
+        locationName:
+          type: string
+        supplier:
+          type: string
+        note:
+          type: string
+        operatorName:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        items:
+          type: array
+          items:
+            type: object
+            required: [productId, sku, name, quantity]
+            properties:
+              productId:
+                type: string
+              sku:
+                type: string
+              name:
+                type: string
+              quantity:
+                type: integer
+        totalQuantity:
+          type: integer
+
+    StockReceiptPage:
+      type: object
+      required: [items, page, pageSize, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/StockReceipt'
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+
+    StockMovement:
+      type: object
+      required: [id, type, productId, locationId, quantityDelta, quantityAfter, sourceId, operatorName, createdAt]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        productId:
+          type: string
+        sku:
+          type: string
+          description: Present on receipt lines.
+        name:
+          type: string
+          description: Present on receipt lines.
+        locationId:
+          type: string
+        quantityDelta:
+          type: integer
+        quantityAfter:
+          type: integer
+        reason:
+          type: string
+        sourceId:
+          type: string
+        operatorName:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    StockMovementPage:
+      type: object
+      required: [items, page, pageSize, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/StockMovement'
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
 
     StockAdjustRequest:
       type: object
@@ -1555,7 +1847,7 @@ components:
           $ref: '#/components/schemas/StockLocation'
         newQuantity:
           type: integer
-          minimum: 0
+          description: Absolute quantity. May be negative.
         reason:
           type: string
 
@@ -1717,6 +2009,11 @@ components:
           type: boolean
           default: true
         returnReason:
+          type: string
+        stockLocationId:
+          type: string
+          description: Location used by this line. Empty when `restock` is false.
+        stockLocationName:
           type: string
 
     OrderStatus:
@@ -2196,7 +2493,7 @@ components:
               example: Bearer
     StoreDto:
       type: object
-      required: [name]
+      required: [name, stockLocationId, stockLocationName, returnedStockLocationId, returnedStockLocationName]
       properties:
         name:
           type: string
@@ -2204,14 +2501,39 @@ components:
         isDefault:
           type: boolean
           default: false
+        stockLocationId:
+          type: string
+          description: Location that holds this store's normal goods.
+        stockLocationName:
+          type: string
+        returnedStockLocationId:
+          type: string
+          description: Location that holds this store's returned goods.
+        returnedStockLocationName:
+          type: string
 
     CreateStoreRequest:
       type: object
-      required: [name]
+      required: [name, stockLocationId, returnedStockLocationId]
       properties:
         name:
           type: string
           example: 高雄巨蛋店
+        stockLocationId:
+          type: string
+          description: Existing location for normal goods. Must differ from returnedStockLocationId.
+        returnedStockLocationId:
+          type: string
+          description: Existing location for returned goods.
+
+    UpdateStoreBindingRequest:
+      type: object
+      required: [stockLocationId, returnedStockLocationId]
+      properties:
+        stockLocationId:
+          type: string
+        returnedStockLocationId:
+          type: string
 
     OAuthRole:
       type: string

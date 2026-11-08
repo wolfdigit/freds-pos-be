@@ -47,6 +47,8 @@ class Product(BaseModel):
     vip_price: Optional[int] = Field(None, alias="vipPrice", ge=0)
     stocks: List[LocationStock]
     total_stock: int = Field(..., alias="totalStock")
+    login_store_quantity: int = Field(0, alias="loginStoreQuantity")
+    login_store_returned_quantity: int = Field(0, alias="loginStoreReturnedQuantity")
     pre_order_pending_count: int = Field(..., alias="preOrderPendingCount", ge=0)
     note: Optional[str] = None
     status: ProductStatus = ProductStatus.ACTIVE

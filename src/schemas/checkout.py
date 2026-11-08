@@ -66,6 +66,8 @@ class CheckoutOrderItem(BaseModel):
     restock: Optional[bool] = None
     return_reason: Optional[str] = Field(None, alias="returnReason")
     note: Optional[str] = None
+    stock_location_id: Optional[str] = Field(None, alias="stockLocationId")
+    stock_location_name: Optional[str] = Field(None, alias="stockLocationName")
 
 
 class CheckoutOrder(BaseModel):

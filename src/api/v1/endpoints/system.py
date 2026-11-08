@@ -10,6 +10,7 @@ from src.schemas.system import (
     OAuthAccountDto,
     StoreDto,
     UpdateOAuthAccountRequest,
+    UpdateStoreBindingRequest,
 )
 from src.services.system_service import SystemService
 
@@ -24,6 +25,16 @@ def get_stores(db: Session = Depends(get_db), _user=Depends(require_admin_sessio
 @router.post("/stores", response_model=StoreDto, response_model_by_alias=True, status_code=status.HTTP_201_CREATED)
 def create_store(body: CreateStoreRequest, db: Session = Depends(get_db), user=Depends(require_admin_session)):
     return SystemService(db).create_store(body, actor_role=user.role)
+
+
+@router.put("/stores/{storeName}", response_model=StoreDto, response_model_by_alias=True)
+def rebind_store(
+    body: UpdateStoreBindingRequest,
+    storeName: str = Path(...),
+    db: Session = Depends(get_db),
+    user=Depends(require_admin_session),
+):
+    return SystemService(db).rebind_store(storeName, body, actor_role=user.role)
 
 
 @router.delete("/stores/{storeName}")

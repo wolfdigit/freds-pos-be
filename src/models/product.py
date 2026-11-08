@@ -84,8 +84,12 @@ class ProductStock(Base):
         nullable=False,
         index=True,
     )
-    location: Mapped[str] = mapped_column(String(64), nullable=False)
-    location_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    location: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("stock_location.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    location_name: Mapped[str] = mapped_column(String(128), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     product: Mapped["Product"] = relationship("Product", back_populates="stocks")
