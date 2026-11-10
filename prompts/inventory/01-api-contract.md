@@ -62,7 +62,7 @@ If a store mapping still lands after the locks, the delete rolls back and return
 | `locationName` | |
 | `quantity` | That location's quantity. A missing row is `0`. May be negative. |
 
-`totalInventory` sums `quantity` at every location, including warehouses, returned locations, and negatives. `inInventoryOnly` keeps products whose `totalInventory` is greater than `0`. `loginStoreQuantity` is the session store's normal location. `loginStoreReturnedQuantity` is the session store's returned location. Both are `0` when the session has no selected store. Product create accepts no quantities.
+`totalInventory` sums `quantity` at every location, including warehouses, returned locations, and negatives. `inInventoryOnly` keeps products whose `totalInventory` is greater than `0`. `loginStoreQuantity` is the session store's normal location. `loginStoreReturnedQuantity` is the session store's returned location. Both are `null` when the session has no selected store. With a store selected, a missing row is `0` and the value may be negative. Product create accepts no quantities.
 
 ## `POST /inventory/receipts`
 

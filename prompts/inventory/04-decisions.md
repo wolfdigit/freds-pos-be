@@ -18,4 +18,4 @@ Date: 2026-11-08.
 | 12 | `is_active` | The column is removed. A location is not deactivated. |
 | 13 | Move a whole location | Every non-zero quantity moves, including negatives. Bindings stay. |
 | 14 | Staff | Staff may read and write inventory, including delete. Store create, rebind, and delete stay admin-only. Staff still need a selected store. |
-| 15 | Admin without a store | Admin may call every business route with no selected store. Inventory locations are not filtered by store. Checkout create is the call that needs a login store: no store returns `403` `AUTH_STORE_REQUIRED` and changes no quantity. A selected store is used. `loginStoreQuantity` and `loginStoreReturnedQuantity` are `0` when no store is selected. |
+| 15 | Admin without a store | Admin may call every business route with no selected store. Inventory locations are not filtered by store. Checkout create is the call that needs a login store: no store returns `403` `AUTH_STORE_REQUIRED` and changes no quantity. A selected store is used. `loginStoreQuantity` and `loginStoreReturnedQuantity` are `null` when no store is selected, and a real quantity (including `0` and negatives) when one is. |
