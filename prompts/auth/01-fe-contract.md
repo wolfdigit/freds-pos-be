@@ -145,7 +145,7 @@
 - `cashierId` 是 `user.id`。`cashierName` 是白名單顯示名稱；該欄空白時用帳號 email。
 - 銷售扣該門市的正常庫存點，數量可以變成負數，不會回 `INSUFFICIENT_STORE_INVENTORY`。
 - 管理員尚未選門市時，`POST /api/v1/checkout/orders` 回 `403` `AUTH_STORE_REQUIRED`，不扣任何庫存。選了門市之後與店員使用同一間 session 門市。
-- 退貨一定改數量，而且一樣要已選門市。`restock` 省略或為 `true`（回補至門市現貨）時，數量進入該門市的正常庫存點。`restock: false` 進入該門市的退貨庫存點。兩個 id 相同時，兩種都加在同一個庫存點。未選門市的管理員打這支仍是 `403` `AUTH_STORE_REQUIRED`，數量不變。
+- 退貨在 `restock` 省略或為 `true` 時，數量進入該門市的退貨庫存點。`restock: false` 不改庫存。
 
 換門市時若購物車有商品：前端顯示提示即可，不要擋住，也不要清掉數量。後端不接收購物車。下一筆成功結帳改扣新門市綁定的庫存點。
 

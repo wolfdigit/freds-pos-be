@@ -105,7 +105,7 @@ Filters: `productId`, `locationId`, `type`, `page`, `pageSize`. Newest first. Ty
 
 1. Lock locations, then the login store.
 2. A positive line deducts `inventoryLocationId`. The result may be negative. The line snapshots that location.
-3. A negative line with `restock` omitted or `true` adds the count to `inventoryLocationId` and snapshots that location.
-4. `restock: false` adds the count to `returnedInventoryLocationId` and snapshots that location. There is no return that leaves quantity unchanged.
+3. A negative line with `restock` omitted or `true` adds the count to `returnedInventoryLocationId` and snapshots that location.
+4. `restock: false` changes no stock and leaves the line's location fields empty.
 
 There is no condition-change endpoint.

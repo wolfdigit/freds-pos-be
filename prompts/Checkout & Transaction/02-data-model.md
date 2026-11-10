@@ -96,15 +96,15 @@ Unique `(order_id, line_no)`.
 
 ## Stock write
 
-Checkout changes the login store's two bound locations. A body `branchId` does not pick a different row.
+Only `product_inventory` where `location = 'store'` changes.
 
 | Line | Effect |
 |------|--------|
-| `quantity > 0` | Subtract `quantity` at the normal location. The commit is not refused when that quantity is short. It may go below zero. |
-| `quantity < 0` and `restock` is not false | Add `abs(quantity)` at the login store's normal location. |
-| `quantity < 0` and `restock` is false | Add `abs(quantity)` at the login store's returned location. |
+| `quantity > 0` | Subtract `quantity`. The commit is not refused when the locked quantity is short. `store` may go below zero. |
+| `quantity < 0` and `restock` is true | Add `abs(quantity)` for the units being returned. |
+| `quantity < 0` and `restock` is false | No stock change. |
 
-When those two bindings are the same location, both return flags add to it. Other locations stay put. The counter shows a warning popup when the shelf looks short. The cashier decides whether there is actually product to sell. The server trusts that decision and still commits.
+`warehouse`, `company`, and `other` are untouched. The counter shows a warning popup when the shelf looks short. The cashier decides whether there is actually product to sell. The server trusts that decision and still commits. The recorded stock count may be inaccurate. Branch on the order does not select a different stock row.
 
 ## Member spending
 
