@@ -17,7 +17,7 @@ Each store is bound to two inventory locations. `inventoryLocationId` holds norm
 
 One product has one quantity per location. A missing row is `0`.
 
-`totalInventory` sums quantity at every location, including warehouses, returned locations, and negative quantities. Store bindings do not change that sum. `loginStoreQuantity` is the session store's normal location. `loginStoreReturnedQuantity` is that store's returned location.
+`totalInventory` sums quantity at every location, including warehouses, returned locations, and negative quantities. Store bindings do not change that sum. `loginStoreQuantity` is the session store's normal location. `loginStoreReturnedQuantity` is that store's returned location. Both are `0` when the session has no selected store. An admin may read products and locations in that state. Checkout create still requires a selected store.
 
 ## Stores and locations
 
