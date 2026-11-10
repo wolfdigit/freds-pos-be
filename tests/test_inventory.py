@@ -169,6 +169,7 @@ def test_condition_change_releases_returned_stock(client, google_jwks):
                 "quantity": -1,
                 "originalOrderId": order_id,
                 "originalOrderItemId": item_id,
+                "restock": False,
             }],
             "shippingFee": 0,
             "payments": [{"type": "cash", "name": "現金", "amount": -100}],
@@ -212,6 +213,136 @@ def test_store_may_use_one_location_for_normal_and_returned(client, google_jwks)
     body = created.json()
     assert body["inventoryLocationId"] == RETURNED_LOCATION_ID
     assert body["returnedInventoryLocationId"] == RETURNED_LOCATION_ID
+
+
+def _return_one(client, headers, product_id, order_id, item_id, *, restock):
+    item = {
+        "productId": product_id,
+        "quantity": -1,
+        "originalOrderId": order_id,
+        "originalOrderItemId": item_id,
+    }
+    if restock is not None:
+        item["restock"] = restock
+    response = client.post(
+        "/api/v1/checkout/orders",
+        json={
+            "items": [item],
+            "shippingFee": 0,
+            "payments": [{"type": "cash", "name": "現金", "amount": -100}],
+        },
+        headers=headers,
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["order"]["items"][0]
+
+
+def test_return_restock_true_adds_normal_and_false_adds_returned(client, google_jwks):
+    _add_account(ADMIN_EMAIL)
+    shelf = _add_store("奇可門市")
+    login = _login(client, google_jwks)
+    _select(client, login["token"], "奇可門市")
+    headers = _auth(login["token"])
+    product_id = _product(client, login["token"], "SKU-RESTOCK")
+    sale = client.post(
+        "/api/v1/checkout/orders",
+        json={
+            "items": [{"productId": product_id, "quantity": 3}],
+            "shippingFee": 0,
+            "payments": [{"type": "cash", "name": "現金", "amount": 300}],
+        },
+        headers=headers,
+    )
+    assert sale.status_code == 201, sale.text
+    order_id = sale.json()["order"]["id"]
+    item_id = sale.json()["order"]["items"][0]["id"]
+    assert _stock_qty(product_id, shelf) == -3
+    assert _stock_qty(product_id, RETURNED_LOCATION_ID) == 0
+
+    restocked = _return_one(client, headers, product_id, order_id, item_id, restock=True)
+    assert restocked["inventoryLocationId"] == shelf
+    assert restocked["restock"] is True
+    assert _stock_qty(product_id, shelf) == -2
+    assert _stock_qty(product_id, RETURNED_LOCATION_ID) == 0
+
+    held = _return_one(client, headers, product_id, order_id, item_id, restock=False)
+    assert held["inventoryLocationId"] == RETURNED_LOCATION_ID
+    assert held["restock"] is False
+    assert _stock_qty(product_id, shelf) == -2
+    assert _stock_qty(product_id, RETURNED_LOCATION_ID) == 1
+
+    omitted = _return_one(client, headers, product_id, order_id, item_id, restock=None)
+    assert omitted["inventoryLocationId"] == shelf
+    assert omitted["restock"] is True
+    assert _stock_qty(product_id, shelf) == -1
+    assert _stock_qty(product_id, RETURNED_LOCATION_ID) == 1
+
+    product = client.get(f"/api/v1/products/{product_id}", headers=headers)
+    assert product.status_code == 200, product.text
+    assert product.json()["loginStoreQuantity"] == -1
+    assert product.json()["loginStoreReturnedQuantity"] == 1
+
+    bare = _login(client, google_jwks, sub="admin-without-store")
+    blocked = client.post(
+        "/api/v1/checkout/orders",
+        json={
+            "items": [{
+                "productId": product_id,
+                "quantity": -1,
+                "originalOrderId": order_id,
+                "originalOrderItemId": item_id,
+                "restock": True,
+            }],
+            "shippingFee": 0,
+            "payments": [{"type": "cash", "name": "現金", "amount": -100}],
+        },
+        headers=_auth(bare["token"]),
+    )
+    assert blocked.status_code == 403
+    assert blocked.json()["code"] == "AUTH_STORE_REQUIRED"
+    assert _stock_qty(product_id, shelf) == -1
+    assert _stock_qty(product_id, RETURNED_LOCATION_ID) == 1
+
+
+def test_return_adds_once_when_normal_and_returned_are_the_same_location(client, google_jwks):
+    _add_account(ADMIN_EMAIL)
+    login = _login(client, google_jwks)
+    created = client.post(
+        "/api/v1/system/stores",
+        json={
+            "name": "共用點門市",
+            "inventoryLocationId": RETURNED_LOCATION_ID,
+            "returnedInventoryLocationId": RETURNED_LOCATION_ID,
+        },
+        headers=_auth(login["token"]),
+    )
+    assert created.status_code == 201, created.text
+    _select(client, login["token"], "共用點門市")
+    headers = _auth(login["token"])
+    product_id = _product(client, login["token"], "SKU-SAME")
+    sale = client.post(
+        "/api/v1/checkout/orders",
+        json={
+            "items": [{"productId": product_id, "quantity": 2}],
+            "shippingFee": 0,
+            "payments": [{"type": "cash", "name": "現金", "amount": 200}],
+        },
+        headers=headers,
+    )
+    assert sale.status_code == 201, sale.text
+    order_id = sale.json()["order"]["id"]
+    item_id = sale.json()["order"]["items"][0]["id"]
+    assert _stock_qty(product_id, RETURNED_LOCATION_ID) == -2
+
+    restocked = _return_one(client, headers, product_id, order_id, item_id, restock=True)
+    assert restocked["inventoryLocationId"] == RETURNED_LOCATION_ID
+    assert _stock_qty(product_id, RETURNED_LOCATION_ID) == -1
+    held = _return_one(client, headers, product_id, order_id, item_id, restock=False)
+    assert held["inventoryLocationId"] == RETURNED_LOCATION_ID
+    assert _stock_qty(product_id, RETURNED_LOCATION_ID) == 0
+    product = client.get(f"/api/v1/products/{product_id}", headers=headers)
+    assert product.json()["loginStoreQuantity"] == 0
+    assert product.json()["loginStoreReturnedQuantity"] == 0
 
 
 def test_total_inventory_includes_warehouse_returns_and_negatives(client, google_jwks):
