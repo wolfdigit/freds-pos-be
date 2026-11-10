@@ -43,7 +43,7 @@
 - `user.name` 是畫面上的顯示名稱。白名單 `name` 有值就用去掉空白後的內容；沒有則用帳號 email。不使用 Google 個人檔名稱。建立或更新時超過 128 字回 `400` `ACCOUNT_NAME_REQUIRED`。登入時若這個顯示結果仍超過 128 字，回 `403` `ACCOUNT_NAME_REQUIRED`。
 - `role` 只有 `admin` 或 `staff`。
 - Session 從這次登入起算 12 小時，使用中不會延長，也沒有閒置逾時。
-- 此時還沒選門市。業務 API 會回 `403` `AUTH_STORE_REQUIRED`。
+- 此時還沒選門市。`staff` 的業務 API 會回 `403` `AUTH_STORE_REQUIRED`。`admin` 可以先呼叫不依賴登入門市的業務 API，例如讀庫存地點。結帳建立訂單仍要先選門市。
 
 失敗：
 
@@ -83,7 +83,7 @@
 
 ## 業務 API
 
-除了 `GET /api/v1/health`、`GET /`，以及上面的 auth 路由，都要已登入且已選門市。
+`staff` 除了 `GET /api/v1/health`、`GET /`，以及上面的 auth 路由，都要已登入且已選門市。`admin` 是最高權限，尚未選門市也可以呼叫這些業務 API。未帶或無效 token 的拒絕不變，`staff` 未選門市仍是 `403` `AUTH_STORE_REQUIRED`。
 
 未帶或無效 token：
 
@@ -93,11 +93,15 @@
 | 401 | `AUTH_SESSION_REVOKED` |
 | 401 | `AUTH_SESSION_EXPIRED` |
 | 401 | `AUTH_ACCOUNT_NOT_ALLOWED`（帳號已從白名單刪除） |
-| 403 | `AUTH_STORE_REQUIRED` |
+| 403 | `AUTH_STORE_REQUIRED`（`staff` 尚未選門市，或這筆操作必須有登入門市） |
 
-每次請求都會重讀白名單。角色變更下一筆請求就生效。
+每次請求都會重讀白名單。角色變更下一筆請求就生效。降成 `staff` 之後，若還沒選門市，業務 API 是 `AUTH_STORE_REQUIRED`；已選門市則可使用業務 API，管理 API 是 `AUTH_FORBIDDEN`。
 
-`admin` 與 `staff` 目前都能使用商品、會員、庫存、結帳、預購。白名單與門市清單維護只限 `admin`。
+`admin` 與 `staff` 都能使用商品、會員、庫存、結帳查詢、預購。白名單與門市清單維護只限 `admin`。管理員維護白名單不需要先選門市。
+
+要知道「目前登入門市」才能做的操作，沒有選門市時回 `403` `AUTH_STORE_REQUIRED`，不改資料。目前只有 `POST /api/v1/checkout/orders`：它扣 session 門市的正常庫存點，退貨則進該門市的退貨庫存點。有選門市就用該門市，管理員與店員相同。請求沒有另加門市參數，body 的 `branchId` 仍忽略。
+
+商品的 `loginStoreQuantity` 與 `loginStoreReturnedQuantity` 在沒有選門市時是 `null`（不適用，不是數量 0）。已選門市時是該門市的實際數量，缺列是 `0`，也可以是負數。`totalInventory` 與 `inventories` 仍是全部地點，不因門市而篩掉。
 
 ## 權限
 
@@ -109,10 +113,14 @@
 | `/api/v1/system/stores` | POST | 不可 | 可。沒有任何門市時，尚未選門市的管理員仍可建第一間 | 201；staff 403 `AUTH_FORBIDDEN` |
 | `/api/v1/system/stores/{storeName}` | PUT | 不可 | 可。改這間門市的正常貨與退貨庫存點 | 200 門市；兩個 id 都可以，也可以相同；找不到門市或庫存點 404；staff 403 `AUTH_FORBIDDEN` |
 | `/api/v1/system/stores/{storeName}` | DELETE | 不可 | 可 | 200 `{ "deletedStore" }`；最後一間 409 `LAST_STORE`；找不到 404 `LOCATION_NOT_FOUND`；staff 403 `AUTH_FORBIDDEN` |
+| `/api/v1/system/oauth/accounts` | GET、POST、PUT、DELETE | 不可 | 可，含尚未選門市 | staff 已選門市 403 `AUTH_FORBIDDEN`；staff 尚未選門市 403 `AUTH_STORE_REQUIRED` |
+| `/api/v1/inventory/locations` 與其他庫存讀寫 | GET、POST、PUT、DELETE | 必須已選門市 | 可，含尚未選門市 | 庫存地點不是門市，也不依登入門市篩選。未登入 401 `AUTH_REQUIRED` |
+| 商品、會員、預購、`GET /api/v1/checkout/orders` | 既有方法 | 必須已選門市 | 可，含尚未選門市 | 沒有選門市時 `loginStoreQuantity` 與 `loginStoreReturnedQuantity` 為 `null` |
+| `/api/v1/checkout/orders` | POST | 必須已選門市 | 有選門市才可；沒有則 403 `AUTH_STORE_REQUIRED` | 扣目前 session 門市的正常庫存點。不接受 body 指定門市 |
 
 沒有設定預設門市的 API。`isDefault` 只出現在清單回應。角色每次請求都從白名單重讀，降權的下一筆管理請求就是 403。
 
-庫存地點（`/api/v1/inventory/locations`）不是門市清單，規則不變。
+庫存地點（`/api/v1/inventory/locations`）不是門市清單。管理員在建立第一間門市之前就可以讀取，用來取得 `POST /api/v1/system/stores` 需要的兩個庫存點 id。
 
 若管理員刪掉店員目前的登入門市，該店員下一筆業務請求是 `403` `AUTH_STORE_REQUIRED`，要再呼叫 `POST /api/v1/auth/store` 選另一間。這不影響庫存地點。
 
@@ -136,7 +144,8 @@
 - 訂單的 `branchId` 與 `branchName` 都是目前 session 的門市名稱。之後改綁不會改寫舊訂單，也不會搬走已經入帳的數量。
 - `cashierId` 是 `user.id`。`cashierName` 是白名單顯示名稱；該欄空白時用帳號 email。
 - 銷售扣該門市的正常庫存點，數量可以變成負數，不會回 `INSUFFICIENT_STORE_INVENTORY`。
-- 退貨在 `restock` 省略或為 `true` 時，數量進入該門市的退貨庫存點。`restock: false` 不改庫存。
+- 管理員尚未選門市時，`POST /api/v1/checkout/orders` 回 `403` `AUTH_STORE_REQUIRED`，不扣任何庫存。選了門市之後與店員使用同一間 session 門市。
+- 退貨一定改數量，而且一樣要已選門市。`restock` 省略或為 `true`（回補至門市現貨）時，數量進入該門市的正常庫存點。`restock: false` 進入該門市的退貨庫存點。兩個 id 相同時，兩種都加在同一個庫存點。未選門市的管理員打這支仍是 `403` `AUTH_STORE_REQUIRED`，數量不變。
 
 換門市時若購物車有商品：前端顯示提示即可，不要擋住，也不要清掉數量。後端不接收購物車。下一筆成功結帳改扣新門市綁定的庫存點。
 

@@ -54,7 +54,7 @@ There is no invoice and no `costPrice` on the order or the line.
 | `returnedQuantity` | integer | Units of this sale line already returned. `0` on create. |
 | `originalOrderId` | string | When `quantity < 0`, the earlier checkout order this line is returning product from. Required on a return line. |
 | `originalOrderItemId` | string | When `quantity < 0`, the earlier sale line whose units are being returned. Required on a return line. |
-| `restock` | boolean | Return only. Default `true`. |
+| `restock` | boolean | Return only. Omitted or `true` adds to the login store's normal location. `false` adds to its returned location. Default `true`. |
 | `returnReason` | string | Optional |
 
 ### `PaymentTender`
@@ -135,7 +135,7 @@ In one commit:
 
 - Insert order, lines, payments.
 - Positive lines: subtract `quantity` from `store`, even when that drives the shelf quantity below zero.
-- Negative lines with `restock` not `false`: add `abs(quantity)` to `store` for the units being returned.
+- Negative lines always add `abs(quantity)`. `restock` omitted or `true` uses the login store's normal location. `restock: false` uses its returned location. The same id for both bindings means both flags add there.
 - Recompute nothing else on the product row. `totalInventory` stays a read-time sum.
 - Return: add `abs(quantity)` to the earlier sale line `returnedQuantity`. If every line on that earlier order is fully returned, its `status` becomes `refunded`. If any line has `returnedQuantity > 0`, `partially_refunded`. Otherwise leave `completed`. The earlier line's points-discount flag and 360 amount stay as they were.
 - Bound customer: `total_spent = max(0, total_spent + totalAmount)`.

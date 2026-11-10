@@ -243,11 +243,15 @@ def apply_checkout_stock(
             operator_name=operator_name,
         )
         return location.id, location.name
+    # 退貨一定改數量。省略或 true 回補正常庫存點；false 進入退貨庫存點。
     if restock is False:
-        return None, None
-    location = db.get(InventoryLocation, store.returned_inventory_location_id)
+        location = db.get(InventoryLocation, store.returned_inventory_location_id)
+        missing = "找不到門市的退貨庫存點"
+    else:
+        location = db.get(InventoryLocation, store.inventory_location_id)
+        missing = "找不到門市的正常庫存點"
     if location is None:
-        _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市的退貨庫存點")
+        _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, missing)
     returned = abs(quantity)
     row = _lock_stock(db, product_id, location)
     row.quantity += returned

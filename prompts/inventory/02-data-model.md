@@ -78,6 +78,6 @@ Manual and batch edits still write this summary. The change entries have locatio
 
 ## Checkout line
 
-`checkout_order.branch_name` stores the login store name. A line that changes inventory stores `inventory_location_id` and `inventory_location_name` for the location used at that moment. A later rebind does not rewrite the line or move quantity already posted. A return with `restock: false` leaves both location fields empty.
+`checkout_order.branch_name` stores the login store name. A line that changes inventory stores `inventory_location_id` and `inventory_location_name` for the location used at that moment. A later rebind does not rewrite the line or move quantity already posted. A return always stores that location: the normal location when `restock` is omitted or `true`, and the returned location when `restock` is `false`.
 
 Revision `f8c4e2a17b63` renames the earlier `stock_*` tables, columns, constraints, and indexes to these `inventory_*` names. Downgrade renames them back. It does not drop an index that is already gone.

@@ -13,7 +13,7 @@ info:
     - **Line-Item Return Traceability**: Returns/exchanges (negative quantities) must reference `originalOrderId` and `originalOrderItemId`, with cumulative `returnedQuantity` tracking.
     - **ACID Atomicity**: Checkout/return operations execute inside a single database transaction (locking store stock, updating pre-orders, updating customer spending, and creating orders).
     - **Idempotency**: `POST /checkout/orders` supports `X-Idempotency-Key` to prevent double-charging or double stock deduction.
-    - **Authentication**: `POST /auth/google` exchanges a Google ID token for a server session. Later calls send `Authorization: Bearer <session token>`. The selected login store chooses the normal and returned inventory locations used by checkout. Body `branchId` is ignored.
+    - **Authentication**: `POST /auth/google` exchanges a Google ID token for a server session. Later calls send `Authorization: Bearer <session token>`. `staff` must select a store before business APIs. `admin` may call business APIs with no store selected. `POST /checkout/orders` still needs that store for both roles and returns `403` `AUTH_STORE_REQUIRED` when it is missing. The selected login store chooses the normal and returned inventory locations used by checkout. Body `branchId` is ignored. When no store is selected, `loginStoreQuantity` and `loginStoreReturnedQuantity` are `null`.
 
     **Conventions**
     - Amounts are TWD integers (no cents).
@@ -90,7 +90,9 @@ paths:
       tags: [auth]
       operationId: listStoresForLogin
       summary: List stores before a store is selected
-      description: Allowed with a session that has not selected a store. Does not expose other business APIs.
+      description: |
+        Allowed with a session that has not selected a store. `staff` business APIs still require a selected store.
+        An `admin` may call business APIs without one. `POST /checkout/orders` still requires a selected store.
       responses:
         '200':
           description: Store names that can be selected
@@ -490,7 +492,9 @@ paths:
       operationId: getLocations
       summary: Get all stock locations
       description: |
-        Maps to `ILocationService.getLocations`. Retrieves all active stock locations in the system.
+        Returns every inventory location, not filtered by the login store.
+        `staff` need a selected store. An `admin` may call this with no store selected, including before the first store exists, and use the ids on `POST /system/stores`.
+        A missing or invalid token is `401`. `staff` with no store is `403` `AUTH_STORE_REQUIRED`.
       responses:
         '200':
           description: List of stock locations
@@ -671,7 +675,7 @@ paths:
         Maps to `ICheckoutService.createCheckoutOrder`.
 
         **Backend Atomic Lifecycle (Single DB Transaction)**:
-        1. **Identity & Branch Resolution**: Require a session that already selected a `store_branch`. `cashierId` is the whitelist account id (`acct-...`), `cashierName` is the whitelist display name (or the email when that name is blank). `branchId` / `branchName` record that login store on the order. A body `branchId` is ignored. Stock comes from that store's two bound locations.
+        1. **Identity & Branch Resolution**: This call needs the session's selected `store_branch`. `staff` must already have one. An `admin` with no selected store receives `403` `AUTH_STORE_REQUIRED` and no quantity changes. When a store is selected, both roles use that store. `cashierId` is the whitelist account id (`acct-...`), `cashierName` is the whitelist display name (or the email when that name is blank). `branchId` / `branchName` record that login store on the order. A body `branchId` is ignored. Stock comes from that store's two bound locations. There is no separate store field for this call.
         2. **Item Pricing & Subtotals**:
            - For positive purchases: verify `unitPrice` against `listPrice` or customer `vipPrice` unless `isManualPrice: true` (which requires `priceDiffReason`).
            - For pre-order items: verify `unitPrice` matches `quotedPrice` and `quantity <= qtyArrived - qtyDelivered`.
@@ -684,7 +688,7 @@ paths:
            - Validate `sum(payments.amount) == totalAmount` (or `payments >= totalAmount` with cash change).
         4. **Inventory & Pre-Order Atomicity**:
            - Positive items deduct the login store's normal location (`inventoryLocationId`). The sale still completes when that quantity becomes negative.
-           - Negative items: if `restock` is omitted or `true`, add the count to the login store's returned location (`returnedInventoryLocationId`). `restock: false` changes no stock row. The line stores `inventoryLocationId` and `inventoryLocationName` for the location that changed.
+           - Negative items always add `abs(quantity)`. `restock` omitted or `true` adds it to the login store's normal location (`inventoryLocationId`), so the units are sellable again. `restock: false` adds it to that store's returned location (`returnedInventoryLocationId`). The line stores `inventoryLocationId` and `inventoryLocationName` for the location that changed. An admin with no selected store gets `403` `AUTH_STORE_REQUIRED` and no quantity change. When the store uses the same id for both bindings, both flags add to that one location.
            - Pre-order items: increment `qtyDelivered` and update pre-order status.
         5. **Member Asset Update**:
            - Update `customer.totalSpent += totalAmount`
@@ -1047,7 +1051,7 @@ paths:
       summary: Get all store branches
       description: |
         Admin-only management list. Staff retrieve choices from `GET /auth/stores`.
-        There is no update or set-default route. `isDefault` is informational.
+        `PUT /system/stores/{storeName}` rebinds both inventory locations. There is no set-default route. `isDefault` is informational.
       responses:
         '200':
           description: List of store branches
@@ -1156,7 +1160,9 @@ paths:
       operationId: getOAuthAccounts
       summary: Get Google OAuth authorized accounts whitelist
       description: |
-        Retrieves all authorized Google accounts for admin and staff roles, including display names, roles, and notes.
+        Admin only. An admin who has not selected a store may call this.
+        Retrieves authorized Google accounts, including display names, roles, and notes.
+        Staff who have selected a store receive `403` `AUTH_FORBIDDEN`. Staff who have not receive `403` `AUTH_STORE_REQUIRED`.
       parameters:
         - name: role
           in: query
@@ -1565,10 +1571,12 @@ components:
           description: Sum of quantity at every location, including warehouses, returned locations, and negatives.
         loginStoreQuantity:
           type: integer
-          description: Quantity at the session store's normal location. `0` when that row is missing.
+          nullable: true
+          description: Quantity at the session store's normal location. `null` when the session has no selected store. When a store is selected, a missing row is `0`, and the value may be negative.
         loginStoreReturnedQuantity:
           type: integer
-          description: Quantity at the session store's returned location. `0` when that row is missing.
+          nullable: true
+          description: Quantity at the session store's returned location. `null` when the session has no selected store. When a store is selected, a missing row is `0`, and the value may be negative.
         note:
           type: string
         createdAt:
@@ -2015,7 +2023,7 @@ components:
           type: string
         inventoryLocationId:
           type: string
-          description: Location used by this line. Empty when `restock` is false.
+          description: Location this line changed. A sale uses the login store's normal location. A return uses that normal location when `restock` is omitted or true, and the returned location when `restock` is false.
         inventoryLocationName:
           type: string
 
@@ -2136,7 +2144,7 @@ components:
         restock:
           type: boolean
           default: true
-          description: For returns, whether returned item is restocked to store inventory
+          description: Return lines only. Omitted or true adds the units to the login store's normal location (sellable). False adds them to that store's returned location. Both change inventory.
         returnReason:
           type: string
         note:

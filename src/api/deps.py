@@ -35,11 +35,19 @@ def require_session_user(request: Request, db: Session = Depends(get_db)) -> Pri
 
 
 def require_business_user(request: Request, db: Session = Depends(get_db)) -> Principal:
-    """業務 API：必須已登入且已選存在的門市。"""
-    return AuthService(db).authenticate(_bearer_token(request), require_store=True)
+    """業務 API。staff 必須已選存在的門市。admin 是最高權限，尚未選門市也可以。"""
+    user = AuthService(db).authenticate(_bearer_token(request), require_store=False)
+    if user.role != "admin" and not user.store_name:
+        raise BusinessException(
+            status_code=403,
+            code=BusinessErrorCode.AUTH_STORE_REQUIRED,
+            message="請先選擇門市",
+        )
+    return user
 
 
 def require_admin_user(user: Principal = Depends(require_business_user)) -> Principal:
+    """管理員。沿用業務守衛，所以尚未選門市的管理員也可以維護白名單。"""
     if user.role != "admin":
         raise BusinessException(
             status_code=403,

@@ -8,16 +8,17 @@ BE contract lives in [`../openapi.yaml`](../openapi.yaml). FE `docs/openapi.yaml
 | --- | --- |
 | `InventoryLocationDto` | Remove `isActive`. Add `storeNames` and `returnedStoreNames`. |
 | `POST /system/stores` | Admin only. Required `name`, `inventoryLocationId`, and `returnedInventoryLocationId`. Remove `newLocation`. The two ids may be the same. |
+| Admin session | An admin token may call `GET /inventory/locations` and the other business APIs before a store is selected. `POST /checkout/orders` without a selected store is `403` `AUTH_STORE_REQUIRED`. `loginStoreQuantity` and `loginStoreReturnedQuantity` are `null` until a store is selected, then a real quantity including `0` and negatives. Staff without a store stay `403` `AUTH_STORE_REQUIRED`. |
 | `PUT /system/stores/{storeName}` | Admin only. Body `{ inventoryLocationId, returnedInventoryLocationId }`. Both required. The two ids may be the same. |
 | Store DTO | Add `returnedInventoryLocationId` and `returnedInventoryLocationName` beside the normal pair. |
 | `LocationInventory` | `quantity` only. Remove `returnedQuantity`. |
 | Product | `totalInventory` sums every location, including warehouses, returned locations, and negatives. `inInventoryOnly` uses that sum. Add `loginStoreReturnedQuantity`. The array field is `inventories`. |
 | Transfer and adjust | Remove `condition`. `newQuantity` may be negative. |
 | `POST /inventory/transfers/all` | Moves every non-zero quantity, including negatives. |
-| Remove `POST /inventory/condition-changes` | Returned goods become sellable by a transfer from the returned location to the normal location. |
+| Remove `POST /inventory/condition-changes` | A `restock: true` return is already on the normal location. Goods in the returned location become sellable by a transfer to the normal location. |
 | `InventoryMovement` | Remove `condition`. Receipt rows include `sku` and `name`. |
 | Checkout sale | Deduct `inventoryLocationId`. A negative result still succeeds. |
-| Checkout return | `restock` omitted or `true` adds quantity at `returnedInventoryLocationId`. `restock: false` changes no stock. |
+| Checkout return | `restock` omitted or `true` adds quantity at `inventoryLocationId` (sellable). `restock: false` adds quantity at `returnedInventoryLocationId`. Both change stock. |
 | Delete location | Body `rebindToLocation` when `storeNames` or `returnedStoreNames` is not empty. `409` `LAST_LOCATION` when this is the only location. `409` `LOCATION_NOT_EMPTY` when any quantity is not exactly `0`, including negatives. |
 | `BusinessErrorCode` | Add `INSUFFICIENT_INVENTORY`, `LOCATION_NOT_EMPTY`, `LAST_LOCATION`, `LOCATION_NAME_TAKEN`, and `INVENTORY_LOCATION_IN_USE`. |
 
@@ -50,7 +51,7 @@ BE contract lives in [`../openapi.yaml`](../openapi.yaml). FE `docs/openapi.yaml
 | Transfer | Pick two locations. No normal/returned toggle. A separate action moves every non-zero quantity. |
 | Receipt | Pick any location. Lines come back from movements. |
 | Checkout stock | Sellable count is `loginStoreQuantity`. Returned count is `loginStoreReturnedQuantity`. Do not look up `location === 'store'`. |
-| Order detail | A restocked return names the returned location. `restock: false` still skips stock. |
+| Order detail | The return line names the location that received the units. `restock: true` is the normal location. `restock: false` is the returned location. |
 
 ## Suggested order
 
@@ -70,7 +71,8 @@ BE contract lives in [`../openapi.yaml`](../openapi.yaml). FE `docs/openapi.yaml
 | Mapping still attached at commit | 409 | `INVENTORY_LOCATION_IN_USE` | ask the user to retry |
 | Short transfer | 409 | `INSUFFICIENT_INVENTORY` | leave both locations unchanged |
 | Sale below zero | 201 | | show the negative `loginStoreQuantity` |
-| Restocked return | 201 | | quantity appears at `returnedInventoryLocationId` |
+| Restocked return (`restock` omitted or `true`) | 201 | | quantity appears at `inventoryLocationId` |
+| Return with `restock: false` | 201 | | quantity appears at `returnedInventoryLocationId` |
 | Returned location set below zero | 200 | | adjustment `newQuantity` may be negative |
 
 ## Existing calls to wire
