@@ -171,14 +171,17 @@ def test_business_api_requires_login_and_store(client, google_jwks):
     assert blocked.json()["code"] == "AUTH_REQUIRED"
 
     _add_account(ADMIN_EMAIL)
+    _add_account(STAFF_EMAIL, "staff", "店員乙")
     _add_store("奇可門市")
     login = _login(client, google_jwks)
+    staff = _login(client, google_jwks, STAFF_EMAIL)
     assert login["tokenType"] == "Bearer"
     assert login["storeSelected"] is False
     assert login["user"]["id"].startswith("acct-")
-    pending = client.get("/api/v1/products", headers=_auth(login["token"]))
+    pending = client.get("/api/v1/products", headers=_auth(staff["token"]))
     assert pending.status_code == 403
     assert pending.json()["code"] == "AUTH_STORE_REQUIRED"
+    assert client.get("/api/v1/products", headers=_auth(login["token"])).status_code == 200
 
     stores = client.get("/api/v1/auth/stores", headers=_auth(login["token"]))
     assert stores.status_code == 200
@@ -195,6 +198,161 @@ def test_business_api_requires_login_and_store(client, google_jwks):
     missing = client.post("/api/v1/auth/store", json={"storeName": "不存在"}, headers=_auth(login["token"]))
     assert missing.status_code == 400
     assert missing.json()["code"] == "AUTH_STORE_INVALID"
+
+
+def test_admin_without_a_store_can_use_business_apis_and_checkout_still_needs_one(client, google_jwks):
+    anonymous = client.get("/api/v1/inventory/locations")
+    assert anonymous.status_code == 401
+    assert anonymous.json()["code"] == "AUTH_REQUIRED"
+    assert client.post("/api/v1/inventory/locations", json={"name": "外人"}).status_code == 401
+    revoked = client.get("/api/v1/inventory/locations", headers=_auth("not-a-session"))
+    assert revoked.status_code == 401
+    assert revoked.json()["code"] == "AUTH_SESSION_REVOKED"
+
+    _add_account(ADMIN_EMAIL, "admin", "管理員甲")
+    _add_account(STAFF_EMAIL, "staff", "店員乙")
+    staff = _login(client, google_jwks, STAFF_EMAIL, sub="staff-sub")
+    staff_headers = _auth(staff["token"])
+    checkout_body = {
+        "branchId": "should-be-ignored",
+        "items": [{"productId": "missing-product", "quantity": 1}],
+        "shippingFee": 0,
+        "payments": [{"type": "cash", "name": "現金", "amount": 100}],
+    }
+    for response in (
+        client.get("/api/v1/inventory/locations", headers=staff_headers),
+        client.get("/api/v1/products", headers=staff_headers),
+        client.get("/api/v1/customers", headers=staff_headers),
+        client.get("/api/v1/checkout/orders", headers=staff_headers),
+        client.get("/api/v1/preorders", params={"query": "車"}, headers=staff_headers),
+        client.post("/api/v1/inventory/locations", json={"name": "店員地點"}, headers=staff_headers),
+        client.post("/api/v1/checkout/orders", json=checkout_body, headers=staff_headers),
+        client.get("/api/v1/system/oauth/accounts", headers=staff_headers),
+    ):
+        assert response.status_code == 403, response.text
+        assert response.json()["code"] == "AUTH_STORE_REQUIRED"
+
+    admin = _login(client, google_jwks, ADMIN_EMAIL, sub="admin-sub")
+    admin_headers = _auth(admin["token"])
+    assert admin["storeSelected"] is False
+
+    locations = client.get("/api/v1/inventory/locations", headers=admin_headers)
+    assert locations.status_code == 200, locations.text
+    by_name = {row["name"]: row["id"] for row in locations.json()}
+    assert by_name["門市現貨"] == DEFAULT_STORE_LOCATION_ID
+    assert by_name["退貨品"] == RETURNED_LOCATION_ID
+
+    created_location = client.post("/api/v1/inventory/locations", json={"name": "展示櫃"}, headers=admin_headers)
+    assert created_location.status_code == 201, created_location.text
+
+    created_store = client.post(
+        "/api/v1/system/stores",
+        json={
+            "name": "第一間",
+            "inventoryLocationId": by_name["門市現貨"],
+            "returnedInventoryLocationId": by_name["退貨品"],
+        },
+        headers=admin_headers,
+    )
+    assert created_store.status_code == 201, created_store.text
+    assert created_store.json()["inventoryLocationId"] == DEFAULT_STORE_LOCATION_ID
+    me = client.get("/api/v1/auth/me", headers=admin_headers)
+    assert me.status_code == 200
+    assert me.json()["storeSelected"] is False
+
+    empty_products = client.get("/api/v1/products", headers=admin_headers)
+    assert empty_products.status_code == 200
+    assert empty_products.json() == []
+    created_product = client.post(
+        "/api/v1/products",
+        json={"sku": "SKU-ADMIN", "barcode": "222", "brand": "Brand", "name": "車", "listPrice": 100},
+        headers=admin_headers,
+    )
+    assert created_product.status_code == 201, created_product.text
+    product = created_product.json()
+    assert product["loginStoreQuantity"] == 0
+    assert product["loginStoreReturnedQuantity"] == 0
+    assert product["totalInventory"] == 0
+
+    adjusted = client.post(
+        "/api/v1/inventory/adjustments",
+        json={
+            "productId": product["id"],
+            "location": DEFAULT_STORE_LOCATION_ID,
+            "newQuantity": 4,
+            "reason": "盤點",
+        },
+        headers=admin_headers,
+    )
+    assert adjusted.status_code == 200, adjusted.text
+    listed = client.get(f"/api/v1/products/{product['id']}", headers=admin_headers)
+    assert listed.status_code == 200, listed.text
+    body = listed.json()
+    assert body["totalInventory"] == 4
+    assert body["loginStoreQuantity"] == 0
+    assert body["loginStoreReturnedQuantity"] == 0
+    assert _stock_qty(product["id"], DEFAULT_STORE_LOCATION_ID) == 4
+
+    refused = client.post(
+        "/api/v1/checkout/orders",
+        json={
+            "branchId": "第一間",
+            "items": [{"productId": product["id"], "quantity": 1}],
+            "shippingFee": 0,
+            "payments": [{"type": "cash", "name": "現金", "amount": 100}],
+        },
+        headers=admin_headers,
+    )
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["code"] == "AUTH_STORE_REQUIRED"
+    assert _stock_qty(product["id"], DEFAULT_STORE_LOCATION_ID) == 4
+
+    assert client.get("/api/v1/customers", headers=admin_headers).status_code == 200
+    assert client.get("/api/v1/checkout/orders", headers=admin_headers).status_code == 200
+    assert client.get("/api/v1/preorders", params={"query": "車"}, headers=admin_headers).status_code == 200
+    accounts = client.get("/api/v1/system/oauth/accounts", headers=admin_headers)
+    assert accounts.status_code == 200, accounts.text
+    assert ADMIN_EMAIL in {row["email"] for row in accounts.json()}
+
+    selected = _select(client, admin["token"], "第一間")
+    assert selected["storeName"] == "第一間"
+    after_select = client.get(f"/api/v1/products/{product['id']}", headers=admin_headers)
+    assert after_select.status_code == 200
+    assert after_select.json()["loginStoreQuantity"] == 4
+    assert after_select.json()["loginStoreReturnedQuantity"] == 0
+
+    checked_out = client.post(
+        "/api/v1/checkout/orders",
+        json={
+            "branchId": "ignored",
+            "items": [{"productId": product["id"], "quantity": 1}],
+            "shippingFee": 0,
+            "payments": [{"type": "cash", "name": "現金", "amount": 100}],
+        },
+        headers=admin_headers,
+    )
+    assert checked_out.status_code == 201, checked_out.text
+    order = checked_out.json()["order"]
+    assert order["branchId"] == "第一間"
+    assert order["items"][0]["inventoryLocationId"] == DEFAULT_STORE_LOCATION_ID
+    assert _stock_qty(product["id"], DEFAULT_STORE_LOCATION_ID) == 3
+    assert client.get("/api/v1/inventory/locations", headers=admin_headers).status_code == 200
+
+    still_blocked = client.get("/api/v1/inventory/locations", headers=staff_headers)
+    assert still_blocked.status_code == 403
+    assert still_blocked.json()["code"] == "AUTH_STORE_REQUIRED"
+    _select(client, staff["token"], "第一間")
+    assert client.get("/api/v1/inventory/locations", headers=staff_headers).status_code == 200
+    staff_store = client.post(
+        "/api/v1/system/stores",
+        json=_store_body("店員門市"),
+        headers=staff_headers,
+    )
+    assert staff_store.status_code == 403
+    assert staff_store.json()["code"] == "AUTH_FORBIDDEN"
+    staff_accounts = client.get("/api/v1/system/oauth/accounts", headers=staff_headers)
+    assert staff_accounts.status_code == 403
+    assert staff_accounts.json()["code"] == "AUTH_FORBIDDEN"
 
 
 def test_staff_cannot_manage_whitelist_and_admin_guards_hold(client, google_jwks):

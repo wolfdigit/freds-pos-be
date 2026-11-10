@@ -2,7 +2,7 @@
 
 Prefix `/api/v1`. Amounts and quantities are integers. A business failure uses `BusinessError` (`code` + `message`). The operator comes from the login session. A cashier name in the body is ignored.
 
-`staff` and `admin` may both read and write inventory. Creating, deleting, and rebinding stores stays admin-only.
+`staff` and `admin` may both read and write inventory. `staff` must already have selected a store (`403` `AUTH_STORE_REQUIRED` otherwise). `admin` may do the same with no store selected. Creating, deleting, and rebinding stores stays admin-only. Unauthenticated calls stay `401`.
 
 ## Store binding
 
@@ -24,7 +24,7 @@ A typed location name on `POST /inventory/locations` or a rename must not match 
 
 ### `GET /inventory/locations`
 
-Returns every location. Order by `displayOrder`, then `id`.
+Returns every location. Order by `displayOrder`, then `id`. The list is not filtered by the login store. An admin with no selected store can call it, including before the first store exists, and use the ids on `POST /system/stores`.
 
 | Field | Type | Notes |
 | --- | --- | --- |
@@ -62,7 +62,7 @@ If a store mapping still lands after the locks, the delete rolls back and return
 | `locationName` | |
 | `quantity` | That location's quantity. A missing row is `0`. May be negative. |
 
-`totalInventory` sums `quantity` at every location, including warehouses, returned locations, and negatives. `inInventoryOnly` keeps products whose `totalInventory` is greater than `0`. `loginStoreQuantity` is the session store's normal location. `loginStoreReturnedQuantity` is the session store's returned location. Product create accepts no quantities.
+`totalInventory` sums `quantity` at every location, including warehouses, returned locations, and negatives. `inInventoryOnly` keeps products whose `totalInventory` is greater than `0`. `loginStoreQuantity` is the session store's normal location. `loginStoreReturnedQuantity` is the session store's returned location. Both are `0` when the session has no selected store. Product create accepts no quantities.
 
 ## `POST /inventory/receipts`
 
