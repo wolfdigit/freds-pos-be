@@ -11,7 +11,7 @@ info:
     - **Single Transaction Pipeline**: All sales, returns, and defect exchanges are unified under `POST /checkout/orders`.
     - **Backend Pricing & Calculation Authority**: Frontend transmits purchase/return intents and cashier-adjusted `unitPrice`; backend calculates all line subtotals, discounts, taxes, and total amounts.
     - **Line-Item Return Traceability**: Returns/exchanges (negative quantities) must reference `originalOrderId` and `originalOrderItemId`, with cumulative `returnedQuantity` tracking.
-    - **ACID Atomicity**: Checkout/return operations execute inside a single database transaction (locking store stock, updating pre-orders, updating customer spending, and creating orders).
+    - **ACID Atomicity**: Checkout/return operations execute inside a single database transaction (locking store stock, updating customer spending, and creating orders). Checkout does not update pre-orders.
     - **Idempotency**: `POST /checkout/orders` supports `X-Idempotency-Key` to prevent double-charging or double stock deduction.
     - **Authentication**: `POST /auth/google` exchanges a Google ID token for a server session. Later calls send `Authorization: Bearer <session token>`. The selected login store chooses the normal and returned inventory locations used by checkout. Body `branchId` is ignored.
 
@@ -675,18 +675,18 @@ paths:
         1. **Identity & Branch Resolution**: Require a session that already selected a `store_branch`. `cashierId` is the whitelist account id (`acct-...`), `cashierName` is the whitelist display name (or the email when that name is blank). `branchId` / `branchName` record that login store on the order. A body `branchId` is ignored. Stock comes from that store's two bound locations.
         2. **Item Pricing & Subtotals**:
            - For positive purchases: verify `unitPrice` against `listPrice` or customer `vipPrice` unless `isManualPrice: true` (which requires `priceDiffReason`).
-           - For pre-order items: verify `unitPrice` matches `quotedPrice` and `quantity <= qtyArrived - qtyDelivered`.
            - For return/exchange items (`quantity < 0`): verify `originalOrderId` & `originalOrderItemId`, ensuring `abs(quantity) <= (qtySold - qtyReturned)`. Also enforce member ownership: if the checkout is bound to customer A, the original order cannot belong to customer B (`customerId` mismatch raises `INVALID_RETURN_CUSTOMER`; unattached guest original orders are permitted).
+           - Checkout does not accept a pre-order id and does not check `quotedPrice`, `qtyArrived`, or `qtyDelivered`.
            - Compute `subtotal = unitPrice * quantity` for each line.
         3. **Order Total**:
            - `itemsSubtotal = sum(subtotals)`
            - `discountAmount = sum((originalPrice - unitPrice) * quantity)`
            - Calculate final `totalAmount = itemsSubtotal + shippingFee`.
            - Validate `sum(payments.amount) == totalAmount` (or `payments >= totalAmount` with cash change).
-        4. **Inventory & Pre-Order Atomicity**:
+        4. **Inventory**:
            - Positive items deduct the login store's normal location (`inventoryLocationId`). The sale still completes when that quantity becomes negative.
            - Negative items: if `restock` is omitted or `true`, add the count to the login store's returned location (`returnedInventoryLocationId`). `restock: false` changes no stock row. The line stores `inventoryLocationId` and `inventoryLocationName` for the location that changed.
-           - Pre-order items: increment `qtyDelivered` and update pre-order status.
+           - Checkout does not change a pre-order. `qtyDelivered` and pre-order status change only on `POST /preorders/{preOrderId}/fulfill`.
         5. **Member Asset Update**:
            - Update `customer.totalSpent += totalAmount`
         6. **Receipt & Persistence**:
@@ -1131,10 +1131,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [deletedStore]
                 properties:
-                  success:
-                    type: boolean
-                    example: true
                   deletedStore:
                     type: string
                     example: 台中一中店
@@ -1248,10 +1246,8 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [deletedEmail]
                 properties:
-                  success:
-                    type: boolean
-                    example: true
                   deletedEmail:
                     type: string
                     example: clerk01@gmail.com
