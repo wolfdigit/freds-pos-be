@@ -140,10 +140,9 @@ def downgrade() -> None:
     with op.batch_alter_table("checkout_order_item") as batch:
         batch.add_column(sa.Column("stock_condition", sa.String(length=16), nullable=True))
     op.execute("DROP INDEX IF EXISTS ix_stock_movement_source_id")
-    with op.batch_alter_table("stock_movement") as batch:
-        batch.add_column(sa.Column("condition", sa.String(length=16), nullable=False, server_default="normal"))
-        batch.drop_column("sku")
-        batch.drop_column("name")
+    # d4 created these indexes, then this revision dropped the table. Put the
+    # indexes back so d4's downgrade can drop them, and copy receipt lines off
+    # the movement rows before sku and name disappear.
     op.create_table(
         "stock_receipt_item",
         sa.Column("id", sa.String(length=64), primary_key=True),
@@ -153,6 +152,22 @@ def downgrade() -> None:
         sa.Column("name", sa.String(length=256), nullable=False),
         sa.Column("quantity", sa.Integer(), nullable=False),
     )
+    op.create_index("ix_stock_receipt_item_receipt_id", "stock_receipt_item", ["receipt_id"])
+    op.create_index("ix_stock_receipt_item_product_id", "stock_receipt_item", ["product_id"])
+    op.execute(
+        sa.text(
+            """
+            INSERT INTO stock_receipt_item (id, receipt_id, product_id, sku, name, quantity)
+            SELECT id, source_id, product_id, COALESCE(sku, ''), COALESCE(name, ''), quantity_delta
+            FROM stock_movement
+            WHERE type = 'receipt' AND source_type = 'receipt'
+            """
+        )
+    )
+    with op.batch_alter_table("stock_movement") as batch:
+        batch.add_column(sa.Column("condition", sa.String(length=16), nullable=False, server_default="normal"))
+        batch.drop_column("sku")
+        batch.drop_column("name")
     with op.batch_alter_table("product_stock") as batch:
         batch.add_column(sa.Column("condition", sa.String(length=16), nullable=False, server_default="normal"))
         batch.drop_constraint("uq_product_stock_product_location", type_="unique")

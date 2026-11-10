@@ -25,7 +25,7 @@ Stores and locations are created separately. `POST /system/stores` requires `inv
 
 Deleting a location does not move quantity. Any quantity that is not exactly `0` refuses the delete, and a negative quantity is not `0`. Clear it with a transfer or a manual adjustment first. Stores that used the location, as either binding, are rebound to the existing location named in the request. The last remaining location cannot be deleted. One store may use the same location for normal goods and returned goods.
 
-Rebind and delete lock every location row in id order, then the store row. A foreign key that still points at the deleted location rolls the delete back as `409` `INVENTORY_LOCATION_IN_USE`.
+Rebind, delete, and rename lock every location row in id order before a store row or a stock row. Checkout uses that same location order. A foreign key that still points at the deleted location rolls the delete back as `409` `INVENTORY_LOCATION_IN_USE`.
 
 ## This folder
 

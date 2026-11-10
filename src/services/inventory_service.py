@@ -114,6 +114,15 @@ def require_two_locations(db: Session, normal_id: str, returned_id: str) -> tupl
     return normal, returned
 
 
+def _is_unique_violation(exc: IntegrityError) -> bool:
+    orig = getattr(exc, "orig", None)
+    sqlstate = getattr(orig, "pgcode", None) or getattr(orig, "sqlstate", None)
+    if sqlstate == "23505":
+        return True
+    text = str(orig if orig is not None else exc).lower()
+    return "unique constraint failed" in text
+
+
 def _name_taken(db: Session, name: str, *, exclude_id: Optional[str] = None) -> bool:
     stmt = select(InventoryLocation.id).where(InventoryLocation.name == name)
     if exclude_id is not None:
@@ -349,12 +358,17 @@ class InventoryService:
         return [_to_dto(row, normal.get(row.id, []), returned.get(row.id, [])) for row in rows]
 
     def create_location(self, data: CreateInventoryLocationRequest) -> InventoryLocationDto:
+        ensure_locations(self.db)
+        lock_all_locations(self.db)
         row = insert_location(self.db, data.name, icon=data.icon, display_order=data.display_order)
-        self.db.commit()
+        self._commit_location_name()
         return _to_dto(row, [], [])
 
     def update_location(self, location_id: str, data: UpdateInventoryLocationRequest) -> InventoryLocationDto:
-        row = self.db.get(InventoryLocation, location_id)
+        # Lock locations before stock rows. Checkout locks in that same order;
+        # renaming first would wait on stock while checkout waits on the location.
+        locked = lock_all_locations(self.db)
+        row = next((item for item in locked if item.id == location_id), None)
         if row is None:
             _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到庫存地點")
         if data.name is not None:
@@ -371,7 +385,7 @@ class InventoryService:
             row.icon = data.icon
         if data.display_order is not None:
             row.display_order = data.display_order
-        self.db.commit()
+        self._commit_location_name()
         normal, returned = _bindings_by_location(self.db)
         return _to_dto(row, normal.get(row.id, []), returned.get(row.id, []))
 
@@ -420,14 +434,27 @@ class InventoryService:
         for row in stock_rows:
             self.db.delete(row)
         deleted_id = source.id
-        self.db.delete(source)
         try:
+            # RESTRICT is checked per statement. Flush the zero rows and the
+            # store rebinds first; deleting the location in the same flush
+            # emits that DELETE while the rows are still there.
+            self.db.flush()
+            self.db.delete(source)
             self.db.commit()
         except IntegrityError as exc:
             if location_delete_blocked_by_store_fk(self.db, exc, deleted_id):
                 _raise(409, BusinessErrorCode.INVENTORY_LOCATION_IN_USE, "仍有門市對應此地點，請改綁後再刪")
             raise
         return DeleteInventoryLocationResponse(deletedLocation=deleted_id, reboundStoreNames=rebound)
+
+    def _commit_location_name(self) -> None:
+        try:
+            self.db.commit()
+        except IntegrityError as exc:
+            self.db.rollback()
+            if _is_unique_violation(exc):
+                _raise(409, BusinessErrorCode.LOCATION_NAME_TAKEN, "庫存點名稱已存在")
+            raise
 
     def transfer(self, data: InventoryTransferRequest, *, operator_name: str) -> None:
         lock_all_locations(self.db)

@@ -108,7 +108,8 @@ paths:
       description: |
         Does not require a new Google sign-in. Switching is allowed with a non-empty cart;
         the frontend warns and does not clear cart lines. The next order is attributed to this
-        store. Switching does not change which stock location is deducted.
+        store and deducts that store's normal location. A restocked return adds quantity at
+        that store's returned location.
       requestBody:
         required: true
         content:
@@ -1047,7 +1048,8 @@ paths:
       summary: Get all store branches
       description: |
         Admin-only management list. Staff retrieve choices from `GET /auth/stores`.
-        There is no update or set-default route. `isDefault` is informational.
+        `PUT /system/stores/{storeName}` changes the two location bindings.
+        There is no set-default route. `isDefault` is informational.
       responses:
         '200':
           description: List of store branches
@@ -1850,6 +1852,7 @@ components:
           description: Absolute quantity. May be negative.
         reason:
           type: string
+          description: Required. Blank text is rejected.
 
     BatchInventoryAdjustRequest:
       type: object

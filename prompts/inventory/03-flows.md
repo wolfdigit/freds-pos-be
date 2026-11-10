@@ -2,7 +2,7 @@
 
 ## Create a location
 
-1. Reject a blank or duplicate trimmed name with `LOCATION_NAME_TAKEN`.
+1. Reject a blank trimmed name with `400` `INVALID_LOCATION_TRANSFER`. Reject a duplicate trimmed name with `409` `LOCATION_NAME_TAKEN`.
 2. Insert the location. Do not bind a store and do not insert stock rows.
 3. Later product reads show `0` at this location.
 
@@ -39,8 +39,8 @@
 1. Lock every location in id order.
 2. If this is the only location, return `LAST_LOCATION`.
 3. Lock the stock rows at this location. If any quantity is not exactly `0`, return `LOCATION_NOT_EMPTY`.
-4. Lock the stores that use this id as either binding. `rebindToLocation` must be a different existing location. Set the matching column. Refuse a result where one store's two ids match.
-5. Delete the zero stock rows and the location.
+4. Lock the stores that use this id as either binding. `rebindToLocation` must be a different existing location. Set the matching column. One store may end with the same id for both roles.
+5. Delete the zero stock rows, flush those deletes and the rebinds, then delete the location. The location foreign key is `RESTRICT`, so the location row cannot be deleted while a zero-quantity row still references it.
 6. If a store foreign key still fails, roll back and return `INVENTORY_LOCATION_IN_USE`.
 
 ## Manual quantity

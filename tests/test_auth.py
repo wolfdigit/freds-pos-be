@@ -318,6 +318,11 @@ def test_staff_cannot_manage_store_list_but_can_choose_one(client, google_jwks):
     for response in (
         client.get("/api/v1/system/stores", headers=_auth(staff["token"])),
         client.post("/api/v1/system/stores", json=_store_body("店員門市"), headers=_auth(staff["token"])),
+        client.put(
+            "/api/v1/system/stores/奇可門市",
+            json=_store_body("奇可門市"),
+            headers=_auth(staff["token"]),
+        ),
         client.delete("/api/v1/system/stores/奇可門市", headers=_auth(staff["token"])),
     ):
         assert response.status_code == 403

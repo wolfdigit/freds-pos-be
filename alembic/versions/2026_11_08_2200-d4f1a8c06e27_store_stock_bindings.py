@@ -113,8 +113,10 @@ def downgrade() -> None:
     op.drop_index("ix_stock_movement_location_id", table_name="stock_movement")
     op.drop_index("ix_stock_movement_product_id", table_name="stock_movement")
     op.drop_table("stock_movement")
-    op.drop_index("ix_stock_receipt_item_product_id", table_name="stock_receipt_item")
-    op.drop_index("ix_stock_receipt_item_receipt_id", table_name="stock_receipt_item")
+    # e7 drops stock_receipt_item and recreates it on the way back down. A
+    # missing index must not stop this downgrade from dropping the table.
+    op.drop_index("ix_stock_receipt_item_product_id", table_name="stock_receipt_item", if_exists=True)
+    op.drop_index("ix_stock_receipt_item_receipt_id", table_name="stock_receipt_item", if_exists=True)
     op.drop_table("stock_receipt_item")
     op.drop_table("stock_receipt")
     op.drop_column("checkout_order_item", "stock_condition")

@@ -1,4 +1,5 @@
 import pytest
+from sqlalchemy import text
 
 from src.core.exceptions import BusinessException
 from src.db.session import SessionFactory
@@ -6,6 +7,14 @@ from src.schemas.common import BusinessErrorCode
 from src.schemas.inventory import DeleteInventoryLocationRequest
 from src.services.inventory_service import RETURNED_LOCATION_ID, InventoryService, ensure_locations
 from tests.test_auth import ADMIN_EMAIL, _add_account, _add_store, _auth, _login, _select, _stock_qty
+
+
+def _sqlite_foreign_keys(enabled: bool) -> None:
+    db = SessionFactory()
+    try:
+        db.execute(text(f"PRAGMA foreign_keys={'ON' if enabled else 'OFF'}"))
+    finally:
+        db.close()
 
 
 def _product(client, token: str, sku: str = "SKU-INV") -> str:
@@ -84,6 +93,16 @@ def test_receipt_transfer_adjust_and_store_quantity(client, google_jwks):
 
 
 def test_move_all_then_delete_rebinds_the_store(client, google_jwks):
+    # SQLite leaves foreign keys off unless asked. PostgreSQL enforces the
+    # product_inventory -> location RESTRICT, which is the case this covers.
+    _sqlite_foreign_keys(True)
+    try:
+        _move_all_then_delete_rebinds_the_store(client, google_jwks)
+    finally:
+        _sqlite_foreign_keys(False)
+
+
+def _move_all_then_delete_rebinds_the_store(client, google_jwks):
     _add_account(ADMIN_EMAIL)
     shelf = _add_store("奇可門市")
     login = _login(client, google_jwks)
@@ -125,6 +144,9 @@ def test_move_all_then_delete_rebinds_the_store(client, google_jwks):
     assert rebound[0]["name"] == "奇可門市"
     assert rebound[0]["binding"] == "normal"
     assert rebound[0]["inventoryLocationId"] == warehouse["id"]
+    remaining = client.get("/api/v1/inventory/locations", headers=headers)
+    assert remaining.status_code == 200, remaining.text
+    assert shelf not in [row["id"] for row in remaining.json()]
 
 
 def test_cannot_delete_the_last_location(client):
@@ -308,3 +330,115 @@ def test_batch_adjust_requires_a_reason_and_can_set_returned_location_negative(c
     )
     assert applied.status_code == 200, applied.text
     assert _stock_qty(product_id, RETURNED_LOCATION_ID) == -4
+
+
+def test_checkout_deducts_each_sale_line_and_restock_false_leaves_stock(client, google_jwks):
+    _add_account(ADMIN_EMAIL)
+    shelf = _add_store("奇可門市")
+    login = _login(client, google_jwks)
+    _select(client, login["token"], "奇可門市")
+    headers = _auth(login["token"])
+    product_id = _product(client, login["token"], "SKU-LINES")
+    sale = client.post(
+        "/api/v1/checkout/orders",
+        json={
+            "items": [
+                {"productId": product_id, "quantity": 2},
+                {"productId": product_id, "quantity": 3},
+            ],
+            "shippingFee": 0,
+            "payments": [{"type": "cash", "name": "現金", "amount": 500}],
+        },
+        headers=headers,
+    )
+    assert sale.status_code == 201, sale.text
+    assert _stock_qty(product_id, shelf) == -5
+    item_id = sale.json()["order"]["items"][0]["id"]
+    order_id = sale.json()["order"]["id"]
+    kept = client.post(
+        "/api/v1/checkout/orders",
+        json={
+            "items": [{
+                "productId": product_id,
+                "quantity": -1,
+                "originalOrderId": order_id,
+                "originalOrderItemId": item_id,
+                "restock": False,
+            }],
+            "shippingFee": 0,
+            "payments": [{"type": "cash", "name": "現金", "amount": -100}],
+        },
+        headers=headers,
+    )
+    assert kept.status_code == 201, kept.text
+    assert kept.json()["order"]["items"][0]["inventoryLocationId"] is None
+    assert _stock_qty(product_id, shelf) == -5
+    assert _stock_qty(product_id, RETURNED_LOCATION_ID) == 0
+
+
+def test_return_restocks_the_only_location_when_both_bindings_match(client, google_jwks):
+    _add_account(ADMIN_EMAIL)
+    _add_store("奇可門市")
+    login = _login(client, google_jwks)
+    created = client.post(
+        "/api/v1/system/stores",
+        json={
+            "name": "同一點",
+            "inventoryLocationId": RETURNED_LOCATION_ID,
+            "returnedInventoryLocationId": RETURNED_LOCATION_ID,
+        },
+        headers=_auth(login["token"]),
+    )
+    assert created.status_code == 201, created.text
+    _select(client, login["token"], "同一點")
+    headers = _auth(login["token"])
+    product_id = _product(client, login["token"], "SKU-ONE")
+    sale = client.post(
+        "/api/v1/checkout/orders",
+        json={
+            "items": [{"productId": product_id, "quantity": 2}],
+            "shippingFee": 0,
+            "payments": [{"type": "cash", "name": "現金", "amount": 200}],
+        },
+        headers=headers,
+    )
+    assert sale.status_code == 201, sale.text
+    item_id = sale.json()["order"]["items"][0]["id"]
+    order_id = sale.json()["order"]["id"]
+    returned = client.post(
+        "/api/v1/checkout/orders",
+        json={
+            "items": [{
+                "productId": product_id,
+                "quantity": -1,
+                "originalOrderId": order_id,
+                "originalOrderItemId": item_id,
+            }],
+            "shippingFee": 0,
+            "payments": [{"type": "cash", "name": "現金", "amount": -100}],
+        },
+        headers=headers,
+    )
+    assert returned.status_code == 201, returned.text
+    assert returned.json()["order"]["items"][0]["inventoryLocationId"] == RETURNED_LOCATION_ID
+    assert _stock_qty(product_id, RETURNED_LOCATION_ID) == -1
+
+
+def test_checkout_idempotency_replay_does_not_deduct_again(client, google_jwks):
+    _add_account(ADMIN_EMAIL)
+    shelf = _add_store("奇可門市")
+    login = _login(client, google_jwks)
+    _select(client, login["token"], "奇可門市")
+    headers = {**_auth(login["token"]), "X-Idempotency-Key": "same-sale"}
+    product_id = _product(client, login["token"], "SKU-IDEM")
+    payload = {
+        "items": [{"productId": product_id, "quantity": 2}],
+        "shippingFee": 0,
+        "payments": [{"type": "cash", "name": "現金", "amount": 200}],
+    }
+    first = client.post("/api/v1/checkout/orders", json=payload, headers=headers)
+    second = client.post("/api/v1/checkout/orders", json=payload, headers=headers)
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert second.json()["order"]["id"] == first.json()["order"]["id"]
+    assert _stock_qty(product_id, shelf) == -2
