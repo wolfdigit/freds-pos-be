@@ -63,7 +63,7 @@ HTTP (api/v1/endpoints/checkout.py)
   → CheckoutService (services/checkout_service.py)
     → ORM models (models/checkout.py)
       → DB: checkout_order | checkout_order_item | checkout_payment
-    → ProductService / product_stock   (read + store quantity)
+    → ProductService / product_inventory   (read + store quantity)
     → customer.total_spent             (member spending only)
 ```
 

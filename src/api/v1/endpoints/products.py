@@ -20,16 +20,17 @@ def search_products(
     keyword: Optional[str] = Query(None, description="SKU / barcode / name / brand"),
     scale: Optional[str] = Query(None, description="ModelScale or ALL"),
     brand: Optional[str] = Query(None, description="Brand filter, or ALL"),
-    inStockOnly: bool = Query(False, description="Only products with totalStock > 0"),
+    inInventoryOnly: bool = Query(False, description="Only products with totalInventory > 0"),
     db: Session = Depends(get_db),
-    _user=Depends(require_business_user),
+    user=Depends(require_business_user),
 ) -> List[Product]:
     """Default sort: sku ASC."""
     return ProductService(db).search(
         keyword=keyword,
         scale=scale,
         brand=brand,
-        in_stock_only=inStockOnly,
+        in_inventory_only=inInventoryOnly,
+        store_name=user.store_name,
     )
 
 
@@ -45,7 +46,7 @@ def create_product(
     db: Session = Depends(get_db),
     user=Depends(require_business_user),
 ) -> Product:
-    return ProductService(db).create(body, actor_name=str(user["name"]))
+    return ProductService(db).create(body, actor_name=user.name, store_name=user.store_name)
 
 
 @router.get(
@@ -57,9 +58,9 @@ def create_product(
 def get_product(
     productId: str = Path(..., description="Product id"),
     db: Session = Depends(get_db),
-    _user=Depends(require_business_user),
+    user=Depends(require_business_user),
 ) -> Product:
-    return ProductService(db).get_by_id(productId)
+    return ProductService(db).get_by_id(productId, store_name=user.store_name)
 
 
 @router.put(
@@ -74,4 +75,6 @@ def update_product(
     db: Session = Depends(get_db),
     user=Depends(require_business_user),
 ) -> Product:
-    return ProductService(db).update(productId, body, actor_name=str(user["name"]))
+    return ProductService(db).update(
+        productId, body, actor_name=user.name, store_name=user.store_name
+    )

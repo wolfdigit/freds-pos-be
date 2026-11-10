@@ -12,7 +12,7 @@ Decisions from the planning discussion are recorded below. Items marked **Decide
 | 2 | PUT stock / computed fields | **Tighten OpenAPI** — `UpdateProductRequest` metadata-only; those fields are **not** in the contract (not “silent ignore” / not ad-hoc 422 on forbidden keys). FE must stop sending `Partial<Product>`. | 2026-09-07 |
 | 3 | Pending table cardinality | **A** — 1:1 aggregate (`product_id` UNIQUE + `quantity`) for this phase; later may become SUM over real preorder rows without changing API field shape. | 2026-09-07 |
 | 4 | Seeding mock products | **B** — Alembic data migration and/or management script in a **later phase** (not in the first schema-only migration). | 2026-09-07 |
-| 5 | Create-time stock qty | **No quantities on `POST /products`** — create always inserts four `product_stock` rows at `0`; FE sets real qty via future inventory APIs. | 2026-09-07 |
+| 5 | Create-time stock qty | **No quantities on `POST /products`** — create always inserts four `product_inventory` rows at `0`; FE sets real qty via future inventory APIs. | 2026-09-07 |
 | 6 | Search sort | **`sku ASC`**; still add `created_at` / `updated_at` for audit. | 2026-09-07 |
 | 7 | Auth | Keep **optional/dummy** for this phase. | 2026-09-07 |
 | 8 | FE / OpenAPI sync | Track all FE + contract changes in [`05-fe-changes.md`](./05-fe-changes.md). | 2026-09-07 |
@@ -32,7 +32,7 @@ Decisions from the planning discussion are recorded below. Items marked **Decide
 ### 2. PUT body — contract excludes non-metadata fields
 
 - Named schema `UpdateProductRequest`: only `sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `vipPrice`, `note`, `material`, `color`, `imageUrl`, `status`, `deleted`. `status` is `active` or `deleted`. The catalog does not record `costPrice`.
-- **Do not** document `stocks`, `totalStock`, `id`, `normalizedSku`, `preOrderPendingCount` on update
+- **Do not** document `stocks`, `totalInventory`, `id`, `normalizedSku`, `preOrderPendingCount` on update
 - FE: replace `Partial<Product>` update payload with a dedicated update type aligned to OpenAPI
 - Implementation may use Pydantic `extra='ignore'` as a safety net; the **source of truth** is the narrowed OpenAPI schema
 
@@ -72,13 +72,13 @@ Decisions from the planning discussion are recorded below. Items marked **Decide
 |-------|----------|
 | Scope | Catalog only: `GET/POST /products`, `GET/PUT /products/{id}` |
 | Inventory APIs | Out of scope; future `/inventory/*` owns stock qty mutations |
-| Storage | `product` + `product_stock` + `product_pre_order_pending` |
+| Storage | `product` + `product_inventory` + `product_pre_order_pending` |
 | Barcode uniqueness | **Not** unique; **non-unique index** for search |
 | SKU uniqueness | Unique; duplicate → `PRODUCT_SKU_DUPLICATE` |
 | Pending count storage | Separate 1:1 table; not a column on `product` |
 | Contract direction | Align OpenAPI → FE (FE adapts where contract narrows) |
 | Create `id` | Server `prod-{uuid4}` no dashes; no client `id` |
-| Create stocks | Always four rows at qty `0`; no client quantities |
+| Create inventory | No rows on create; no client quantities |
 | PUT body | Metadata-only OpenAPI schema |
 | `locationName` map | 門市現貨 / 後方倉庫 / 公司總倉 / 調度暫存 |
 | Search sort | `sku ASC` |

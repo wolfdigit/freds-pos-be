@@ -136,7 +136,7 @@ In one commit:
 - Insert order, lines, payments.
 - Positive lines: subtract `quantity` from `store`, even when that drives the shelf quantity below zero.
 - Negative lines with `restock` not `false`: add `abs(quantity)` to `store` for the units being returned.
-- Recompute nothing else on the product row. `totalStock` stays a read-time sum.
+- Recompute nothing else on the product row. `totalInventory` stays a read-time sum.
 - Return: add `abs(quantity)` to the earlier sale line `returnedQuantity`. If every line on that earlier order is fully returned, its `status` becomes `refunded`. If any line has `returnedQuantity > 0`, `partially_refunded`. Otherwise leave `completed`. The earlier line's points-discount flag and 360 amount stay as they were.
 - Bound customer: `total_spent = max(0, total_spent + totalAmount)`.
 - Redeemed lines keep `pointsDiscountApplied` and `pointsDiscountAmount` of 360. Nothing is written to a points balance.
