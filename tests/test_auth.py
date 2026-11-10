@@ -270,8 +270,8 @@ def test_admin_without_a_store_can_use_business_apis_and_checkout_still_needs_on
     )
     assert created_product.status_code == 201, created_product.text
     product = created_product.json()
-    assert product["loginStoreQuantity"] == 0
-    assert product["loginStoreReturnedQuantity"] == 0
+    assert product["loginStoreQuantity"] is None
+    assert product["loginStoreReturnedQuantity"] is None
     assert product["totalInventory"] == 0
 
     adjusted = client.post(
@@ -289,8 +289,12 @@ def test_admin_without_a_store_can_use_business_apis_and_checkout_still_needs_on
     assert listed.status_code == 200, listed.text
     body = listed.json()
     assert body["totalInventory"] == 4
-    assert body["loginStoreQuantity"] == 0
-    assert body["loginStoreReturnedQuantity"] == 0
+    assert body["loginStoreQuantity"] is None
+    assert body["loginStoreReturnedQuantity"] is None
+    searched = client.get("/api/v1/products", headers=admin_headers)
+    assert searched.status_code == 200
+    assert searched.json()[0]["loginStoreQuantity"] is None
+    assert searched.json()[0]["loginStoreReturnedQuantity"] is None
     assert _stock_qty(product["id"], DEFAULT_STORE_LOCATION_ID) == 4
 
     refused = client.post(
@@ -343,6 +347,24 @@ def test_admin_without_a_store_can_use_business_apis_and_checkout_still_needs_on
     assert still_blocked.json()["code"] == "AUTH_STORE_REQUIRED"
     _select(client, staff["token"], "第一間")
     assert client.get("/api/v1/inventory/locations", headers=staff_headers).status_code == 200
+    staff_product = client.get(f"/api/v1/products/{product['id']}", headers=staff_headers)
+    assert staff_product.status_code == 200, staff_product.text
+    assert staff_product.json()["loginStoreQuantity"] == 3
+    assert staff_product.json()["loginStoreReturnedQuantity"] == 0
+    returned_adjust = client.post(
+        "/api/v1/inventory/adjustments",
+        json={
+            "productId": product["id"],
+            "location": RETURNED_LOCATION_ID,
+            "newQuantity": -2,
+            "reason": "退貨盤點",
+        },
+        headers=staff_headers,
+    )
+    assert returned_adjust.status_code == 200, returned_adjust.text
+    staff_after = client.get(f"/api/v1/products/{product['id']}", headers=staff_headers)
+    assert staff_after.json()["loginStoreQuantity"] == 3
+    assert staff_after.json()["loginStoreReturnedQuantity"] == -2
     staff_store = client.post(
         "/api/v1/system/stores",
         json=_store_body("店員門市"),

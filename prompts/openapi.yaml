@@ -13,7 +13,7 @@ info:
     - **Line-Item Return Traceability**: Returns/exchanges (negative quantities) must reference `originalOrderId` and `originalOrderItemId`, with cumulative `returnedQuantity` tracking.
     - **ACID Atomicity**: Checkout/return operations execute inside a single database transaction (locking store stock, updating pre-orders, updating customer spending, and creating orders).
     - **Idempotency**: `POST /checkout/orders` supports `X-Idempotency-Key` to prevent double-charging or double stock deduction.
-    - **Authentication**: `POST /auth/google` exchanges a Google ID token for a server session. Later calls send `Authorization: Bearer <session token>`. `staff` must select a store before business APIs. `admin` may call business APIs with no store selected. `POST /checkout/orders` still needs that store for both roles and returns `403` `AUTH_STORE_REQUIRED` when it is missing. The selected login store chooses the normal and returned inventory locations used by checkout. Body `branchId` is ignored. When no store is selected, `loginStoreQuantity` and `loginStoreReturnedQuantity` are `0`.
+    - **Authentication**: `POST /auth/google` exchanges a Google ID token for a server session. Later calls send `Authorization: Bearer <session token>`. `staff` must select a store before business APIs. `admin` may call business APIs with no store selected. `POST /checkout/orders` still needs that store for both roles and returns `403` `AUTH_STORE_REQUIRED` when it is missing. The selected login store chooses the normal and returned inventory locations used by checkout. Body `branchId` is ignored. When no store is selected, `loginStoreQuantity` and `loginStoreReturnedQuantity` are `null`.
 
     **Conventions**
     - Amounts are TWD integers (no cents).
@@ -1051,7 +1051,7 @@ paths:
       summary: Get all store branches
       description: |
         Admin-only management list. Staff retrieve choices from `GET /auth/stores`.
-        There is no update or set-default route. `isDefault` is informational.
+        `PUT /system/stores/{storeName}` rebinds both inventory locations. There is no set-default route. `isDefault` is informational.
       responses:
         '200':
           description: List of store branches
@@ -1571,10 +1571,12 @@ components:
           description: Sum of quantity at every location, including warehouses, returned locations, and negatives.
         loginStoreQuantity:
           type: integer
-          description: Quantity at the session store's normal location. `0` when that row is missing, or when the session has no selected store.
+          nullable: true
+          description: Quantity at the session store's normal location. `null` when the session has no selected store. When a store is selected, a missing row is `0`, and the value may be negative.
         loginStoreReturnedQuantity:
           type: integer
-          description: Quantity at the session store's returned location. `0` when that row is missing, or when the session has no selected store.
+          nullable: true
+          description: Quantity at the session store's returned location. `null` when the session has no selected store. When a store is selected, a missing row is `0`, and the value may be negative.
         note:
           type: string
         createdAt:

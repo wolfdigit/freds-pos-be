@@ -62,6 +62,7 @@ def _to_product_schema(
     *,
     login_location_id: Optional[str] = None,
     login_returned_location_id: Optional[str] = None,
+    has_login_store: bool = False,
 ) -> ProductSchema:
     inventories: List[LocationInventory] = []
     seen = set()
@@ -85,8 +86,12 @@ def _to_product_schema(
         )
 
     total_inventory = sum(item.quantity for item in inventories)
-    login_store_quantity = _qty_at(inventories, login_location_id)
-    login_store_returned_quantity = _qty_at(inventories, login_returned_location_id)
+    if has_login_store:
+        login_store_quantity = _qty_at(inventories, login_location_id)
+        login_store_returned_quantity = _qty_at(inventories, login_returned_location_id)
+    else:
+        login_store_quantity = None
+        login_store_returned_quantity = None
     pending = (
         product.pre_order_pending.quantity
         if product.pre_order_pending is not None
@@ -169,13 +174,13 @@ class ProductService:
 
     # 新增商品並建立各地點庫存列（數量 0）。
     # data: 建立商品的請求內容。
-    def _login_bindings(self, store_name: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    def _login_bindings(self, store_name: Optional[str]) -> tuple[bool, Optional[str], Optional[str]]:
         if not store_name:
-            return None, None
+            return False, None, None
         store = self.db.get(StoreBranch, store_name)
         if store is None:
-            return None, None
-        return store.inventory_location_id, store.returned_inventory_location_id
+            return False, None, None
+        return True, store.inventory_location_id, store.returned_inventory_location_id
 
     def create(
         self,
@@ -216,12 +221,13 @@ class ProductService:
 
     # 依 product_id (商品主鍵) 取得單一商品的 API 資料。
     def get_by_id(self, product_id: str, *, store_name: Optional[str] = None) -> ProductSchema:
-        normal_id, returned_id = self._login_bindings(store_name)
+        has_login_store, normal_id, returned_id = self._login_bindings(store_name)
         return _to_product_schema(
             self._get_by_id_or_raise(product_id),
             ensure_locations(self.db),
             login_location_id=normal_id,
             login_returned_location_id=returned_id,
+            has_login_store=has_login_store,
         )
 
     # 更新指定商品已提供的欄位。
@@ -335,13 +341,14 @@ class ProductService:
         stmt = stmt.order_by(Product.sku.asc())
         products = list(self.db.scalars(stmt).unique().all())
         locations = ensure_locations(self.db)
-        normal_id, returned_id = self._login_bindings(store_name)
+        has_login_store, normal_id, returned_id = self._login_bindings(store_name)
         return [
             _to_product_schema(
                 p,
                 locations,
                 login_location_id=normal_id,
                 login_returned_location_id=returned_id,
+                has_login_store=has_login_store,
             )
             for p in products
         ]

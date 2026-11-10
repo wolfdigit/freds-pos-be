@@ -8,7 +8,7 @@ BE contract lives in [`../openapi.yaml`](../openapi.yaml). FE `docs/openapi.yaml
 | --- | --- |
 | `InventoryLocationDto` | Remove `isActive`. Add `storeNames` and `returnedStoreNames`. |
 | `POST /system/stores` | Admin only. Required `name`, `inventoryLocationId`, and `returnedInventoryLocationId`. Remove `newLocation`. The two ids may be the same. |
-| Admin session | An admin token may call `GET /inventory/locations` and the other business APIs before a store is selected. `POST /checkout/orders` without a selected store is `403` `AUTH_STORE_REQUIRED`. `loginStoreQuantity` and `loginStoreReturnedQuantity` are `0` until a store is selected. Staff without a store stay `403` `AUTH_STORE_REQUIRED`. |
+| Admin session | An admin token may call `GET /inventory/locations` and the other business APIs before a store is selected. `POST /checkout/orders` without a selected store is `403` `AUTH_STORE_REQUIRED`. `loginStoreQuantity` and `loginStoreReturnedQuantity` are `null` until a store is selected, then a real quantity including `0` and negatives. Staff without a store stay `403` `AUTH_STORE_REQUIRED`. |
 | `PUT /system/stores/{storeName}` | Admin only. Body `{ inventoryLocationId, returnedInventoryLocationId }`. Both required. The two ids may be the same. |
 | Store DTO | Add `returnedInventoryLocationId` and `returnedInventoryLocationName` beside the normal pair. |
 | `LocationInventory` | `quantity` only. Remove `returnedQuantity`. |

@@ -101,7 +101,7 @@
 
 要知道「目前登入門市」才能做的操作，沒有選門市時回 `403` `AUTH_STORE_REQUIRED`，不改資料。目前只有 `POST /api/v1/checkout/orders`：它扣 session 門市的正常庫存點，退貨則進該門市的退貨庫存點。有選門市就用該門市，管理員與店員相同。請求沒有另加門市參數，body 的 `branchId` 仍忽略。
 
-商品的 `loginStoreQuantity` 與 `loginStoreReturnedQuantity` 在沒有選門市時是 `0`。`totalInventory` 與 `inventories` 仍是全部地點，不因門市而篩掉。
+商品的 `loginStoreQuantity` 與 `loginStoreReturnedQuantity` 在沒有選門市時是 `null`（不適用，不是數量 0）。已選門市時是該門市的實際數量，缺列是 `0`，也可以是負數。`totalInventory` 與 `inventories` 仍是全部地點，不因門市而篩掉。
 
 ## 權限
 
@@ -115,7 +115,7 @@
 | `/api/v1/system/stores/{storeName}` | DELETE | 不可 | 可 | 200 `{ "deletedStore" }`；最後一間 409 `LAST_STORE`；找不到 404 `LOCATION_NOT_FOUND`；staff 403 `AUTH_FORBIDDEN` |
 | `/api/v1/system/oauth/accounts` | GET、POST、PUT、DELETE | 不可 | 可，含尚未選門市 | staff 已選門市 403 `AUTH_FORBIDDEN`；staff 尚未選門市 403 `AUTH_STORE_REQUIRED` |
 | `/api/v1/inventory/locations` 與其他庫存讀寫 | GET、POST、PUT、DELETE | 必須已選門市 | 可，含尚未選門市 | 庫存地點不是門市，也不依登入門市篩選。未登入 401 `AUTH_REQUIRED` |
-| 商品、會員、預購、`GET /api/v1/checkout/orders` | 既有方法 | 必須已選門市 | 可，含尚未選門市 | 沒有選門市時 `loginStoreQuantity` 與 `loginStoreReturnedQuantity` 為 `0` |
+| 商品、會員、預購、`GET /api/v1/checkout/orders` | 既有方法 | 必須已選門市 | 可，含尚未選門市 | 沒有選門市時 `loginStoreQuantity` 與 `loginStoreReturnedQuantity` 為 `null` |
 | `/api/v1/checkout/orders` | POST | 必須已選門市 | 有選門市才可；沒有則 403 `AUTH_STORE_REQUIRED` | 扣目前 session 門市的正常庫存點。不接受 body 指定門市 |
 
 沒有設定預設門市的 API。`isDefault` 只出現在清單回應。角色每次請求都從白名單重讀，降權的下一筆管理請求就是 403。

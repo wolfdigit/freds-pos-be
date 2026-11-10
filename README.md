@@ -158,7 +158,7 @@ uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 
 ## Google 登入
 
-業務 API：`staff` 需要已選門市的 session。`admin` 尚未選門市也可以使用業務 API；`POST /api/v1/checkout/orders` 在沒有選門市時回 `403` `AUTH_STORE_REQUIRED`。`GET /api/v1/health` 與根路徑除外。設定與前端契約見 `prompts/auth/01-fe-contract.md`。
+業務 API：`staff` 需要已選門市的 session。`admin` 尚未選門市也可以使用業務 API；`POST /api/v1/checkout/orders` 在沒有選門市時回 `403` `AUTH_STORE_REQUIRED`。此時商品的 `loginStoreQuantity` 與 `loginStoreReturnedQuantity` 是 `null`，不是 `0`。`GET /api/v1/health` 與根路徑除外。設定與前端契約見 `prompts/auth/01-fe-contract.md`。
 
 正式環境至少要：
 
