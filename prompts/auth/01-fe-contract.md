@@ -83,7 +83,7 @@
 
 ## 業務 API
 
-除了 `GET /api/v1/health`、`GET /`，以及上面的 auth 路由，都要已登入且已選門市。
+除了 `GET /api/v1/health`、`GET /`，以及上面的 auth 路由，都要已登入且已選門市。非正式環境若開啟 `SKIP_LOGIN`，見文末「測試部署跳過登入」。
 
 未帶或無效 token：
 
@@ -154,3 +154,18 @@
 - 未登入時畫面不要讀出購物車。
 - 只有登入者的 `user.id` 與鍵相同才還原。別的帳號看不到。
 - 後端沒有購物車 API。
+
+## 測試部署跳過登入
+
+後端環境變數 `SKIP_LOGIN`（布林，預設 `false`）。意思是跳過登入，不只是跳過 Google。只有非正式環境生效：`ENVIRONMENT` 為 `production`（不分大小寫），或 `VERCEL_ENV` 為 `production` 時，旗標被忽略，下面的行為不會發生，登入規則與現在相同。
+
+生效時：
+
+- 沒有有效 Bearer session 的請求，包含沒帶 token、token 無效、過期、已登出、或帳號已不在白名單，都視為同一位測試管理員。
+- 已帶有效 session 的請求不受影響，不會被改成這位測試管理員。
+- `GET /api/v1/auth/me` 不帶 token 會成功，回傳這位測試管理員與解析到的門市。
+- 身份是固定的，不在白名單裡，也不會被自動建立：`id` 為 `acct-skip-login`，`email` 為 `skip-login@invalid.test`，`name` 為 `免登入測試`，`role` 為 `admin`。操作紀錄的人員用這個名稱，時間仍是伺服器時間。不要用前端示範信箱。
+- 門市由 `SKIP_LOGIN_STORE` 指定。沒設則用名稱排序的第一間門市。沒設到一間存在的門市時，`storeSelected` 為 false；需要門市的 API 仍是 `403` `AUTH_STORE_REQUIRED`。不需要門市的管理路由（例如門市清單）仍可用。
+- `POST /api/v1/auth/google` 的憑證檢查與白名單規則不變。這個旗標不是登入後門。
+- 沒有寫入 `auth_session`。結帳仍可成功，收銀員是上面這位測試管理員。`POST /api/v1/auth/logout` 不會作廢任何 token，下一筆沒帶 token 的請求仍是這位測試管理員。`POST /api/v1/auth/store` 只檢查門市是否存在，不會改掉上面的門市綁定。
+- 這只影響後端。前端登入畫面可以仍出現。公開網址打開 `SKIP_LOGIN` 等於開放 API。

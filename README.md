@@ -166,10 +166,14 @@ uvicorn src.main:app --reload --host 0.0.0.0 --port 8000
 - `GOOGLE_CLIENT_ID`：Google Cloud 的 OAuth 用戶端 ID，可逗號分隔多個。不要把 client secret 放到前端。
 - `AUTH_BOOTSTRAP_ADMIN_EMAIL`：只在 `oauth_account` 還是空的時寫入一位管理員。不要填前端示範信箱。寫入後這個變數不再賦權，刪掉它也不會刪帳號。
 - `AUTH_BOOTSTRAP_ADMIN_NAME`：選填。空白時顯示名稱用 email。
+- `SKIP_LOGIN`：預設 `false`。設為 `true` 時，非正式環境可以不帶任何登入憑證（不必有 Google ID token，也不必有 Bearer session）呼叫需登入的 API。`ENVIRONMENT`（不分大小寫）或 `VERCEL_ENV` 為 `production` 時，這個旗標一律被忽略，登入規則與現在相同。
+- `SKIP_LOGIN_STORE`：選填。`SKIP_LOGIN` 有效時綁定的門市名稱。沒填則用名稱排序後的第一間既有門市。指定的門市不存在，或完全沒有門市時，本來就不需要門市的管理路由仍可使用；需要門市的業務 API 仍回 `403` `AUTH_STORE_REQUIRED`。
 - 套用 migration：`alembic upgrade head`
-- 與前端同一輪上線。這次之後未帶 session 的業務請求會回 401。
+- 與前端同一輪上線。這次之後未帶 session 的業務請求會回 401。旗標關閉時也是如此。
 
-Google 用戶端只用 OpenID 的 email（ID token），不要加 Gmail 範圍。
+Google 用戶端只用 OpenID 的 email（ID token），不要加 Gmail 範圍。`SKIP_LOGIN` 不會放寬 `POST /api/v1/auth/google` 的憑證檢查，也不會把測試身份寫進白名單。
+
+測試或預覽部署要跳過登入時，設 `SKIP_LOGIN=true`，並視需要設 `SKIP_LOGIN_STORE`。不要在正式環境依賴它：production 會忽略這個旗標。開啟時，沒有有效 session 的請求會被當成固定的測試管理員（`skip-login@invalid.test` / `免登入測試`）。已經帶著有效 session 的請求仍是原本那位使用者。前端登入畫面可以仍在。公開網址若打開這個旗標，API 等於不設防。
 
 ## 資料庫遷移 (Alembic)
 

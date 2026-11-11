@@ -19,6 +19,19 @@ from src.services.google_identity import GoogleTokenError, verify_google_id_toke
 
 SESSION_TTL = timedelta(hours=12)
 ALLOWED_ROLES = frozenset({"admin", "staff"})
+# 跳過登入時的固定身份。不寫入白名單，也不能當成 Google 登入帳號。
+SKIP_LOGIN_SESSION_ID = "skip-login"
+SKIP_LOGIN_ACCOUNT_ID = "acct-skip-login"
+SKIP_LOGIN_EMAIL = "skip-login@invalid.test"
+SKIP_LOGIN_NAME = "免登入測試"
+_INVALID_SESSION = frozenset(
+    {
+        BusinessErrorCode.AUTH_REQUIRED,
+        BusinessErrorCode.AUTH_SESSION_REVOKED,
+        BusinessErrorCode.AUTH_SESSION_EXPIRED,
+        BusinessErrorCode.AUTH_ACCOUNT_NOT_ALLOWED,
+    }
+)
 
 
 @dataclass
@@ -103,6 +116,17 @@ class AuthService:
         return raw_token, _principal(session, account_id=account.id, email=account.email, name=name, role=role, store_name=None)
 
     def authenticate(self, raw_token: Optional[str], *, require_store: bool) -> Principal:
+        if raw_token:
+            try:
+                return self._authenticate_session(raw_token, require_store=require_store)
+            except BusinessException as exc:
+                if exc.code not in _INVALID_SESSION or not settings.skip_login_active():
+                    raise
+        elif not settings.skip_login_active():
+            _raise(401, BusinessErrorCode.AUTH_REQUIRED, "需要登入")
+        return self._synthetic_admin(require_store=require_store)
+
+    def _authenticate_session(self, raw_token: str, *, require_store: bool) -> Principal:
         session = self._load_session(raw_token)
         account = self._load_account(session)
         role = _normalize_role(account.role)
@@ -121,6 +145,12 @@ class AuthService:
 
     def lock_for_checkout(self, session_id: str) -> Principal:
         """鎖住這筆 session，讓換門市與結帳不會各寫各的。"""
+        if session_id == SKIP_LOGIN_SESSION_ID:
+            if not settings.skip_login_active():
+                _raise(401, BusinessErrorCode.AUTH_SESSION_REVOKED, "登入已失效")
+            # 與正式 session 相同，先結束登入檢查的讀取快照，再重讀門市。
+            self.db.rollback()
+            return self._synthetic_admin(require_store=True)
         # 結束登入檢查時已開啟的讀取快照，避免沿用換門市之前的門市。
         self.db.rollback()
         self.db.execute(
@@ -160,6 +190,11 @@ class AuthService:
         name = store_name.strip()
         if not name or self.db.get(StoreBranch, name) is None:
             _raise(400, BusinessErrorCode.AUTH_STORE_INVALID, "門市不存在")
+        if principal.session_id == SKIP_LOGIN_SESSION_ID:
+            if not settings.skip_login_active():
+                _raise(401, BusinessErrorCode.AUTH_SESSION_REVOKED, "登入已失效")
+            # 沒有 session 列可寫。門市仍以 SKIP_LOGIN_STORE 或第一間門市為準。
+            return self._synthetic_admin(require_store=False)
         self.db.execute(
             update(AuthSession).where(AuthSession.id == principal.session_id).values(store_name=name)
         )
@@ -168,11 +203,42 @@ class AuthService:
         return principal
 
     def logout(self, principal: Principal) -> None:
+        if principal.session_id == SKIP_LOGIN_SESSION_ID:
+            if not settings.skip_login_active():
+                _raise(401, BusinessErrorCode.AUTH_SESSION_REVOKED, "登入已失效")
+            return
         session = self.db.get(AuthSession, principal.session_id)
         if session is None or session.revoked_at is not None:
             _raise(401, BusinessErrorCode.AUTH_SESSION_REVOKED, "登入已失效")
         session.revoked_at = datetime.now(timezone.utc)
         self.db.commit()
+
+    def _synthetic_admin(self, *, require_store: bool) -> Principal:
+        """測試用管理員。不建立 oauth_account 或 auth_session。"""
+        store_name = self._skip_login_store()
+        if require_store and not store_name:
+            _raise(403, BusinessErrorCode.AUTH_STORE_REQUIRED, "請先選擇門市")
+        now = datetime.now(timezone.utc)
+        return Principal(
+            session_id=SKIP_LOGIN_SESSION_ID,
+            account_id=SKIP_LOGIN_ACCOUNT_ID,
+            email=SKIP_LOGIN_EMAIL,
+            name=SKIP_LOGIN_NAME,
+            role="admin",
+            store_name=store_name,
+            expires_at=now + SESSION_TTL,
+        )
+
+    def _skip_login_store(self) -> Optional[str]:
+        named = (settings.SKIP_LOGIN_STORE or "").strip()
+        if named:
+            if self.db.get(StoreBranch, named) is None:
+                return None
+            return named
+        row = self.db.scalar(select(StoreBranch).order_by(StoreBranch.name).limit(1))
+        if row is None:
+            return None
+        return row.name
 
     def _load_session(self, raw_token: Optional[str]) -> AuthSession:
         if not raw_token:

@@ -4,6 +4,11 @@ from typing import List, Optional, Tuple, Union
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
+def _is_production(value: Optional[str]) -> bool:
+    return (value or "").strip().lower() == "production"
+
+
 # 支援環境切換：可透過 APP_ENV (例如 staging, production) 或直接指定 ENV_FILE；預設僅載入 .env
 APP_ENV: str = os.getenv("APP_ENV", os.getenv("ENVIRONMENT", ""))
 ENV_FILE: Optional[str] = os.getenv("ENV_FILE")
@@ -37,6 +42,12 @@ class Settings(BaseSettings):
     # 白名單還是空的時，寫入一筆管理員後就不再使用。不是永久權限。
     AUTH_BOOTSTRAP_ADMIN_EMAIL: str = ""
     AUTH_BOOTSTRAP_ADMIN_NAME: str = ""
+    # 測試或預覽部署可跳過登入。預設關閉。正式環境一律忽略，見 skip_login_active。
+    SKIP_LOGIN: bool = False
+    # SKIP_LOGIN 生效時綁定的門市名稱。空白則用名稱排序後的第一間既有門市。
+    SKIP_LOGIN_STORE: str = ""
+    # Vercel 注入。與 ENVIRONMENT 一起擋住正式環境誤開 SKIP_LOGIN。
+    VERCEL_ENV: str = ""
 
     # CORS 設定
     BACKEND_CORS_ORIGINS: List[str] = [
@@ -68,6 +79,14 @@ class Settings(BaseSettings):
 
     def google_client_ids(self) -> List[str]:
         return [part.strip() for part in self.GOOGLE_CLIENT_ID.split(",") if part.strip()]
+
+    def skip_login_active(self) -> bool:
+        """非正式環境且 SKIP_LOGIN 為真時，沒有有效 session 的請求改走測試身份。"""
+        if not self.SKIP_LOGIN:
+            return False
+        if _is_production(self.ENVIRONMENT) or _is_production(self.VERCEL_ENV):
+            return False
+        return True
 
     model_config = SettingsConfigDict(
         env_file=_env_files,
