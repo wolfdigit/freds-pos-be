@@ -58,8 +58,8 @@
 ## Checkout return
 
 1. Use the return order's login store, not the original sale store.
-2. When `restock` is omitted or `true`, add the count at `returned_inventory_location_id` and write `return_restock`. Snapshot that location.
-3. When `restock` is `false`, skip stock and leave the location fields empty.
+2. When `restock` is omitted or `true`, add the count at `inventory_location_id` and write `return_restock`. Snapshot that location.
+3. When `restock` is `false`, add the count at `returned_inventory_location_id` and write `return_restock`. Snapshot that location. A return never leaves quantity unchanged.
 4. The original sale line's `returnedQuantity` still increases under the checkout rules.
 
 Returned goods become sellable by transferring them from the returned location to a normal location.

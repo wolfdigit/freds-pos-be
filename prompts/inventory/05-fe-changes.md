@@ -17,7 +17,7 @@ BE contract lives in [`../openapi.yaml`](../openapi.yaml). FE `docs/openapi.yaml
 | Remove `POST /inventory/condition-changes` | Returned goods become sellable by a transfer from the returned location to the normal location. |
 | `InventoryMovement` | Remove `condition`. Receipt rows include `sku` and `name`. |
 | Checkout sale | Deduct `inventoryLocationId`. A negative result still succeeds. |
-| Checkout return | `restock` omitted or `true` adds quantity at `returnedInventoryLocationId`. `restock: false` changes no stock. |
+| Checkout return | `restock` omitted or `true` adds quantity at `inventoryLocationId`. `restock: false` adds it at `returnedInventoryLocationId`. A return always changes quantity. |
 | Delete location | Body `rebindToLocation` when `storeNames` or `returnedStoreNames` is not empty. `409` `LAST_LOCATION` when this is the only location. `409` `LOCATION_NOT_EMPTY` when any quantity is not exactly `0`, including negatives. |
 | `BusinessErrorCode` | Add `INSUFFICIENT_INVENTORY`, `LOCATION_NOT_EMPTY`, `LAST_LOCATION`, `LOCATION_NAME_TAKEN`, and `INVENTORY_LOCATION_IN_USE`. |
 
@@ -50,7 +50,7 @@ BE contract lives in [`../openapi.yaml`](../openapi.yaml). FE `docs/openapi.yaml
 | Transfer | Pick two locations. No normal/returned toggle. A separate action moves every non-zero quantity. |
 | Receipt | Pick any location. Lines come back from movements. |
 | Checkout stock | Sellable count is `loginStoreQuantity`. Returned count is `loginStoreReturnedQuantity`. Do not look up `location === 'store'`. |
-| Order detail | A restocked return names the returned location. `restock: false` still skips stock. |
+| Order detail | A return with `restock` omitted or `true` names the normal location. `restock: false` names the returned location. Both add quantity. |
 
 ## Suggested order
 

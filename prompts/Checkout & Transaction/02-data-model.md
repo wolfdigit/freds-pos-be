@@ -96,15 +96,15 @@ Unique `(order_id, line_no)`.
 
 ## Stock write
 
-Only `product_inventory` where `location = 'store'` changes.
+Checkout uses the login store's two bound locations. The normal location is `inventory_location_id`. The returned location is `returned_inventory_location_id`.
 
 | Line | Effect |
 |------|--------|
-| `quantity > 0` | Subtract `quantity`. The commit is not refused when the locked quantity is short. `store` may go below zero. |
-| `quantity < 0` and `restock` is true | Add `abs(quantity)` for the units being returned. |
-| `quantity < 0` and `restock` is false | No stock change. |
+| `quantity > 0` | Subtract `quantity` at the normal location. The commit is not refused when that quantity goes negative. |
+| `quantity < 0` and `restock` is omitted or true | Add `abs(quantity)` at the normal location. Those units can be sold again. |
+| `quantity < 0` and `restock` is false | Add `abs(quantity)` at the returned location. Checkout does not sell from that location. |
 
-`warehouse`, `company`, and `other` are untouched. The counter shows a warning popup when the shelf looks short. The cashier decides whether there is actually product to sell. The server trusts that decision and still commits. The recorded stock count may be inaccurate. Branch on the order does not select a different stock row.
+Both return rows write `return_restock` and store the location on the line. A return never leaves quantity unchanged. The counter shows a warning popup when the normal location looks short. The cashier decides whether there is actually product to sell. The server trusts that decision and still commits.
 
 ## Member spending
 

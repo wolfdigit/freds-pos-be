@@ -227,7 +227,7 @@ def apply_checkout_stock(
     store_name: str,
     order_id: str,
     operator_name: str,
-) -> tuple[Optional[str], Optional[str]]:
+) -> tuple[str, str]:
     lock_all_locations(db)
     store = db.scalar(select(StoreBranch).where(StoreBranch.name == store_name).with_for_update())
     if store is None:
@@ -252,11 +252,16 @@ def apply_checkout_stock(
             operator_name=operator_name,
         )
         return location.id, location.name
+    # A return always adds quantity. Omitted or true puts it back on the
+    # sellable location. false keeps it at the returned location.
     if restock is False:
-        return None, None
-    location = db.get(InventoryLocation, store.returned_inventory_location_id)
+        location = db.get(InventoryLocation, store.returned_inventory_location_id)
+        missing = "找不到門市的退貨庫存點"
+    else:
+        location = db.get(InventoryLocation, store.inventory_location_id)
+        missing = "找不到門市的正常庫存點"
     if location is None:
-        _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市的退貨庫存點")
+        _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, missing)
     returned = abs(quantity)
     row = _lock_stock(db, product_id, location)
     row.quantity += returned

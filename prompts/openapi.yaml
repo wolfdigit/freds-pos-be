@@ -108,8 +108,8 @@ paths:
       description: |
         Does not require a new Google sign-in. Switching is allowed with a non-empty cart;
         the frontend warns and does not clear cart lines. The next order is attributed to this
-        store and deducts that store's normal location. A restocked return adds quantity at
-        that store's returned location.
+        store and deducts that store's normal location. A return with `restock` omitted or
+        `true` adds quantity at that normal location. `restock: false` adds it at the returned location.
       requestBody:
         required: true
         content:
@@ -685,7 +685,7 @@ paths:
            - Validate `sum(payments.amount) == totalAmount` (or `payments >= totalAmount` with cash change).
         4. **Inventory**:
            - Positive items deduct the login store's normal location (`inventoryLocationId`). The sale still completes when that quantity becomes negative.
-           - Negative items: if `restock` is omitted or `true`, add the count to the login store's returned location (`returnedInventoryLocationId`). `restock: false` changes no stock row. The line stores `inventoryLocationId` and `inventoryLocationName` for the location that changed.
+           - Negative items always add `abs(quantity)`. `restock` omitted or `true` adds it to the login store's normal location (`inventoryLocationId`), so it can be sold again. `restock: false` adds it to the returned location (`returnedInventoryLocationId`). The line stores `inventoryLocationId` and `inventoryLocationName` for the location that changed.
            - Checkout does not change a pre-order. `qtyDelivered` and pre-order status change only on `POST /preorders/{preOrderId}/fulfill`.
         5. **Member Asset Update**:
            - Update `customer.totalSpent += totalAmount`
@@ -2014,7 +2014,7 @@ components:
           type: string
         inventoryLocationId:
           type: string
-          description: Location used by this line. Empty when `restock` is false.
+          description: Location this line changed. A return sets the normal location when `restock` is omitted or true, and the returned location when `restock` is false.
         inventoryLocationName:
           type: string
 
@@ -2135,7 +2135,7 @@ components:
         restock:
           type: boolean
           default: true
-          description: For returns, whether returned item is restocked to store inventory
+          description: For returns. Omitted or true adds the quantity to the login store's normal location. false adds it to the returned location. A return always changes quantity.
         returnReason:
           type: string
         note:

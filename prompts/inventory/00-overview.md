@@ -1,6 +1,6 @@
 # Inventory — Overview
 
-Each store is bound to two inventory locations. `inventoryLocationId` holds normal goods. `returnedInventoryLocationId` holds returned goods. The two ids may be the same. Several stores may share either location. Checkout deducts the login store's normal location. A restocked return adds quantity at that store's returned location.
+Each store is bound to two inventory locations. `inventoryLocationId` holds normal goods. `returnedInventoryLocationId` holds returned goods. The two ids may be the same. Several stores may share either location. Checkout deducts the login store's normal location. A return with `restock` omitted or `true` adds quantity back there. `restock: false` adds it at the returned location.
 
 `台北旗艦店` and `官網` both start with normal stock on `門市現貨` (`e1a10001-0000-4000-8000-000000000001`) and returned stock on `退貨品` (`e1a10005-0000-4000-8000-000000000005`).
 
@@ -10,7 +10,7 @@ Each store is bound to two inventory locations. `inventoryLocationId` holds norm
 2. **Stock can move between locations.** One transfer moves one product. A second call moves every non-zero quantity at one location, including negatives. Moving quantity from a returned location to a normal location is how returned goods become sellable.
 3. **Receiving increases inventory.** A receipt adds quantity at the chosen location. Each line is an `inventory_movement` row. The receipt header keeps the supplier and note.
 4. **Checkout deducts the login store's normal location.** The sale still completes when that quantity becomes negative.
-5. **A restocked return enters the login store's returned location.** `restock: false` changes no stock. Checkout does not deduct the returned location.
+5. **A return always adds quantity.** `restock` omitted or `true` adds it at the login store's normal location, so it can be sold again. `restock: false` adds it at that store's returned location. Checkout does not deduct the returned location.
 6. **Quantity can be typed in.** A manual adjustment sets one product at one location to an absolute quantity, which may be negative, and requires a reason.
 
 ## Quantities

@@ -198,8 +198,30 @@ def test_condition_change_releases_returned_stock(client, google_jwks):
         headers=headers,
     )
     assert returned.status_code == 201, returned.text
-    assert returned.json()["order"]["items"][0]["inventoryLocationId"] == RETURNED_LOCATION_ID
-    assert _stock_qty(product_id, shelf) == -2
+    assert returned.json()["order"]["items"][0]["inventoryLocationId"] == shelf
+    assert returned.json()["order"]["items"][0]["restock"] is True
+    assert _stock_qty(product_id, shelf) == -1
+    assert _stock_qty(product_id, RETURNED_LOCATION_ID) == 0
+
+    held = client.post(
+        "/api/v1/checkout/orders",
+        json={
+            "items": [{
+                "productId": product_id,
+                "quantity": -1,
+                "originalOrderId": order_id,
+                "originalOrderItemId": item_id,
+                "restock": False,
+            }],
+            "shippingFee": 0,
+            "payments": [{"type": "cash", "name": "現金", "amount": -100}],
+        },
+        headers=headers,
+    )
+    assert held.status_code == 201, held.text
+    assert held.json()["order"]["items"][0]["inventoryLocationId"] == RETURNED_LOCATION_ID
+    assert held.json()["order"]["items"][0]["restock"] is False
+    assert _stock_qty(product_id, shelf) == -1
     assert _stock_qty(product_id, RETURNED_LOCATION_ID) == 1
 
     released = client.post(
@@ -214,7 +236,7 @@ def test_condition_change_releases_returned_stock(client, google_jwks):
     )
     assert released.status_code == 200, released.text
     assert _stock_qty(product_id, RETURNED_LOCATION_ID) == 0
-    assert _stock_qty(product_id, shelf) == -1
+    assert _stock_qty(product_id, shelf) == 0
 
 
 def test_store_may_use_one_location_for_normal_and_returned(client, google_jwks):
@@ -332,7 +354,7 @@ def test_batch_adjust_requires_a_reason_and_can_set_returned_location_negative(c
     assert _stock_qty(product_id, RETURNED_LOCATION_ID) == -4
 
 
-def test_checkout_deducts_each_sale_line_and_restock_false_leaves_stock(client, google_jwks):
+def test_checkout_deducts_each_sale_line_and_restock_false_uses_the_returned_location(client, google_jwks):
     _add_account(ADMIN_EMAIL)
     shelf = _add_store("奇可門市")
     login = _login(client, google_jwks)
@@ -371,9 +393,30 @@ def test_checkout_deducts_each_sale_line_and_restock_false_leaves_stock(client, 
         headers=headers,
     )
     assert kept.status_code == 201, kept.text
-    assert kept.json()["order"]["items"][0]["inventoryLocationId"] is None
+    assert kept.json()["order"]["items"][0]["inventoryLocationId"] == RETURNED_LOCATION_ID
+    assert kept.json()["order"]["items"][0]["restock"] is False
     assert _stock_qty(product_id, shelf) == -5
-    assert _stock_qty(product_id, RETURNED_LOCATION_ID) == 0
+    assert _stock_qty(product_id, RETURNED_LOCATION_ID) == 1
+
+    explicit = client.post(
+        "/api/v1/checkout/orders",
+        json={
+            "items": [{
+                "productId": product_id,
+                "quantity": -1,
+                "originalOrderId": order_id,
+                "originalOrderItemId": sale.json()["order"]["items"][1]["id"],
+                "restock": True,
+            }],
+            "shippingFee": 0,
+            "payments": [{"type": "cash", "name": "現金", "amount": -100}],
+        },
+        headers=headers,
+    )
+    assert explicit.status_code == 201, explicit.text
+    assert explicit.json()["order"]["items"][0]["inventoryLocationId"] == shelf
+    assert _stock_qty(product_id, shelf) == -4
+    assert _stock_qty(product_id, RETURNED_LOCATION_ID) == 1
 
 
 def test_return_restocks_the_only_location_when_both_bindings_match(client, google_jwks):

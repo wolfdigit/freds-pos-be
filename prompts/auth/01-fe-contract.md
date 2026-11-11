@@ -136,7 +136,7 @@
 - 訂單的 `branchId` 與 `branchName` 都是目前 session 的門市名稱。之後改綁不會改寫舊訂單，也不會搬走已經入帳的數量。
 - `cashierId` 是 `user.id`。`cashierName` 是白名單顯示名稱；該欄空白時用帳號 email。
 - 銷售扣該門市的正常庫存點，數量可以變成負數，不會回 `INSUFFICIENT_STORE_INVENTORY`。
-- 退貨在 `restock` 省略或為 `true` 時，數量進入該門市的退貨庫存點。`restock: false` 不改庫存。
+- 退貨一定會增加數量。`restock` 省略或為 `true` 時，加回該門市的正常庫存點，可以再賣。`restock: false` 時，加到該門市的退貨庫存點。
 
 換門市時若購物車有商品：前端顯示提示即可，不要擋住，也不要清掉數量。後端不接收購物車。下一筆成功結帳改扣新門市綁定的庫存點。
 
