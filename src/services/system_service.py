@@ -3,11 +3,13 @@ from __future__ import annotations
 from typing import List
 
 from sqlalchemy import select, update
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
+from src.core.config import settings
 from src.core.exceptions import BusinessException
 from src.models.system import OAuthAccount, StoreBranch
 from src.schemas.common import BusinessErrorCode
+from src.services.auth_service import SKIP_LOGIN_ACCOUNT_ID, SKIP_LOGIN_EMAIL, SKIP_LOGIN_NAME
 from src.services.bootstrap import new_account_id
 from src.schemas.system import (
     CreateOAuthAccountRequest,
@@ -125,9 +127,23 @@ class SystemService:
     def _locked_actor(self, actor_email: str, actor_role: str) -> OAuthAccount:
         if actor_role != "admin":
             _raise(403, BusinessErrorCode.AUTH_FORBIDDEN, "需要管理員權限")
+        email = actor_email.strip().lower()
+        # 跳過登入的測試身份不在白名單裡，也不在這裡補建，避免變成可登入帳號。
+        if email == SKIP_LOGIN_EMAIL and settings.skip_login_active():
+            synthetic = OAuthAccount(
+                id=SKIP_LOGIN_ACCOUNT_ID,
+                email=SKIP_LOGIN_EMAIL,
+                role="admin",
+                name=SKIP_LOGIN_NAME,
+                note=None,
+            )
+            attached = object_session(synthetic)
+            if attached is not None:
+                attached.expunge(synthetic)
+            return synthetic
         actor = self.db.scalar(
             select(OAuthAccount)
-            .where(OAuthAccount.email == actor_email.strip().lower())
+            .where(OAuthAccount.email == email)
             .execution_options(populate_existing=True)
         )
         if actor is None or (actor.role or "").strip().lower() != "admin":

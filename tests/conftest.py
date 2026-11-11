@@ -8,6 +8,9 @@ os.environ["GOOGLE_CLIENT_ID"] = "test-client.apps.googleusercontent.com"
 os.environ["AUTH_BOOTSTRAP_ADMIN_EMAIL"] = ""
 os.environ["AUTH_BOOTSTRAP_ADMIN_NAME"] = ""
 os.environ["ENVIRONMENT"] = "test"
+os.environ["VERCEL_ENV"] = ""
+os.environ["SKIP_LOGIN"] = "false"
+os.environ["SKIP_LOGIN_STORE"] = ""
 
 import pytest
 from cryptography.hazmat.primitives import serialization
