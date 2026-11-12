@@ -28,13 +28,13 @@ The **product catalog** phase of Fred's POS backend. Companion docs in this fold
 Catalog responsibilities:
 
 - Product **metadata** CRUD (sku, barcode, brand, name, scale, list price, optional vip price, note, optional material/color/imageUrl). The catalog does not record `costPrice`. `status` records soft delete: `active` or `deleted`.
-- On create: always insert **four** `product_stock` rows at **`quantity: 0`** (`store`, `warehouse`, `company`, `other`). **No** client stock/quantity fields on `POST /products`.
-- Server-owned / response-only: `id`, `normalizedSku`, `totalStock`, `preOrderPendingCount`, `stocks` (assembled on read).
-- Search filters aligned with the FE mock (`keyword`, `scale`, `brand`, `inStockOnly`); default sort **`sku ASC`**. Filters run **in SQL**, not in Python after load.
+- On create: do not insert inventory rows. A missing row reads as `0`. **No** client quantity fields on `POST /products`.
+- Server-owned / response-only: `id`, `normalizedSku`, `totalInventory`, `preOrderPendingCount`, `inventories` (assembled on read). `totalInventory` sums every location, including negatives.
+- Search filters aligned with the FE mock (`keyword`, `scale`, `brand`, `inInventoryOnly`); default sort **`sku ASC`**. Filters run **in SQL**, not in Python after load.
 
 ### Also in the OpenAPI
 
-Inventory transfers, stock adjustments, stock locations, pre-orders, store branches, and OAuth accounts are in [`../openapi.yaml`](../openapi.yaml), taken from the frontend OpenAPI. Catalog create still inserts four stock rows at quantity `0`.
+Inventory transfers, adjustments, locations, pre-orders, store branches, and OAuth accounts are in [`../openapi.yaml`](../openapi.yaml). Catalog create does not insert inventory rows.
 
 Out of this catalog write-up:
 
@@ -50,15 +50,15 @@ Target layout matches the backend README. Catalog is wired as a thin HTTP layer 
 HTTP (api/v1/endpoints/products.py)
   → ProductService (services/product_service.py)
     → ORM models (models/product*.py)
-      → DB: product | product_stock | product_pre_order_pending
+      → DB: product | product_inventory | product_pre_order_pending
 ```
 
 | Layer | Role |
 |-------|------|
 | **API / endpoints** | Route handlers, query/body parsing, status codes, dependency injection (`get_db`, optional user). No business rules beyond HTTP mapping. |
 | **Schemas** | Pydantic request/response DTOs; camelCase JSON (`normalizedSku`, `listPrice`, `preOrderPendingCount`, …) matching FE `Product`. |
-| **Services** | SKU normalize, uniqueness, create-time stock upsert, computed `totalStock` / `preOrderPendingCount`, search filters, ignore client overwrite of server-owned fields. |
-| **Models + Alembic** | Tables, indexes, uniqueness; migration for `product`, `product_stock`, `product_pre_order_pending`. |
+| **Services** | SKU normalize, uniqueness, create-time stock upsert, computed `totalInventory` / `preOrderPendingCount`, search filters, ignore client overwrite of server-owned fields. |
+| **Models + Alembic** | Tables, indexes, uniqueness; migration for `product`, `product_inventory`, `product_pre_order_pending`. |
 
 ### Planned backend file map (document only — not implemented yet)
 
@@ -76,10 +76,10 @@ Base URL (planned): `/api/v1` (see [`../openapi.yaml`](../openapi.yaml) servers)
 ### Storage sketch (detail in `02-data-model.md`)
 
 - **`product`** — catalog metadata; unique `sku`; `barcode` indexed but **not** unique; timestamps `created_at` / `updated_at`. Rows are not deleted. `PUT` sets `deleted` to hide or restore a product and leaves the id in place for checkout history and returns.
-- **`product_stock`** — one row per location; unique `(product_id, location)`.
+- **`product_inventory`** — one row per location; unique `(product_id, location)`.
 - **`product_pre_order_pending`** — separate table (not a column on `product`); default 1:1 via unique `product_id`; no row ⇒ API returns `preOrderPendingCount: 0`.
 
-`totalStock` = sum of stock quantities; `preOrderPendingCount` = pending table quantity (or `0`). Neither is stored on `product`.
+`totalInventory` = sum of stock quantities; `preOrderPendingCount` = pending table quantity (or `0`). Neither is stored on `product`.
 
 ## Frontend alignment
 
@@ -94,15 +94,15 @@ Source of truth for shapes and catalog method signatures:
 ### Contract principles
 
 1. OpenAPI is the HTTP source of truth ([`../openapi.yaml`](../openapi.yaml)); where it **narrows** vs today’s FE (`Partial<Product>`, create `stocks`), FE adapts — see [`05-fe-changes.md`](./05-fe-changes.md).
-2. Response `Product` matches FE: camelCase, four locations in `stocks`, integer TWD `listPrice`. There is no `costPrice`. `status` is `active` or `deleted`, and `deleted` mirrors it.
-3. Create request has **no** `stocks` / quantities. Server assigns `id`, `normalizedSku`, zeros stocks, `preOrderPendingCount: 0`, and `totalStock: 0`.
-4. Search semantics mirror the mock (empty keyword = no keyword filter; `scale`/`brand` missing or `ALL` = no filter; `inStockOnly` → `totalStock > 0`). Sort: **`sku ASC`**. Filters run **in SQL**. Details in `03-search-rules.md`.
+2. Response `Product` is camelCase, with one `inventories` entry per location that has a row, integer TWD `listPrice`. There is no `costPrice`. `status` is `active` or `deleted`, and `deleted` mirrors it.
+3. Create request has **no** `inventories` / quantities. Server assigns `id`, `normalizedSku`, `preOrderPendingCount: 0`, and `totalInventory: 0`.
+4. Search semantics mirror the mock (empty keyword = no keyword filter; `scale`/`brand` missing or `ALL` = no filter; `inInventoryOnly` → `totalInventory > 0`). Sort: **`sku ASC`**. Filters run **in SQL**. Details in `03-search-rules.md`.
 5. Catalog `PUT` uses **`UpdateProductRequest`** (metadata only in OpenAPI); stock / preorder never part of that schema.
 
 ### ID and create defaults (summary)
 
 - Server assigns opaque `prod-{uuid4}` (no dashes). Do not accept client `id` on create. Seed-style `prod-001` remains valid only as imported data (later seed phase).
-- Create always inserts four stock locations at qty `0` with fixed `locationName` map (門市現貨 / 後方倉庫 / 公司總倉 / 調度暫存).
+- Create does not insert inventory rows. Quantity appears after a receipt, transfer, adjustment, or checkout.
 
 ## Doc map
 
@@ -111,7 +111,7 @@ Source of truth for shapes and catalog method signatures:
 | `00-overview.md` | This file — goals, scope, architecture, FE alignment |
 | `01-api-contract.md` | Endpoint contracts, errors, proposed OpenAPI patch list |
 | `02-data-model.md` | Tables, indexes, uniqueness, computed fields, Alembic notes |
-| `03-search-rules.md` | Keyword / scale / brand / inStockOnly rules |
+| `03-search-rules.md` | Keyword / scale / brand / inInventoryOnly rules |
 | `04-open-questions.md` | Decision log (open questions resolved) |
 | `05-fe-changes.md` | FE + OpenAPI change checklist |
 | [`../openapi.yaml`](../openapi.yaml) | Merged HTTP contract (products + customers) |

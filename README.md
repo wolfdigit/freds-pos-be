@@ -213,3 +213,19 @@ alembic upgrade head --sql
 # 回退一個版本
 alembic downgrade -1
 ```
+
+## 測試
+
+預設使用一個暫存的 SQLite 檔，不需要另外準備資料庫。沒有設定 `TEST_DATABASE_URI` 時就是這個預設，既有的 CI 不用改：
+
+```bash
+pytest
+```
+
+庫存地點的外鍵在 PostgreSQL 上會一直生效。SQLite 只在個別測試打開 `PRAGMA foreign_keys` 時才檢查。要用 PostgreSQL 跑同一套測試，準備一個可丟棄的資料庫，再設定 `TEST_DATABASE_URI`。不要把正式資料庫的連線字串放在這裡。
+
+```bash
+TEST_DATABASE_URI=postgresql://USER:PASSWORD@127.0.0.1:5432/freds_test pytest
+```
+
+`postgres://` 與 `postgresql://` 都會轉成 `postgresql+psycopg2://`。

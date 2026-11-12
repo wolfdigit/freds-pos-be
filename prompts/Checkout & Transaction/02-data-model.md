@@ -1,6 +1,6 @@
 # Transactions — Data Model
 
-Three new tables. Product and customer tables stay as they are. Checkout reads `product`, updates `product_stock.quantity` for location `store`, and updates `customer.total_spent`.
+Three new tables. Product and customer tables stay as they are. Checkout reads `product`, updates `product_inventory.quantity` for location `store`, and updates `customer.total_spent`.
 
 Snake_case columns. JSON is camelCase, as in the API contract.
 
@@ -13,7 +13,7 @@ erDiagram
   checkout_order }o--o| customer : buyer
   checkout_order_item }o--o| product : sold_product
   checkout_order_item }o--o| checkout_order_item : return_of
-  product ||--|{ product_stock : stocks
+  product ||--|{ product_inventory : stocks
 ```
 
 `customer_id` is nullable, **`ON DELETE SET NULL`**. Name and phone snapshots are required to remain. `product_id` is required, **`ON DELETE RESTRICT`**. A catalog product is not deleted. `product.deleted` hides it from the counter and leaves the row, so a sale line's `product_id` stays filled. The line still keeps its sku, name, scale, and brand snapshots. A return line points at the earlier sale line it is giving product back from, and its `product_id` must equal that sale line's `product_id`. The service must not skip that comparison.
@@ -96,15 +96,15 @@ Unique `(order_id, line_no)`.
 
 ## Stock write
 
-Only `product_stock` where `location = 'store'` changes.
+Checkout uses the login store's two bound locations. The normal location is `inventory_location_id`. The returned location is `returned_inventory_location_id`.
 
 | Line | Effect |
 |------|--------|
-| `quantity > 0` | Subtract `quantity`. The commit is not refused when the locked quantity is short. `store` may go below zero. |
-| `quantity < 0` and `restock` is true | Add `abs(quantity)` for the units being returned. |
-| `quantity < 0` and `restock` is false | No stock change. |
+| `quantity > 0` | Subtract `quantity` at the normal location. The commit is not refused when that quantity goes negative. |
+| `quantity < 0` and `restock` is omitted or true | Add `abs(quantity)` at the normal location. Those units can be sold again. |
+| `quantity < 0` and `restock` is false | Add `abs(quantity)` at the returned location. Checkout does not sell from that location. |
 
-`warehouse`, `company`, and `other` are untouched. The counter shows a warning popup when the shelf looks short. The cashier decides whether there is actually product to sell. The server trusts that decision and still commits. The recorded stock count may be inaccurate. Branch on the order does not select a different stock row.
+Both return rows write `return_restock` and store the location on the line. A return never leaves quantity unchanged. The counter shows a warning popup when the normal location looks short. The cashier decides whether there is actually product to sell. The server trusts that decision and still commits.
 
 ## Member spending
 
@@ -131,7 +131,7 @@ On commit, for each positive line with `points_discount_applied`:
 ## What is not a table
 
 - Open cart, highlighted row, search box text, brand tab. Frontend only.
-- `vipTierName` and `totalStock`. Derived on read.
+- `vipTierName` and `totalInventory`. Derived on read.
 - A points balance. The NT$360 flag is only a record of the discount the cashier applied. The price cut itself is already in `unit_price`.
 - A branch or cashier entity. The two branch ids are fixed labels. Cashier stays a snapshot of the current user.
 - An invoice, a cost price, or a preorder.

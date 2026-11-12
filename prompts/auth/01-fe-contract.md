@@ -107,9 +107,10 @@
 | `/api/v1/auth/store` | POST | 可選、可換 | 可選、可換 | 200；不存在 400 `AUTH_STORE_INVALID` |
 | `/api/v1/system/stores` | GET | 不可 | 可，含尚未選門市 | staff 403 `AUTH_FORBIDDEN` |
 | `/api/v1/system/stores` | POST | 不可 | 可。沒有任何門市時，尚未選門市的管理員仍可建第一間 | 201；staff 403 `AUTH_FORBIDDEN` |
+| `/api/v1/system/stores/{storeName}` | PUT | 不可 | 可。改這間門市的正常貨與退貨庫存點 | 200 門市；兩個 id 都可以，也可以相同；找不到門市或庫存點 404；staff 403 `AUTH_FORBIDDEN` |
 | `/api/v1/system/stores/{storeName}` | DELETE | 不可 | 可 | 200 `{ "deletedStore" }`；最後一間 409 `LAST_STORE`；找不到 404 `LOCATION_NOT_FOUND`；staff 403 `AUTH_FORBIDDEN` |
 
-沒有更新門市或設定預設門市的 API。`isDefault` 只出現在清單回應。角色每次請求都從白名單重讀，降權的下一筆管理請求就是 403。
+沒有設定預設門市的 API。`isDefault` 只出現在清單回應。角色每次請求都從白名單重讀，降權的下一筆管理請求就是 403。
 
 庫存地點（`/api/v1/inventory/locations`）不是門市清單，規則不變。
 
@@ -129,14 +130,15 @@
 
 ## 結帳門市與庫存
 
-登入門市只做訂單歸屬，跟庫存位置無關。換門市不會改變扣庫存的地點，也不會產生每間門市各自的庫存。
+每間登入門市綁兩個庫存點。`inventoryLocationId` 是正常貨，`returnedInventoryLocationId` 是退貨品。兩個可以是同一個庫存點。換門市會改扣庫存的地點。多間門市可以綁同一個庫存點。
 
 - 不要再依賴 body 的 `branchId`。後端會忽略它。
-- 訂單的 `branchId` 與 `branchName` 都是目前 session 的門市名稱。這只記這筆訂單屬於哪一間登入門市。
-- `cashierId` 是 `user.id`。`cashierName` 是白名單顯示名稱；該欄空白時用帳號 email。已寫入的舊訂單不會被改寫。
-- 扣庫存與庫存不足規則維持原樣：結帳仍鎖定並增減既有庫存地點「門市現貨」（`store`），不是 `store_branch`。庫存不足仍是 `409` `INSUFFICIENT_STORE_STOCK`。換門市不會改這個扣減來源。
+- 訂單的 `branchId` 與 `branchName` 都是目前 session 的門市名稱。之後改綁不會改寫舊訂單，也不會搬走已經入帳的數量。
+- `cashierId` 是 `user.id`。`cashierName` 是白名單顯示名稱；該欄空白時用帳號 email。
+- 銷售扣該門市的正常庫存點，數量可以變成負數，不會回 `INSUFFICIENT_STORE_INVENTORY`。
+- 退貨一定會增加數量。`restock` 省略或為 `true` 時，加回該門市的正常庫存點，可以再賣。`restock: false` 時，加到該門市的退貨庫存點。
 
-換門市時若購物車有商品：前端顯示提示即可，不要擋住，也不要清掉數量。後端不接收購物車。下一筆成功結帳的訂單歸屬改為新門市，庫存檢查與扣減仍走原來的庫存地點。
+換門市時若購物車有商品：前端顯示提示即可，不要擋住，也不要清掉數量。後端不接收購物車。下一筆成功結帳改扣新門市綁定的庫存點。
 
 ## 購物車（只在前端）
 

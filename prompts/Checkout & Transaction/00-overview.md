@@ -38,8 +38,8 @@ Recording responsibilities:
 - Snapshots copied by the server, never trusted from the client for identity fields: product sku / name / scale / brand, list price as `originalPrice`, buyer name and phone, cashier id and name (from the current user, not the body), branch id and name.
 - Sold `unitPrice` comes from the client when `isManualPrice` is true, and when `pointsDiscountApplied` is true (the frontend already subtracted NT$360). Otherwise the server sets it from the current `listPrice`. The server does not subtract 360 again.
 - A bound member may redeem points for **NT$360 off a product**, at most once for that product on the sale. Each redeemed line stores `pointsDiscountApplied`. Buying several different products can redeem several times. Quantity does not multiply the discount: two units of one product are still one exchange. The frontend reduces that line's `unitPrice` by 360 before submit. If that reduction would make the line `subtotal` negative, the line `subtotal` is **0**. `totalAmount` does not apply a second points floor. The system does not store or check a points balance. The cashier confirms the points in the real world, then sets the flag.
-- Positive quantity deducts `store` stock. When the shelf quantity is short, the counter shows a warning popup and the cashier decides whether to complete the sale. The server does not block the sale.
-- Negative quantity is a return. It must point at the earlier sale line whose units are being returned, must not exceed the remaining returnable quantity, and restocks `store` when `restock` is true. The refund uses that line's `unitPrice` only (already reduced by 360 when the original sale redeemed points). It does not subtract 360 again. The original line keeps `pointsDiscountApplied` and `pointsDiscountAmount`.
+- Positive quantity deducts the login store's normal location. When that quantity is short, the counter shows a warning popup and the cashier decides whether to complete the sale. The server does not block the sale.
+- Negative quantity is a return. It must point at the earlier sale line whose units are being returned and must not exceed the remaining returnable quantity. `restock` omitted or `true` adds the units back to the login store's normal location. `restock: false` adds them to that store's returned location. A return always changes quantity. The refund uses that line's `unitPrice` only (already reduced by 360 when the original sale redeemed points). It does not subtract 360 again. The original line keeps `pointsDiscountApplied` and `pointsDiscountAmount`.
 - `X-Idempotency-Key` so a double submit returns the original order JSON. A lookup before insert is not enough. If the insert hits the unique constraint on `idempotency_key`, catch it, re-select the stored order, and replay that JSON when the cashier and body match.
 
 ### Out of scope
@@ -63,7 +63,7 @@ HTTP (api/v1/endpoints/checkout.py)
   → CheckoutService (services/checkout_service.py)
     → ORM models (models/checkout.py)
       → DB: checkout_order | checkout_order_item | checkout_payment
-    → ProductService / product_stock   (read + store quantity)
+    → ProductService / product_inventory   (read + store quantity)
     → customer.total_spent             (member spending only)
 ```
 

@@ -23,7 +23,7 @@ def _utc_now() -> datetime:
 
 
 class Product(Base):
-    """Catalog metadata. totalStock / preOrderPendingCount are computed on read."""
+    """Catalog metadata. totalInventory / preOrderPendingCount are computed on read."""
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     sku: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
@@ -54,8 +54,8 @@ class Product(Base):
     created_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     updated_by: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
 
-    stocks: Mapped[List["ProductStock"]] = relationship(
-        "ProductStock",
+    inventories: Mapped[List["ProductInventory"]] = relationship(
+        "ProductInventory",
         back_populates="product",
         cascade="all, delete-orphan",
         lazy="selectin",
@@ -74,7 +74,7 @@ class Product(Base):
     )
 
 
-class ProductStock(Base):
+class ProductInventory(Base):
     """One stock row per product location."""
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -84,14 +84,18 @@ class ProductStock(Base):
         nullable=False,
         index=True,
     )
-    location: Mapped[str] = mapped_column(String(64), nullable=False)
-    location_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    location: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey("inventory_location.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    location_name: Mapped[str] = mapped_column(String(128), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
-    product: Mapped["Product"] = relationship("Product", back_populates="stocks")
+    product: Mapped["Product"] = relationship("Product", back_populates="inventories")
 
     __table_args__ = (
-        UniqueConstraint("product_id", "location", name="uq_product_stock_product_location"),
+        UniqueConstraint("product_id", "location", name="uq_product_inventory_product_location"),
     )
 
 

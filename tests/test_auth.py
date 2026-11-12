@@ -10,13 +10,19 @@ from sqlalchemy import select
 from src.core.config import settings
 from src.db.session import SessionFactory
 from src.models.auth import AuthSession
-from src.models.product import ProductStock
+from src.models.location import InventoryLocation
+from src.models.product import ProductInventory
 from src.models.system import OAuthAccount, StoreBranch
 from src.schemas.common import BusinessErrorCode
 from src.schemas.system import UpdateOAuthAccountRequest
 from src.services.bootstrap import bootstrap_admin_if_empty
-from src.services.checkout_service import STORE_LOCATION
 from src.services.google_identity import GoogleTokenError, verify_google_id_token
+from src.services.inventory_service import (
+    DEFAULT_STORE_LOCATION_ID,
+    RETURNED_LOCATION_ID,
+    ensure_locations,
+    insert_location,
+)
 from src.services.system_service import SystemService
 from tests.conftest import pragma_columns
 
@@ -51,11 +57,29 @@ def _add_account(email: str, role: str = "admin", name: str = "收銀員", accou
     return account_id
 
 
-def _add_store(name: str) -> None:
+def _store_body(name: str) -> dict:
+    return {
+        "name": name,
+        "inventoryLocationId": DEFAULT_STORE_LOCATION_ID,
+        "returnedInventoryLocationId": RETURNED_LOCATION_ID,
+    }
+
+
+def _add_store(name: str) -> str:
     db = SessionFactory()
     try:
-        db.add(StoreBranch(name=name, is_default=False))
+        ensure_locations(db)
+        location = insert_location(db, name)
+        db.add(
+            StoreBranch(
+                name=name,
+                is_default=False,
+                inventory_location_id=location.id,
+                returned_inventory_location_id=RETURNED_LOCATION_ID,
+            )
+        )
         db.commit()
+        return location.id
     finally:
         db.close()
 
@@ -160,7 +184,7 @@ def test_business_api_requires_login_and_store(client, google_jwks):
     stores = client.get("/api/v1/auth/stores", headers=_auth(login["token"]))
     assert stores.status_code == 200
     assert [row["name"] for row in stores.json()] == ["奇可門市"]
-    created_store = client.post("/api/v1/system/stores", json={"name": "新門市"}, headers=_auth(login["token"]))
+    created_store = client.post("/api/v1/system/stores", json=_store_body("新門市"), headers=_auth(login["token"]))
     assert created_store.status_code == 201
 
     selected = _select(client, login["token"], "奇可門市")
@@ -283,7 +307,7 @@ def test_staff_cannot_manage_store_list_but_can_choose_one(client, google_jwks):
 
     before_selection = client.post(
         "/api/v1/system/stores",
-        json={"name": "店員搶建"},
+        json=_store_body("店員搶建"),
         headers=_auth(staff["token"]),
     )
     assert before_selection.status_code == 403
@@ -294,7 +318,12 @@ def test_staff_cannot_manage_store_list_but_can_choose_one(client, google_jwks):
 
     for response in (
         client.get("/api/v1/system/stores", headers=_auth(staff["token"])),
-        client.post("/api/v1/system/stores", json={"name": "店員門市"}, headers=_auth(staff["token"])),
+        client.post("/api/v1/system/stores", json=_store_body("店員門市"), headers=_auth(staff["token"])),
+        client.put(
+            "/api/v1/system/stores/奇可門市",
+            json=_store_body("奇可門市"),
+            headers=_auth(staff["token"]),
+        ),
         client.delete("/api/v1/system/stores/奇可門市", headers=_auth(staff["token"])),
     ):
         assert response.status_code == 403
@@ -307,7 +336,7 @@ def test_staff_cannot_manage_store_list_but_can_choose_one(client, google_jwks):
     assert switched.status_code == 200
     assert switched.json()["storeName"] == "奇可門市"
 
-    created = client.post("/api/v1/system/stores", json={"name": "新門市"}, headers=_auth(admin["token"]))
+    created = client.post("/api/v1/system/stores", json=_store_body("新門市"), headers=_auth(admin["token"]))
     assert created.status_code == 201
     listed = client.get("/api/v1/system/stores", headers=_auth(admin["token"]))
     assert listed.status_code == 200
@@ -334,7 +363,7 @@ def test_store_management_follows_role_on_the_next_request(client, google_jwks):
         headers=_auth(other["token"]),
     )
     assert changed.status_code == 200
-    denied = client.post("/api/v1/system/stores", json={"name": "降權後"}, headers=_auth(actor["token"]))
+    denied = client.post("/api/v1/system/stores", json=_store_body("降權後"), headers=_auth(actor["token"]))
     assert denied.status_code == 403
     assert denied.json()["code"] == "AUTH_FORBIDDEN"
     still_there = client.get("/api/v1/auth/stores", headers=_auth(actor["token"]))
@@ -457,10 +486,10 @@ def test_deleted_account_and_role_change_apply_on_the_next_request(client, googl
     assert denied.json()["code"] == "AUTH_ACCOUNT_NOT_ALLOWED"
 
 
-def test_login_store_attributes_the_order_and_does_not_change_stock_location(client, google_jwks):
+def test_checkout_deducts_the_login_store_location_and_may_go_negative(client, google_jwks):
     account_id = _add_account(ADMIN_EMAIL, "admin", "櫃台小王")
-    _add_store("奇可門市")
-    _add_store("線上網購")
+    store_location = _add_store("奇可門市")
+    online_location = _add_store("線上網購")
     login = _login(client, google_jwks)
     _select(client, login["token"], "奇可門市")
     created = client.post(
@@ -470,7 +499,6 @@ def test_login_store_attributes_the_order_and_does_not_change_stock_location(cli
     )
     assert created.status_code == 201, created.text
     product_id = created.json()["id"]
-    _set_store_stock(product_id, 1)
 
     first = client.post(
         "/api/v1/checkout/orders",
@@ -488,24 +516,10 @@ def test_login_store_attributes_the_order_and_does_not_change_stock_location(cli
     assert order["branchName"] == "奇可門市"
     assert order["cashierId"] == account_id
     assert order["cashierName"] == "櫃台小王"
-    assert _stock_qty(product_id, STORE_LOCATION) == 0
-    assert "奇可門市" not in _stock_locations(product_id)
+    assert order["items"][0]["inventoryLocationId"] == store_location
+    assert _stock_qty(product_id, store_location) == -1
 
     _select(client, login["token"], "線上網購")
-    blocked = client.post(
-        "/api/v1/checkout/orders",
-        json={
-            "items": [{"productId": product_id, "quantity": 1}],
-            "shippingFee": 0,
-            "payments": [{"type": "cash", "name": "現金", "amount": 100}],
-        },
-        headers=_auth(login["token"]),
-    )
-    assert blocked.status_code == 409
-    assert blocked.json()["code"] == "INSUFFICIENT_STORE_STOCK"
-    assert _stock_qty(product_id, STORE_LOCATION) == 0
-
-    _set_store_stock(product_id, 1)
     second = client.post(
         "/api/v1/checkout/orders",
         json={
@@ -517,14 +531,14 @@ def test_login_store_attributes_the_order_and_does_not_change_stock_location(cli
     )
     assert second.status_code == 201, second.text
     assert second.json()["order"]["branchId"] == "線上網購"
-    assert second.json()["order"]["branchName"] == "線上網購"
-    assert _stock_qty(product_id, STORE_LOCATION) == 0
-    assert "線上網購" not in _stock_locations(product_id)
+    assert second.json()["order"]["items"][0]["inventoryLocationId"] == online_location
+    assert _stock_qty(product_id, online_location) == -1
+    assert _stock_qty(product_id, store_location) == -1
 
 
 def test_checkout_response_and_replay_are_structured_data_only(client, google_jwks):
     _add_account(ADMIN_EMAIL, "admin", "櫃台小王")
-    _add_store("奇可門市")
+    store_location = _add_store("奇可門市")
     login = _login(client, google_jwks)
     _select(client, login["token"], "奇可門市")
     created = client.post(
@@ -534,7 +548,7 @@ def test_checkout_response_and_replay_are_structured_data_only(client, google_jw
     )
     assert created.status_code == 201, created.text
     product_id = created.json()["id"]
-    _set_store_stock(product_id, 2)
+    _set_location_qty(product_id, store_location, 2)
     payload = {
         "items": [{"productId": product_id, "quantity": 1, "isManualPrice": True, "unitPrice": 80, "priceDiffReason": "改價"}],
         "shippingFee": 20,
@@ -556,7 +570,7 @@ def test_checkout_response_and_replay_are_structured_data_only(client, google_jw
     assert order["items"][0]["subtotal"] == 80
     assert order["cashierName"] == "櫃台小王"
     assert order["branchName"] == "奇可門市"
-    assert _stock_qty(product_id, STORE_LOCATION) == 1
+    assert _stock_qty(product_id, store_location) == 1
 
     replay = client.post("/api/v1/checkout/orders", json=payload, headers=headers)
     assert replay.status_code == 201, replay.text
@@ -570,7 +584,7 @@ def test_checkout_response_and_replay_are_structured_data_only(client, google_jw
     assert replay_body["order"]["totalAmount"] == 100
     assert replay_body["order"]["cashierName"] == "櫃台小王"
     assert replay_body["order"]["branchName"] == "奇可門市"
-    assert _stock_qty(product_id, STORE_LOCATION) == 1
+    assert _stock_qty(product_id, store_location) == 1
 
 
 def test_bootstrap_runs_once_and_refuses_demo_addresses(monkeypatch):
@@ -675,7 +689,6 @@ def test_optional_display_name_create_update_and_cashier_fallback(client, google
     )
     assert product.status_code == 201, product.text
     product_id = product.json()["id"]
-    _set_store_stock(product_id, 2)
 
     first = client.post(
         "/api/v1/checkout/orders",
@@ -761,16 +774,28 @@ def _expire(raw_token: str) -> None:
         db.close()
 
 
-def _set_store_stock(product_id: str, quantity: int) -> None:
+def _set_location_qty(product_id: str, location: str, quantity: int) -> None:
     db = SessionFactory()
     try:
         stock = db.scalar(
-            select(ProductStock).where(
-                ProductStock.product_id == product_id,
-                ProductStock.location == STORE_LOCATION,
+            select(ProductInventory).where(
+                ProductInventory.product_id == product_id,
+                ProductInventory.location == location,
             )
         )
-        stock.quantity = quantity
+        if stock is None:
+            place = db.get(InventoryLocation, location)
+            assert place is not None
+            db.add(
+                ProductInventory(
+                    product_id=product_id,
+                    location=location,
+                    location_name=place.name,
+                    quantity=quantity,
+                )
+            )
+        else:
+            stock.quantity = quantity
         db.commit()
     finally:
         db.close()
@@ -780,21 +805,12 @@ def _stock_qty(product_id: str, location: str) -> int:
     db = SessionFactory()
     try:
         stock = db.scalar(
-            select(ProductStock).where(
-                ProductStock.product_id == product_id,
-                ProductStock.location == location,
+            select(ProductInventory).where(
+                ProductInventory.product_id == product_id,
+                ProductInventory.location == location,
             )
         )
-        return stock.quantity
-    finally:
-        db.close()
-
-
-def _stock_locations(product_id: str) -> set[str]:
-    db = SessionFactory()
-    try:
-        rows = db.scalars(select(ProductStock.location).where(ProductStock.product_id == product_id)).all()
-        return set(rows)
+        return 0 if stock is None else stock.quantity
     finally:
         db.close()
 
