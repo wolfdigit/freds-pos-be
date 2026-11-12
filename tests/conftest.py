@@ -1,8 +1,16 @@
 import os
 import tempfile
 
-_db_file = tempfile.NamedTemporaryFile(prefix="freds-auth-", suffix=".db", delete=False)
-os.environ["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + _db_file.name
+# Default is a temporary SQLite file so CI can run without a database server.
+# Inventory foreign keys are enforced by PostgreSQL; set TEST_DATABASE_URI to a
+# throwaway Postgres database to run this same suite there. See README.
+_db_file = None
+_test_database_uri = os.environ.get("TEST_DATABASE_URI", "").strip()
+if _test_database_uri:
+    os.environ["SQLALCHEMY_DATABASE_URI"] = _test_database_uri
+else:
+    _db_file = tempfile.NamedTemporaryFile(prefix="freds-auth-", suffix=".db", delete=False)
+    os.environ["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + _db_file.name
 os.environ["DEBUG"] = "false"
 os.environ["GOOGLE_CLIENT_ID"] = "test-client.apps.googleusercontent.com"
 os.environ["AUTH_BOOTSTRAP_ADMIN_EMAIL"] = ""
@@ -14,7 +22,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi.testclient import TestClient
 from jwt.algorithms import RSAAlgorithm
-from sqlalchemy import text
+from sqlalchemy import inspect
 
 from src.db.base import Base
 from src.db.session import SessionFactory, engine
@@ -69,13 +77,10 @@ def private_pem(signing_key):
 
 
 def sqlite_path() -> str:
+    if _db_file is None:
+        raise RuntimeError("tests are using TEST_DATABASE_URI, not the default SQLite file")
     return _db_file.name
 
 
 def pragma_columns(table: str) -> set[str]:
-    db = SessionFactory()
-    try:
-        rows = db.execute(text(f"PRAGMA table_info({table})")).all()
-    finally:
-        db.close()
-    return {row[1] for row in rows}
+    return {column["name"] for column in inspect(engine).get_columns(table)}

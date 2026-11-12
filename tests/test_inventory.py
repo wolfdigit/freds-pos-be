@@ -2,7 +2,7 @@ import pytest
 from sqlalchemy import text
 
 from src.core.exceptions import BusinessException
-from src.db.session import SessionFactory
+from src.db.session import SessionFactory, engine
 from src.schemas.common import BusinessErrorCode
 from src.schemas.inventory import DeleteInventoryLocationRequest
 from src.services.inventory_service import RETURNED_LOCATION_ID, InventoryService, ensure_locations
@@ -10,6 +10,9 @@ from tests.test_auth import ADMIN_EMAIL, _add_account, _add_store, _auth, _login
 
 
 def _sqlite_foreign_keys(enabled: bool) -> None:
+    # PostgreSQL always enforces foreign keys. PRAGMA is SQLite-only.
+    if engine.dialect.name != "sqlite":
+        return
     db = SessionFactory()
     try:
         db.execute(text(f"PRAGMA foreign_keys={'ON' if enabled else 'OFF'}"))
@@ -90,6 +93,60 @@ def test_receipt_transfer_adjust_and_store_quantity(client, google_jwks):
     duplicate = client.post("/api/v1/inventory/locations", json={"name": "後方倉庫"}, headers=headers)
     assert duplicate.status_code == 409
     assert duplicate.json()["code"] == "LOCATION_NAME_TAKEN"
+
+
+def _assert_name_too_long(response) -> None:
+    assert response.status_code == 422, response.text
+    body = response.json()
+    assert "code" not in body
+    detail = body["detail"]
+    assert detail[0]["loc"][-1] == "name"
+    assert detail[0]["type"] == "string_too_long"
+
+
+def test_location_name_max_length_is_64_after_trim(client, google_jwks):
+    _add_account(ADMIN_EMAIL)
+    _add_store("奇可門市")
+    login = _login(client, google_jwks)
+    _select(client, login["token"], "奇可門市")
+    headers = _auth(login["token"])
+    created_name = "位" * 64
+    created = client.post(
+        "/api/v1/inventory/locations",
+        json={"name": f"  {created_name}  "},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["name"] == created_name
+    location_id = created.json()["id"]
+
+    rejected = client.post(
+        "/api/v1/inventory/locations",
+        json={"name": f"  {'位' * 65}  "},
+        headers=headers,
+    )
+    _assert_name_too_long(rejected)
+    names = [row["name"] for row in client.get("/api/v1/inventory/locations", headers=headers).json()]
+    assert "位" * 65 not in names
+
+    renamed_name = "庫" * 64
+    renamed = client.put(
+        f"/api/v1/inventory/locations/{location_id}",
+        json={"name": f"\n{renamed_name}\t"},
+        headers=headers,
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["name"] == renamed_name
+
+    rename_rejected = client.put(
+        f"/api/v1/inventory/locations/{location_id}",
+        json={"name": "庫" * 65},
+        headers=headers,
+    )
+    _assert_name_too_long(rename_rejected)
+    current = client.get("/api/v1/inventory/locations", headers=headers)
+    row = next(item for item in current.json() if item["id"] == location_id)
+    assert row["name"] == renamed_name
 
 
 def test_move_all_then_delete_rebinds_the_store(client, google_jwks):

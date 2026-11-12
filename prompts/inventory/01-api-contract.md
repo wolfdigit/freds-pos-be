@@ -18,7 +18,7 @@ An unknown id is `404` `LOCATION_NOT_FOUND`. The same id may be sent for both bi
 
 `GET /system/stores` and `GET /auth/stores` include `inventoryLocationId`, `inventoryLocationName`, `returnedInventoryLocationId`, and `returnedInventoryLocationName`.
 
-A typed location name on `POST /inventory/locations` or a rename must not match an existing name. A match is `409` `LOCATION_NAME_TAKEN`. The comparison is the trimmed name.
+A typed location name on `POST /inventory/locations` or a rename is trimmed first. After trimming it must be at most 64 characters. A longer name is a `422` validation error (`detail`, not `BusinessError`). That width matches `product_stock.location_name` before the column was widened, so `alembic downgrade` can narrow the copied name. The stored columns stay wider. A trimmed name must not match an existing name. A match is `409` `LOCATION_NAME_TAKEN`.
 
 ## Stock locations
 
@@ -40,7 +40,7 @@ There is no `isActive` field.
 
 ### `POST /inventory/locations` and `PUT /inventory/locations/{locationId}`
 
-`name` is required on create. Optional `icon` and `displayOrder`. Creating a location does not bind a store.
+`name` is required on create. Optional `icon` and `displayOrder`. Creating a location does not bind a store. `name` is trimmed and then limited to 64 characters on create and on rename.
 
 ### `DELETE /inventory/locations/{locationId}`
 

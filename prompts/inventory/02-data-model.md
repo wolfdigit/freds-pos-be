@@ -5,7 +5,7 @@
 | Column | Notes |
 | --- | --- |
 | `id` | Primary key |
-| `name` | Unique, trimmed |
+| `name` | Unique, trimmed, at most 64 characters in the API. The column is `varchar(128)`. The limit matches the pre-widening width of the copied `location_name`, so downgrade can narrow that copy. |
 | `icon` | |
 | `is_default` | |
 | `display_order` | |

@@ -64,6 +64,7 @@ BE contract lives in [`../openapi.yaml`](../openapi.yaml). FE `docs/openapi.yaml
 | Case | HTTP | Code | FE |
 | --- | --- | --- | --- |
 | Duplicate location name | 409 | `LOCATION_NAME_TAKEN` | show the message |
+| Location name longer than 64 characters after trim | 422 | validation `detail` | shorten the name |
 | Delete the last location | 409 | `LAST_LOCATION` | disable delete when the list has one location |
 | Delete with quantity, including negative | 409 | `LOCATION_NOT_EMPTY` | point at transfer or manual zero |
 | Delete without a rebind target | 400 | `INVALID_LOCATION_TRANSFER` | require another location |

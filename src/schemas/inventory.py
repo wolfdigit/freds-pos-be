@@ -25,20 +25,38 @@ class InventoryLocationDto(BaseModel):
     returned_store_names: List[str] = Field(default_factory=list, alias="returnedStoreNames")
 
 
+def _strip_text(value: object) -> object:
+    if isinstance(value, str):
+        return value.strip()
+    return value
+
+
 class CreateInventoryLocationRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
-    name: str
+    # 64 matches product_stock.location_name before it was widened. Downgrade
+    # narrows the copied name back to that width, so a longer name must not be stored.
+    name: str = Field(..., max_length=64)
     icon: Optional[str] = None
     display_order: Optional[int] = Field(None, alias="displayOrder")
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, value: object) -> object:
+        return _strip_text(value)
 
 
 class UpdateInventoryLocationRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 
-    name: Optional[str] = None
+    name: Optional[str] = Field(None, max_length=64)
     icon: Optional[str] = None
     display_order: Optional[int] = Field(None, alias="displayOrder")
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def strip_name(cls, value: object) -> object:
+        return _strip_text(value)
 
 
 class DeleteInventoryLocationRequest(BaseModel):

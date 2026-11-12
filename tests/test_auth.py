@@ -10,6 +10,7 @@ from sqlalchemy import select
 from src.core.config import settings
 from src.db.session import SessionFactory
 from src.models.auth import AuthSession
+from src.models.location import InventoryLocation
 from src.models.product import ProductInventory
 from src.models.system import OAuthAccount, StoreBranch
 from src.schemas.common import BusinessErrorCode
@@ -537,7 +538,7 @@ def test_checkout_deducts_the_login_store_location_and_may_go_negative(client, g
 
 def test_checkout_response_and_replay_are_structured_data_only(client, google_jwks):
     _add_account(ADMIN_EMAIL, "admin", "櫃台小王")
-    _add_store("奇可門市")
+    store_location = _add_store("奇可門市")
     login = _login(client, google_jwks)
     _select(client, login["token"], "奇可門市")
     created = client.post(
@@ -547,7 +548,7 @@ def test_checkout_response_and_replay_are_structured_data_only(client, google_jw
     )
     assert created.status_code == 201, created.text
     product_id = created.json()["id"]
-    _set_store_stock(product_id, 2)
+    _set_location_qty(product_id, store_location, 2)
     payload = {
         "items": [{"productId": product_id, "quantity": 1, "isManualPrice": True, "unitPrice": 80, "priceDiffReason": "改價"}],
         "shippingFee": 20,
@@ -569,7 +570,7 @@ def test_checkout_response_and_replay_are_structured_data_only(client, google_jw
     assert order["items"][0]["subtotal"] == 80
     assert order["cashierName"] == "櫃台小王"
     assert order["branchName"] == "奇可門市"
-    assert _stock_qty(product_id, STORE_LOCATION) == 1
+    assert _stock_qty(product_id, store_location) == 1
 
     replay = client.post("/api/v1/checkout/orders", json=payload, headers=headers)
     assert replay.status_code == 201, replay.text
@@ -583,7 +584,7 @@ def test_checkout_response_and_replay_are_structured_data_only(client, google_jw
     assert replay_body["order"]["totalAmount"] == 100
     assert replay_body["order"]["cashierName"] == "櫃台小王"
     assert replay_body["order"]["branchName"] == "奇可門市"
-    assert _stock_qty(product_id, STORE_LOCATION) == 1
+    assert _stock_qty(product_id, store_location) == 1
 
 
 def test_bootstrap_runs_once_and_refuses_demo_addresses(monkeypatch):
@@ -768,6 +769,33 @@ def _expire(raw_token: str) -> None:
     try:
         session = db.get(AuthSession, digest)
         session.expires_at = datetime.now(timezone.utc) - timedelta(seconds=5)
+        db.commit()
+    finally:
+        db.close()
+
+
+def _set_location_qty(product_id: str, location: str, quantity: int) -> None:
+    db = SessionFactory()
+    try:
+        stock = db.scalar(
+            select(ProductInventory).where(
+                ProductInventory.product_id == product_id,
+                ProductInventory.location == location,
+            )
+        )
+        if stock is None:
+            place = db.get(InventoryLocation, location)
+            assert place is not None
+            db.add(
+                ProductInventory(
+                    product_id=product_id,
+                    location=location,
+                    location_name=place.name,
+                    quantity=quantity,
+                )
+            )
+        else:
+            stock.quantity = quantity
         db.commit()
     finally:
         db.close()

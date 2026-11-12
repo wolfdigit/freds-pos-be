@@ -507,6 +507,7 @@ paths:
       summary: Create a new stock location
       description: |
         Maps to `ILocationService.createLocation`. Adds a new custom inventory location to the system.
+        `name` is trimmed, then limited to 64 characters. A longer name is a validation error.
       requestBody:
         required: true
         content:
@@ -528,6 +529,7 @@ paths:
       summary: Update a stock location
       description: |
         Maps to `ILocationService.updateLocation`. Updates name, icon, or display order.
+        A sent `name` is trimmed, then limited to 64 characters. A longer name is a validation error and the stored name stays unchanged.
       parameters:
         - name: locationId
           in: path
@@ -714,7 +716,7 @@ paths:
               $ref: '#/components/schemas/CreateOrderPayload'
       responses:
         '201':
-          description: Order created with receipt HTML
+          description: Order created. The body is the calculated order only.
           content:
             application/json:
               schema:
@@ -1443,6 +1445,8 @@ components:
       properties:
         name:
           type: string
+          maxLength: 64
+          description: Trimmed before the length check. At most 64 characters.
           example: 高雄巨蛋門市
         icon:
           type: string
@@ -1455,6 +1459,8 @@ components:
       properties:
         name:
           type: string
+          maxLength: 64
+          description: Trimmed before the length check. At most 64 characters. Omit to leave the stored name unchanged.
           example: 門市展示區
         icon:
           type: string
