@@ -145,12 +145,12 @@ In one commit:
 
 | Status | Body |
 |--------|------|
-| `201` | `CheckoutReceipt`: `{ order, receiptPrintHtml }`. `order` is `CheckoutOrder`. `receiptPrintHtml` is the thermal slip. |
+| `201` | `CheckoutReceipt`: `{ order }`. `order` is `CheckoutOrder`. The server does not return receipt HTML. |
 | `404` | `PRODUCT_NOT_FOUND`, `CUSTOMER_NOT_FOUND`, `ORDER_NOT_FOUND` |
 | `409` | Return quantity, return customer, payment, or idempotency conflicts |
 | `422` | Malformed body, empty items, zero quantity, or unknown branch |
 
-`receiptPrintHtml` is returned with the order. There is no invoice on the slip. The HTML uses `order.branchName`, `order.orderNumber`, `order.cashierName`, `order.createdAt`, each item's `name`, `quantity`, `unitPrice`, and `subtotal`, `order.shippingFee`, `order.payments`, and `order.totalAmount`.
+The `201` body is the calculated `order` only. There is no invoice and no receipt HTML. The client formats the slip from `order.branchName`, `order.orderNumber`, `order.cashierName`, `order.createdAt`, each item's `name`, `quantity`, `unitPrice`, and `subtotal`, `order.shippingFee`, `order.payments`, and `order.totalAmount`.
 
 ---
 

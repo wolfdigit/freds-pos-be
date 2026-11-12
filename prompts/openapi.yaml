@@ -23,7 +23,7 @@ info:
     **Kept on top of the frontend contract**
     - Products use `status` (`active` or `deleted`) to record soft delete. `deleted` mirrors that state. `GET /products` omits `status: deleted`. There is no product `costPrice`.
     - Checkout keeps `branchId` / `branchName`, points-discount fields, order number `SO-YYYYMMDD-HHMMSS-####` in Asia/Taipei, and a paged `GET /checkout/orders`.
-    - `POST /checkout/orders` returns `receiptPrintHtml`.
+    - `POST /checkout/orders` returns `{ order }` with the calculated amounts. The client formats the slip.
     - Payment types are `cash`, `credit_card`, `line_pay`, `bank_transfer`, and `cod`. `cod` is accepted.
 
 servers:
@@ -690,7 +690,7 @@ paths:
         5. **Member Asset Update**:
            - Update `customer.totalSpent += totalAmount`
         6. **Receipt & Persistence**:
-           - Persist `CheckoutOrder` and return `CheckoutReceipt` with thermal print HTML.
+           - Persist `CheckoutOrder` and return `{ order }` with the calculated amounts. The client formats the slip.
            - `orderNumber` is `SO-YYYYMMDD-HHMMSS-####` in Asia/Taipei. `####` is the max suffix for that second, plus 1. There is no retry when two sales share a second.
            - Points discount is already inside the line `unitPrice`. The server also stores `pointsDiscountApplied` and `pointsDiscountAmount` (360). It does not subtract 360 again.
            - A positive line rejects `deleted: true` with `PRODUCT_NOT_FOUND`. A return may still use that product id.
@@ -2168,13 +2168,11 @@ components:
 
     CheckoutReceipt:
       type: object
-      required: [order, receiptPrintHtml]
+      required: [order]
+      description: Calculated order only. Receipt layout is not part of this response.
       properties:
         order:
           $ref: '#/components/schemas/CheckoutOrder'
-        receiptPrintHtml:
-          type: string
-          description: Thermal-style receipt HTML for printing and preview
 
     CheckoutOrderSearchResponse:
       type: object

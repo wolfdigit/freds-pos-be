@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import html
 import json
 import uuid
 from dataclasses import dataclass
@@ -154,38 +153,8 @@ def _to_order_schema(order: CheckoutOrder) -> CheckoutOrderSchema:
     )
 
 
-def _receipt_html(order: CheckoutOrderSchema) -> str:
-    rows = "".join(
-        "<tr>"
-        f"<td>{html.escape(item.name)}</td>"
-        f"<td>{item.quantity}</td>"
-        f"<td>{item.unit_price}</td>"
-        f"<td>{item.subtotal}</td>"
-        "</tr>"
-        for item in order.items
-    )
-    payments = "".join(
-        f"<div>{html.escape(payment.name)} {payment.amount}</div>" for payment in order.payments
-    )
-    created = order.created_at.astimezone(TAIPEI).strftime("%Y-%m-%d %H:%M:%S")
-    return (
-        "<div>"
-        f"<div>{html.escape(order.branch_name)}</div>"
-        f"<div>單號 {html.escape(order.order_number)}</div>"
-        f"<div>收銀 {html.escape(order.cashier_name)}</div>"
-        f"<div>{html.escape(created)}</div>"
-        "<table><thead><tr><th>品名</th><th>數量</th><th>單價</th><th>小計</th></tr></thead>"
-        f"<tbody>{rows}</tbody></table>"
-        f"<div>運費 {order.shipping_fee}</div>"
-        f"{payments}"
-        f"<div>合計 {order.total_amount}</div>"
-        "</div>"
-    )
-
-
 def _receipt(order: CheckoutOrder) -> CheckoutReceipt:
-    schema = _to_order_schema(order)
-    return CheckoutReceipt(order=schema, receiptPrintHtml=_receipt_html(schema))
+    return CheckoutReceipt(order=_to_order_schema(order))
 
 
 def _raise(status_code: int, code: BusinessErrorCode, message: str) -> None:
