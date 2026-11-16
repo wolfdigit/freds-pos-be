@@ -6,7 +6,7 @@ api_router = APIRouter()
 # 掛載健康檢查模組
 api_router.include_router(health.router, tags=["Health"])
 
-# Google 登入與門市選擇。尚未選門市時只能用這裡的少數路由。
+# Google 登入與門市選擇。店員尚未選門市時只能用這裡的少數路由；管理員不受此限。
 api_router.include_router(auth.router, prefix="/auth", tags=["Auth"])
 
 # 商品目錄
