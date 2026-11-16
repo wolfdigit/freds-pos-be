@@ -99,7 +99,7 @@
 
 `admin` 與 `staff` 都能使用商品、會員、庫存、結帳查詢、預購。白名單與門市清單維護只限 `admin`。管理員維護白名單不需要先選門市。
 
-要知道「目前登入門市」才能做的操作，沒有選門市時回 `403` `AUTH_STORE_REQUIRED`，不改資料。目前只有 `POST /api/v1/checkout/orders`：它扣 session 門市的正常庫存點，退貨則進該門市的退貨庫存點。有選門市就用該門市，管理員與店員相同。請求沒有另加門市參數，body 的 `branchId` 仍忽略。
+要知道「目前登入門市」才能做的操作，沒有選門市時回 `403` `AUTH_STORE_REQUIRED`，不改資料。目前只有 `POST /api/v1/checkout/orders`：它扣 session 門市的正常庫存點；退貨依 `restock` 加回該門市的正常庫存點（省略或 `true`）或退貨庫存點（`false`）。有選門市就用該門市，管理員與店員相同。請求沒有另加門市參數，body 的 `branchId` 仍忽略。
 
 商品的 `loginStoreQuantity` 與 `loginStoreReturnedQuantity` 在沒有選門市時是 `null`（不適用，不是數量 0）。已選門市時是該門市的實際數量，缺列是 `0`，也可以是負數。`totalInventory` 與 `inventories` 仍是全部地點，不因門市而篩掉。
 
