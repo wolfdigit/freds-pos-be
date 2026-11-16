@@ -24,7 +24,7 @@ info:
     - Products use `status` (`active` or `deleted`) to record soft delete. `deleted` mirrors that state. `GET /products` omits `status: deleted`. There is no product `costPrice`.
     - Checkout keeps `branchId` / `branchName`, points-discount fields, order number `SO-YYYYMMDD-HHMMSS-####` in Asia/Taipei, and a paged `GET /checkout/orders`.
     - `POST /checkout/orders` returns `{ order }` with the calculated amounts. The client formats the slip.
-    - Payment types are `cash`, `credit_card`, `line_pay`, `bank_transfer`, and `cod`. `cod` is accepted.
+    - Writable payment types on `POST /checkout/orders` (sales and refunds) are `cash`, `bank_transfer_ctbc`, `bank_transfer_ubot`, `credit_card_physical`, `credit_card_online`, `line_pay`, and `cod`. Stored orders may also return the legacy types `credit_card` and `bank_transfer`; those two are not accepted on new checkouts.
 
 servers:
   - url: http://localhost:8000/api/v1
@@ -1940,7 +1940,16 @@ components:
 
     PaymentMethodType:
       type: string
-      enum: [cash, credit_card, line_pay, bank_transfer, cod]
+      description: Writable payment type on POST /checkout/orders (sales and refunds).
+      enum: [cash, bank_transfer_ctbc, bank_transfer_ubot, credit_card_physical, credit_card_online, line_pay, cod]
+
+    StoredPaymentMethodType:
+      type: string
+      description: >
+        Payment type as stored on an order. Includes the writable frontend types plus
+        legacy `credit_card` and `bank_transfer` from earlier rows. Those two are
+        read-only; new checkouts must use PaymentMethodType.
+      enum: [cash, bank_transfer_ctbc, bank_transfer_ubot, credit_card_physical, credit_card_online, line_pay, cod, credit_card, bank_transfer]
 
     PaymentTender:
       type: object
@@ -1948,6 +1957,27 @@ components:
       properties:
         type:
           $ref: '#/components/schemas/PaymentMethodType'
+        name:
+          type: string
+          example: 現金
+        amount:
+          type: integer
+        tenderedCash:
+          type: integer
+          description: Cash notes received
+        changeAmount:
+          type: integer
+        transactionRef:
+          type: string
+          description: Card last-4 or transfer last-5
+
+    StoredPaymentTender:
+      type: object
+      required: [type, name, amount]
+      description: Payment row returned on an order. `type` may be a legacy stored value.
+      properties:
+        type:
+          $ref: '#/components/schemas/StoredPaymentMethodType'
         name:
           type: string
           example: 現金
@@ -2098,7 +2128,7 @@ components:
         payments:
           type: array
           items:
-            $ref: '#/components/schemas/PaymentTender'
+            $ref: '#/components/schemas/StoredPaymentTender'
         note:
           type: string
         createdAt:

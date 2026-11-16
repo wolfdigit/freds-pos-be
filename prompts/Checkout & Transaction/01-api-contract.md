@@ -59,13 +59,17 @@ There is no invoice and no `costPrice` on the order or the line.
 
 ### `PaymentTender`
 
-Same fields as the frontend tender:
+Same fields as the frontend tender.
 
-`cash` | `credit_card` | `line_pay` | `bank_transfer` | `cod`
+Writable `type` values on `POST /checkout/orders` (sales and refunds):
+
+`cash` | `bank_transfer_ctbc` | `bank_transfer_ubot` | `credit_card_physical` | `credit_card_online` | `line_pay` | `cod`
+
+Orders already stored may also return the legacy types `credit_card` and `bank_transfer`. Those two are not accepted on a new checkout or refund. Historical rows are not rewritten.
 
 | Field | Type | Notes |
 |-------|------|--------|
-| `type` | `PaymentMethodType` | `cash`, `credit_card`, `line_pay`, `bank_transfer`, or `cod`. `cod` is accepted. |
+| `type` | `PaymentMethodType` on write, `StoredPaymentMethodType` on read | Writable values are listed above. `credit_card` and `bank_transfer` remain readable on existing rows. |
 | `name` | string | Required. Display name, such as `現金`. |
 | `amount` | integer | This tender's applied amount. Negative on a refund tender. |
 | `tenderedCash` | integer | Optional. Cash notes received. |

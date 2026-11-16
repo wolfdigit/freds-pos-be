@@ -25,8 +25,9 @@ from src.schemas.checkout import (
     CreateOrderItem,
     CreateOrderRequest,
     OrderStatus,
-    PaymentMethodType,
     PaymentTender,
+    StoredPaymentMethodType,
+    StoredPaymentTender,
 )
 from src.schemas.common import BusinessErrorCode
 from src.services.auth_service import AuthService, Principal
@@ -135,8 +136,8 @@ def _to_order_schema(order: CheckoutOrder) -> CheckoutOrderSchema:
         shippingFee=order.shipping_fee,
         totalAmount=order.total_amount,
         payments=[
-            PaymentTender(
-                type=PaymentMethodType(payment.type),
+            StoredPaymentTender(
+                type=StoredPaymentMethodType(payment.type),
                 name=payment.name,
                 amount=payment.amount,
                 tenderedCash=payment.tendered_cash,
