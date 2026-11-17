@@ -5,13 +5,15 @@ from typing import List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+# Writable types on POST /checkout/orders (sales and refunds). Matches the FE.
 class PaymentMethodType(str, Enum):
     CASH = "cash"
-    CREDIT_CARD = "credit_card"
+    BANK_TRANSFER_CTBC = "bank_transfer_ctbc"
+    BANK_TRANSFER_UBOT = "bank_transfer_ubot"
+    CREDIT_CARD_PHYSICAL = "credit_card_physical"
+    CREDIT_CARD_ONLINE = "credit_card_online"
     LINE_PAY = "line_pay"
-    BANK_TRANSFER = "bank_transfer"
     COD = "cod"
-
 
 class OrderStatus(str, Enum):
     COMPLETED = "completed"

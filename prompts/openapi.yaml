@@ -24,7 +24,7 @@ info:
     - Products use `status` (`active` or `deleted`) to record soft delete. `deleted` mirrors that state. `GET /products` omits `status: deleted`. There is no product `costPrice`.
     - Checkout keeps `branchId` / `branchName`, points-discount fields, order number `SO-YYYYMMDD-HHMMSS-####` in Asia/Taipei, and a paged `GET /checkout/orders`.
     - `POST /checkout/orders` returns `{ order }` with the calculated amounts. The client formats the slip.
-    - Payment types are `cash`, `credit_card`, `line_pay`, `bank_transfer`, and `cod`. `cod` is accepted.
+    - Writable payment types on `POST /checkout/orders` (sales and refunds) are `cash`, `bank_transfer_ctbc`, `bank_transfer_ubot`, `credit_card_physical`, `credit_card_online`, `line_pay`, and `cod`. A migration converts stored `credit_card` to `credit_card_physical` and `bank_transfer` to `bank_transfer_ctbc`. Those two legacy types are not accepted on new checkouts.
 
 servers:
   - url: http://localhost:8000/api/v1
@@ -1940,7 +1940,11 @@ components:
 
     PaymentMethodType:
       type: string
-      enum: [cash, credit_card, line_pay, bank_transfer, cod]
+      description: >
+        Payment type on POST /checkout/orders (sales and refunds) and on stored
+        orders. A migration converts legacy `credit_card` to `credit_card_physical`
+        and `bank_transfer` to `bank_transfer_ctbc`.
+      enum: [cash, bank_transfer_ctbc, bank_transfer_ubot, credit_card_physical, credit_card_online, line_pay, cod]
 
     PaymentTender:
       type: object
