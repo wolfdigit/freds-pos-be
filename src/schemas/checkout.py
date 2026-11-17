@@ -15,22 +15,6 @@ class PaymentMethodType(str, Enum):
     LINE_PAY = "line_pay"
     COD = "cod"
 
-
-# Values that may already be stored. Migration d7c1e4a92b08 collapsed the
-# frontend bank_transfer_* and credit_card_* types into bank_transfer and
-# credit_card, so those two remain readable on existing rows.
-class StoredPaymentMethodType(str, Enum):
-    CASH = "cash"
-    BANK_TRANSFER_CTBC = "bank_transfer_ctbc"
-    BANK_TRANSFER_UBOT = "bank_transfer_ubot"
-    CREDIT_CARD_PHYSICAL = "credit_card_physical"
-    CREDIT_CARD_ONLINE = "credit_card_online"
-    LINE_PAY = "line_pay"
-    COD = "cod"
-    CREDIT_CARD = "credit_card"
-    BANK_TRANSFER = "bank_transfer"
-
-
 class OrderStatus(str, Enum):
     COMPLETED = "completed"
     PARTIALLY_REFUNDED = "partially_refunded"
@@ -42,9 +26,10 @@ class BranchId(str, Enum):
     ONLINE = "branch-online"
 
 
-class _PaymentTenderBase(BaseModel):
+class PaymentTender(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
+    type: PaymentMethodType
     name: str
     amount: int
     tendered_cash: Optional[int] = Field(None, alias="tenderedCash")
@@ -58,14 +43,6 @@ class _PaymentTenderBase(BaseModel):
         if not stripped:
             raise ValueError("name must not be empty")
         return stripped
-
-
-class PaymentTender(_PaymentTenderBase):
-    type: PaymentMethodType
-
-
-class StoredPaymentTender(_PaymentTenderBase):
-    type: StoredPaymentMethodType
 
 
 class CheckoutOrderItem(BaseModel):
@@ -114,7 +91,7 @@ class CheckoutOrder(BaseModel):
     points_discount_amount: int = Field(..., alias="pointsDiscountAmount")
     shipping_fee: int = Field(..., alias="shippingFee")
     total_amount: int = Field(..., alias="totalAmount")
-    payments: List[StoredPaymentTender]
+    payments: List[PaymentTender]
     note: str = ""
     created_at: datetime = Field(..., alias="createdAt")
     created_by: Optional[str] = Field(None, alias="createdBy")

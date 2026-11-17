@@ -65,11 +65,11 @@ Writable `type` values on `POST /checkout/orders` (sales and refunds):
 
 `cash` | `bank_transfer_ctbc` | `bank_transfer_ubot` | `credit_card_physical` | `credit_card_online` | `line_pay` | `cod`
 
-Orders already stored may also return the legacy types `credit_card` and `bank_transfer`. Those two are not accepted on a new checkout or refund. Historical rows are not rewritten.
+A migration converts existing `credit_card` rows to `credit_card_physical` (and the default name `信用卡` to `信用卡(實體)`) and `bank_transfer` rows to `bank_transfer_ctbc` (and the default name `銀行轉帳` to `轉帳(中信)`). Custom names are left unchanged. Those two legacy types are not accepted on a new checkout or refund.
 
 | Field | Type | Notes |
 |-------|------|--------|
-| `type` | `PaymentMethodType` on write, `StoredPaymentMethodType` on read | Writable values are listed above. `credit_card` and `bank_transfer` remain readable on existing rows. |
+| `type` | `PaymentMethodType` | Writable and stored values are listed above. |
 | `name` | string | Required. Display name, such as `現金`. |
 | `amount` | integer | This tender's applied amount. Negative on a refund tender. |
 | `tenderedCash` | integer | Optional. Cash notes received. |

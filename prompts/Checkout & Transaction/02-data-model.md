@@ -85,7 +85,7 @@ A return line and a sale line for the same product are different rows. Matching 
 | `id` | `String` PK | `pay-{uuid4}` no dashes |
 | `order_id` | `String` FK | `ON DELETE CASCADE` |
 | `line_no` | `Integer` | 1-based |
-| `type` | `String(32)` | Writable values: `cash`, `bank_transfer_ctbc`, `bank_transfer_ubot`, `credit_card_physical`, `credit_card_online`, `line_pay`, `cod`. Existing rows may also contain legacy `credit_card` or `bank_transfer`. No database enum or check constraint. |
+| `type` | `String(32)` | Values: `cash`, `bank_transfer_ctbc`, `bank_transfer_ubot`, `credit_card_physical`, `credit_card_online`, `line_pay`, `cod`. A migration converts legacy `credit_card` to `credit_card_physical` and `bank_transfer` to `bank_transfer_ctbc`. No database enum or check constraint. |
 | `name` | `String` | Display name from the tender. |
 | `amount` | `Integer` | |
 | `tendered_cash` | `Integer` nullable | Cash notes received. |

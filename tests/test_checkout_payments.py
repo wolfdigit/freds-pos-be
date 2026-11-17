@@ -1,9 +1,26 @@
 from datetime import date, datetime, timezone
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 
-from src.db.session import SessionFactory
+from sqlalchemy import select
+
+from src.db.session import SessionFactory, engine
 from src.models.checkout import CheckoutOrder, CheckoutPayment
 from tests.test_auth import ADMIN_EMAIL, _add_account, _add_store, _auth, _login, _select
 from tests.test_inventory import _product
+
+MIGRATION_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "alembic/versions/2026_11_17_1040-8be3027059d9_migrate_legacy_payment_types.py"
+)
+
+
+def _load_legacy_payment_migration():
+    spec = spec_from_file_location("legacy_payment_types_migration", MIGRATION_PATH)
+    module = module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 PAYMENT_METHODS = [
     ("cash", "現金"),
@@ -67,16 +84,20 @@ def test_invalid_and_legacy_payment_types_are_rejected_on_create(client, google_
         assert response.status_code == 422, (payment_type, response.text)
 
 
-def test_legacy_stored_payment_types_are_returned_on_list_and_get(client, google_jwks):
+def test_migration_converts_legacy_payment_types(client, google_jwks):
     headers, _product_id = _ready(client, google_jwks, "SKU-PAY-LEGACY")
     now = datetime.now(timezone.utc)
+    rows = (
+        ("ord-legacy-1", "pay-legacy-1", "credit_card", "信用卡"),
+        ("ord-legacy-2", "pay-legacy-2", "bank_transfer", "銀行轉帳"),
+        ("ord-legacy-3", "pay-legacy-3", "credit_card", "自訂信用卡名"),
+        ("ord-legacy-4", "pay-legacy-4", "bank_transfer", "自訂轉帳名"),
+        ("ord-legacy-5", "pay-legacy-5", "cash", "現金"),
+        ("ord-legacy-6", "pay-legacy-6", "credit_card_online", "信用卡(網路)"),
+    )
     db = SessionFactory()
     try:
-        for index, (payment_type, payment_name) in enumerate(
-            (("credit_card", "信用卡"), ("bank_transfer", "銀行轉帳")),
-            start=1,
-        ):
-            order_id = f"ord-legacy-{index}"
+        for index, (order_id, payment_id, payment_type, payment_name) in enumerate(rows, start=1):
             db.add(
                 CheckoutOrder(
                     id=order_id,
@@ -97,7 +118,7 @@ def test_legacy_stored_payment_types_are_returned_on_list_and_get(client, google
             )
             db.add(
                 CheckoutPayment(
-                    id=f"pay-legacy-{index}",
+                    id=payment_id,
                     order_id=order_id,
                     line_no=1,
                     type=payment_type,
@@ -109,16 +130,42 @@ def test_legacy_stored_payment_types_are_returned_on_list_and_get(client, google
     finally:
         db.close()
 
+    migration = _load_legacy_payment_migration()
+    with engine.begin() as connection:
+        migration.apply_upgrade(connection.execute)
+
+    db = SessionFactory()
+    try:
+        payments = {payment.id: payment for payment in db.scalars(select(CheckoutPayment)).all()}
+        assert payments["pay-legacy-1"].type == "credit_card_physical"
+        assert payments["pay-legacy-1"].name == "信用卡(實體)"
+        assert payments["pay-legacy-2"].type == "bank_transfer_ctbc"
+        assert payments["pay-legacy-2"].name == "轉帳(中信)"
+        assert payments["pay-legacy-3"].type == "credit_card_physical"
+        assert payments["pay-legacy-3"].name == "自訂信用卡名"
+        assert payments["pay-legacy-4"].type == "bank_transfer_ctbc"
+        assert payments["pay-legacy-4"].name == "自訂轉帳名"
+        assert payments["pay-legacy-5"].type == "cash"
+        assert payments["pay-legacy-5"].name == "現金"
+        assert payments["pay-legacy-6"].type == "credit_card_online"
+        assert payments["pay-legacy-6"].name == "信用卡(網路)"
+    finally:
+        db.close()
+
+    expected = {
+        "ord-legacy-1": ("credit_card_physical", "信用卡(實體)"),
+        "ord-legacy-2": ("bank_transfer_ctbc", "轉帳(中信)"),
+        "ord-legacy-3": ("credit_card_physical", "自訂信用卡名"),
+        "ord-legacy-4": ("bank_transfer_ctbc", "自訂轉帳名"),
+        "ord-legacy-5": ("cash", "現金"),
+        "ord-legacy-6": ("credit_card_online", "信用卡(網路)"),
+    }
     listed = client.get("/api/v1/checkout/orders", params={"pageSize": 20}, headers=headers)
     assert listed.status_code == 200, listed.text
     by_id = {order["id"]: order for order in listed.json()["items"]}
-    assert by_id["ord-legacy-1"]["payments"][0]["type"] == "credit_card"
-    assert by_id["ord-legacy-2"]["payments"][0]["type"] == "bank_transfer"
-
-    for order_id, payment_type, payment_name in (
-        ("ord-legacy-1", "credit_card", "信用卡"),
-        ("ord-legacy-2", "bank_transfer", "銀行轉帳"),
-    ):
+    for order_id, (payment_type, payment_name) in expected.items():
+        assert by_id[order_id]["payments"][0]["type"] == payment_type
+        assert by_id[order_id]["payments"][0]["name"] == payment_name
         fetched = client.get(f"/api/v1/checkout/orders/{order_id}", headers=headers)
         assert fetched.status_code == 200, fetched.text
         payment = fetched.json()["payments"][0]
