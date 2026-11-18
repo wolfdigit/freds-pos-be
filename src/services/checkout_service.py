@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -36,6 +37,12 @@ from src.services.product_service import normalize_sku
 
 POINTS_DISCOUNT_TWD = 360
 TAIPEI = ZoneInfo("Asia/Taipei")
+# 指向 product.id 的外鍵。結帳寫入時撞到它，代表商品在檢查之後已不存在。
+PRODUCT_FKS = (
+    "product_inventory_product_id_fkey",
+    "checkout_order_item_product_id_fkey",
+)
+_FK_PRODUCT_ID_RE = re.compile(r"Key \(product_id\)=\(([^)]*)\)")
 
 
 @dataclass
@@ -161,6 +168,22 @@ def _raise(status_code: int, code: BusinessErrorCode, message: str) -> None:
     raise BusinessException(status_code=status_code, code=code, message=message)
 
 
+def _missing_product_id(exc: IntegrityError) -> Optional[str]:
+    """撞到商品外鍵時回傳商品 ID（取不到時回空字串），其他錯誤回 None。"""
+    orig = getattr(exc, "orig", None)
+    sqlstate = getattr(orig, "pgcode", None) or getattr(orig, "sqlstate", None)
+    if sqlstate != "23503":
+        return None
+    diag = getattr(orig, "diag", None)
+    name = getattr(diag, "constraint_name", None) if diag is not None else None
+    text = str(orig if orig is not None else exc)
+    if name not in PRODUCT_FKS and not any(fk in text for fk in PRODUCT_FKS):
+        return None
+    detail = getattr(diag, "message_detail", None) if diag is not None else None
+    match = _FK_PRODUCT_ID_RE.search(detail or text)
+    return match.group(1) if match else ""
+
+
 class CheckoutService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -198,6 +221,11 @@ class CheckoutService:
                 if replay is not None:
                     return replay
                 _raise(409, BusinessErrorCode.IDEMPOTENCY_CONFLICT, "重複的結帳請求內容不一致")
+            missing = _missing_product_id(exc)
+            if missing is not None:
+                # 商品在檢查之後被刪除。交易已整筆回滾，沒有寫入任何資料。
+                label = f" (ID: {missing})" if missing else ""
+                _raise(404, BusinessErrorCode.PRODUCT_NOT_FOUND, f"找不到商品{label}")
             raise
         stored = self._get_by_id_or_raise(self._last_order_id)
         return _receipt(stored)
@@ -327,7 +355,7 @@ class CheckoutService:
         reserved_return: dict[str, int] = {}
         drafts: List[_DraftLine] = []
         for raw in data.items:
-            product = self.db.get(Product, raw.product_id)
+            product = self._lock_product(raw.product_id)
             if product is None:
                 _raise(
                     404,
@@ -401,6 +429,18 @@ class CheckoutService:
                 )
             )
         return drafts
+
+    def _lock_product(self, product_id: str) -> Optional[Product]:
+        """讀商品並加 FOR KEY SHARE 鎖，直到結帳交易結束。
+
+        其他交易在這段期間刪不掉這個商品，所以檢查過的商品寫庫存時一定還在。
+        一般的商品修改不會被擋。SQLite 會忽略這個鎖。
+        """
+        return self.db.scalar(
+            select(Product)
+            .where(Product.id == product_id)
+            .with_for_update(key_share=True)
+        )
 
     def _lock_original_item(
         self,
