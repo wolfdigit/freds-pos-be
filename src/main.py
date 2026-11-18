@@ -7,6 +7,7 @@ from typing import Any, Dict
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from src.core.config import settings
 from src.core.exceptions import BusinessException
 from src.api.v1.api import api_router
@@ -54,8 +55,7 @@ async def business_exception_handler(
     )
 
 
-@app.exception_handler(Exception)
-async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+def _internal_error_response(request: Request, exc: Exception) -> JSONResponse:
     """未處理例外回 500。DEBUG 時把伺服器錯誤日誌一併放進 response。"""
     error_log = _redact("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
     logger.error(
@@ -71,6 +71,48 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     if settings.DEBUG:
         content["error_log"] = error_log
     return JSONResponse(status_code=500, content=content)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    # Starlette 把這個 handler 放在最外層，CORS 中間件之外。
+    # 一般請求的例外會先被下面的 UnhandledErrorMiddleware 接住，這裡只是保底。
+    return _internal_error_response(request, exc)
+
+
+class UnhandledErrorMiddleware:
+    """在 CORS 中間件裡面把未處理例外轉成 500 JSON。
+
+    沒有這層的話，500 回應不帶 Access-Control-Allow-Origin，瀏覽器只會看到
+    網路錯誤，前端分不出伺服器已經回了錯誤。
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        started = False
+
+        async def send_wrapper(message: Message) -> None:
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except Exception as exc:
+            if started:
+                raise
+            response = _internal_error_response(Request(scope), exc)
+            await response(scope, receive, send)
+
+
+# 先加的中間件在內層，所以這層在 CORS 裡面，500 也會帶 CORS 標頭。
+app.add_middleware(UnhandledErrorMiddleware)
 
 # 設定 CORS 中間件 (支援本地 5173/3000、LAN / WSL IP，以及 Vercel 部署網域 *.vercel.app)
 # allow_private_network：Chrome / Edge 對 localhost、私有網段會先發 Private Network Access
