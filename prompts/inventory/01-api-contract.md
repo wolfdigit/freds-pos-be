@@ -38,6 +38,18 @@ Returns every location. Order by `displayOrder`, then `id`. The list is not filt
 
 There is no `isActive` field.
 
+### `GET /inventory/locations/summary`
+
+Stock totals per location, computed with one `GROUP BY` in SQL, for the settings page. Every location is listed, in the same order as `GET /inventory/locations`; a location with no rows is all zero.
+
+| Field | Type | Notes |
+| --- | --- | --- |
+| `locationId` | string | |
+| `locationName` | string | |
+| `totalQuantity` | number | Signed sum of `quantity` over products that are not `deleted` (the products `GET /products` lists) |
+| `productCount` | number | Not-deleted products whose `quantity` here is not `0` (negatives count) |
+| `hasNonZeroStock` | boolean | Any row here is not `0`, deleted products included. This is the `LOCATION_NOT_EMPTY` rule of `DELETE /inventory/locations/{locationId}` |
+
 ### `POST /inventory/locations` and `PUT /inventory/locations/{locationId}`
 
 `name` is required on create. Optional `icon` and `displayOrder`. Creating a location does not bind a store. `name` is trimmed and then limited to 64 characters on create and on rename.
@@ -103,7 +115,7 @@ Filters: `productId`, `locationId`, `type`, `page`, `pageSize`. Newest first. Ty
 
 ## Checkout stock
 
-1. Lock locations, then the login store.
+1. Lock locations (id order), then the login store, once per order. Every line reuses those locks until the transaction ends.
 2. A positive line deducts `inventoryLocationId`. The result may be negative. The line snapshots that location.
 3. A negative line with `restock` omitted or `true` adds the count to `inventoryLocationId` and snapshots that location.
 4. `restock: false` adds the count to `returnedInventoryLocationId` and snapshots that location. A return always changes quantity.

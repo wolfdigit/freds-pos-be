@@ -72,6 +72,9 @@ Not accepted on create or update request schemas:
 | `scale` | `ModelScale` \| `ALL` | missing or `ALL` | No scale filter |
 | `brand` | string \| `ALL` | missing or `ALL` | No brand filter (`brand` exact match when set) |
 | `inInventoryOnly` | boolean | `false` | When `true`, only products with `totalInventory > 0` |
+| `barcode` | string | empty / missing | No barcode filter (`barcode` exact match when set, e.g. same-barcode siblings) |
+| `page` | integer ≥ 1 | missing | 1-based page. Sending `page` or `pageSize` switches to the paged response |
+| `pageSize` | integer 1–200 | missing (`50` when paged) | Page size |
 
 Search / filter semantics: see [`03-search-rules.md`](./03-search-rules.md). All filters run **in SQL**, not in Python after load.
 
@@ -79,9 +82,11 @@ Search / filter semantics: see [`03-search-rules.md`](./03-search-rules.md). All
 
 | Status | Body |
 |--------|------|
-| `200` | `Product[]` |
+| `200` | `Product[]` when neither `page` nor `pageSize` is sent (unchanged full list) |
+| `200` | `{ items: Product[], page, pageSize, total }` when `page` or `pageSize` is sent. `total` counts every match of the filters; a page past the end has `items: []` |
+| `422` | `page < 1`, `pageSize` outside 1–200 |
 
-**Default sort:** `sku ASC` (confirmed). `created_at` / `updated_at` exist for audit only.
+**Default sort:** `sku ASC` (confirmed). The paged response breaks ties by `id ASC` so pages do not overlap. `created_at` / `updated_at` exist for audit only.
 
 Auth: optional/dummy (`deps.get_current_user_optional`).
 

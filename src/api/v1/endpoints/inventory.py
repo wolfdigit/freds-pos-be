@@ -16,6 +16,7 @@ from src.schemas.inventory import (
     InventoryAdjustRequest,
     InventoryAdjustmentLog,
     InventoryLocationDto,
+    InventoryLocationStockSummary,
     InventoryMovementPage,
     InventoryReceipt,
     InventoryReceiptPage,
@@ -30,6 +31,16 @@ router = APIRouter()
 @router.get("/locations", response_model=List[InventoryLocationDto], response_model_by_alias=True)
 def get_locations(db: Session = Depends(get_db), _user: Principal = Depends(require_business_user)):
     return InventoryService(db).get_locations()
+
+
+@router.get(
+    "/locations/summary",
+    response_model=List[InventoryLocationStockSummary],
+    response_model_by_alias=True,
+    summary="Stock totals per inventory location",
+)
+def get_location_stock_summary(db: Session = Depends(get_db), _user: Principal = Depends(require_business_user)):
+    return InventoryService(db).location_stock_summary()
 
 
 @router.post("/locations", response_model=InventoryLocationDto, response_model_by_alias=True, status_code=status.HTTP_201_CREATED)

@@ -1,18 +1,22 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
 
 from src.api.deps import get_db, require_business_user
-from src.schemas.product import CreateProductRequest, Product, UpdateProductRequest
+from src.schemas.product import CreateProductRequest, Product, ProductPage, UpdateProductRequest
 from src.services.product_service import ProductService
 
 router = APIRouter()
 
 
+DEFAULT_PRODUCT_PAGE_SIZE = 50
+MAX_PRODUCT_PAGE_SIZE = 200
+
+
 @router.get(
     "",
-    response_model=List[Product],
+    response_model=Union[ProductPage, List[Product]],
     response_model_by_alias=True,
     summary="Search products",
 )
@@ -20,17 +24,39 @@ def search_products(
     keyword: Optional[str] = Query(None, description="SKU / barcode / name / brand"),
     scale: Optional[str] = Query(None, description="ModelScale or ALL"),
     brand: Optional[str] = Query(None, description="Brand filter, or ALL"),
+    barcode: Optional[str] = Query(None, description="Exact barcode match"),
     inInventoryOnly: bool = Query(False, description="Only products with totalInventory > 0"),
+    page: Optional[int] = Query(None, ge=1, description="1-based page; enables the paged response"),
+    pageSize: Optional[int] = Query(
+        None,
+        ge=1,
+        le=MAX_PRODUCT_PAGE_SIZE,
+        description=f"Page size (default {DEFAULT_PRODUCT_PAGE_SIZE}); enables the paged response",
+    ),
     db: Session = Depends(get_db),
     user=Depends(require_business_user),
-) -> List[Product]:
-    """Default sort: sku ASC."""
-    return ProductService(db).search(
+) -> Union[ProductPage, List[Product]]:
+    """Default sort: sku ASC.
+
+    Without page/pageSize the response is the full array (unchanged, for the
+    already deployed frontend). With either one it is
+    `{items, page, pageSize, total}`.
+    """
+    service = ProductService(db)
+    filters = dict(
         keyword=keyword,
         scale=scale,
         brand=brand,
+        barcode=barcode,
         in_inventory_only=inInventoryOnly,
         store_name=user.store_name,
+    )
+    if page is None and pageSize is None:
+        return service.search(**filters)
+    return service.search_page(
+        page=page or 1,
+        page_size=pageSize or DEFAULT_PRODUCT_PAGE_SIZE,
+        **filters,
     )
 
 

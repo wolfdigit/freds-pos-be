@@ -32,7 +32,7 @@ from src.schemas.checkout import (
 from src.schemas.common import BusinessErrorCode
 from src.services.auth_service import AuthService, Principal
 from src.services.customer_service import canonicalize_phone
-from src.services.inventory_service import apply_checkout_stock
+from src.services.inventory_service import apply_checkout_stock, lock_checkout_store
 from src.services.product_service import normalize_sku
 
 POINTS_DISCOUNT_TWD = 360
@@ -535,6 +535,9 @@ class CheckoutService:
         self.db.add(order)
 
         touched_orders: dict[str, CheckoutOrder] = {}
+        # 整張訂單只鎖一次：先依 id 順序鎖全部庫存點、再鎖門市，跟刪除/改綁庫存點同一個順序。
+        # 鎖會保持到交易結束，後面每一行直接沿用，不必每個品項重鎖一輪。
+        locks = lock_checkout_store(self.db, branch_name) if drafts else None
         for index, line in enumerate(drafts, start=1):
             inventory_location_id, inventory_location_name = apply_checkout_stock(
                 self.db,
@@ -544,6 +547,7 @@ class CheckoutService:
                 store_name=branch_name,
                 order_id=order_id,
                 operator_name=cashier_name,
+                locks=locks,
             )
             if line.original_item is not None:
                 line.original_item.returned_quantity += abs(line.quantity)

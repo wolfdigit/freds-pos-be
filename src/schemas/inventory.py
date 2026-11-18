@@ -25,6 +25,22 @@ class InventoryLocationDto(BaseModel):
     returned_store_names: List[str] = Field(default_factory=list, alias="returnedStoreNames")
 
 
+class InventoryLocationStockSummary(BaseModel):
+    """Stock totals for one location, computed in SQL (GET /inventory/locations/summary)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    location_id: str = Field(..., alias="locationId")
+    location_name: str = Field(..., alias="locationName")
+    # Signed sum over products that are not deleted (same set GET /products lists).
+    total_quantity: int = Field(0, alias="totalQuantity")
+    # Not-deleted products whose quantity here is not 0 (negatives count).
+    product_count: int = Field(0, alias="productCount")
+    # Any row here, deleted products included, is not 0. This is the rule
+    # DELETE /inventory/locations uses for LOCATION_NOT_EMPTY.
+    has_non_zero_stock: bool = Field(False, alias="hasNonZeroStock")
+
+
 def _strip_text(value: object) -> object:
     if isinstance(value, str):
         return value.strip()

@@ -59,6 +59,17 @@ class Product(BaseModel):
     updated_by: Optional[str] = Field(None, alias="updatedBy")
 
 
+class ProductPage(BaseModel):
+    """One page of GET /products (only when page or pageSize is given)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    items: List[Product]
+    page: int
+    page_size: int = Field(..., alias="pageSize")
+    total: int
+
+
 class CreateProductRequest(BaseModel):
     """Create body: metadata only — no stocks / quantities / server-owned fields."""
 
