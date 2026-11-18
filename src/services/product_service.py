@@ -19,6 +19,7 @@ from src.schemas.product import (
     CreateProductRequest,
     LocationInventory,
     Product as ProductSchema,
+    ProductPage,
     UpdateProductRequest,
 )
 from src.services.inventory_service import ensure_locations
@@ -285,32 +286,27 @@ class ProductService:
         self.db.commit()
         return self.get_by_id(product_id, store_name=store_name)
 
-    # 依條件搜尋商品。關鍵字／比例／品牌／庫存篩選都在 SQL 執行。
-    # keyword: 關鍵字
-    # scale/brand: 比例與品牌
-    # in_inventory_only: 是否僅回傳有庫存者
-    def search(
+    # 依條件組出商品篩選查詢（不含排序、分頁與預載）。
+    # keyword: 關鍵字；scale/brand: 比例與品牌；barcode: 條碼完全相符
+    # in_inventory_only: 只留各庫存點合計 (totalInventory) > 0 的商品
+    def _filtered(
         self,
         *,
-        keyword: Optional[str] = None,
-        scale: Optional[str] = None,
-        brand: Optional[str] = None,
-        in_inventory_only: bool = False,
-        store_name: Optional[str] = None,
-    ) -> List[ProductSchema]:
-        stmt = (
-            select(Product)
-            .where(Product.status != "deleted")
-            .options(
-                selectinload(Product.inventories),
-                selectinload(Product.pre_order_pending),
-            )
-        )
+        keyword: Optional[str],
+        scale: Optional[str],
+        brand: Optional[str],
+        barcode: Optional[str],
+        in_inventory_only: bool,
+    ):
+        stmt = select(Product).where(Product.status != "deleted")
 
         if scale and scale != "ALL":
             stmt = stmt.where(Product.scale == scale)
         if brand and brand != "ALL":
             stmt = stmt.where(Product.brand == brand)
+        exact_barcode = (barcode or "").strip()
+        if exact_barcode:
+            stmt = stmt.where(Product.barcode == exact_barcode)
 
         if in_inventory_only:
             inventory_sum = (
@@ -337,9 +333,9 @@ class ProductService:
                     _contains_like(Product.normalized_sku, normalized_query)
                 )
             stmt = stmt.where(or_(*keyword_preds))
+        return stmt
 
-        stmt = stmt.order_by(Product.sku.asc())
-        products = list(self.db.scalars(stmt).unique().all())
+    def _to_schemas(self, products: Sequence[Product], store_name: Optional[str]) -> List[ProductSchema]:
         locations = ensure_locations(self.db)
         has_login_store, normal_id, returned_id = self._login_bindings(store_name)
         return [
@@ -352,3 +348,67 @@ class ProductService:
             )
             for p in products
         ]
+
+    # 依條件搜尋商品，回傳全部符合者（舊版前端使用的形狀）。排序 sku ASC。
+    def search(
+        self,
+        *,
+        keyword: Optional[str] = None,
+        scale: Optional[str] = None,
+        brand: Optional[str] = None,
+        barcode: Optional[str] = None,
+        in_inventory_only: bool = False,
+        store_name: Optional[str] = None,
+    ) -> List[ProductSchema]:
+        stmt = self._filtered(
+            keyword=keyword,
+            scale=scale,
+            brand=brand,
+            barcode=barcode,
+            in_inventory_only=in_inventory_only,
+        ).options(
+            selectinload(Product.inventories),
+            selectinload(Product.pre_order_pending),
+        )
+        stmt = stmt.order_by(Product.sku.asc())
+        products = list(self.db.scalars(stmt).unique().all())
+        return self._to_schemas(products, store_name)
+
+    # 同樣的篩選，但只回一頁，並附上符合條件的總筆數。
+    # 排序 sku ASC、id ASC，翻頁時順序固定。
+    def search_page(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        keyword: Optional[str] = None,
+        scale: Optional[str] = None,
+        brand: Optional[str] = None,
+        barcode: Optional[str] = None,
+        in_inventory_only: bool = False,
+        store_name: Optional[str] = None,
+    ) -> ProductPage:
+        filtered = self._filtered(
+            keyword=keyword,
+            scale=scale,
+            brand=brand,
+            barcode=barcode,
+            in_inventory_only=in_inventory_only,
+        )
+        total = self.db.scalar(select(func.count()).select_from(filtered.subquery())) or 0
+        stmt = (
+            filtered.options(
+                selectinload(Product.inventories),
+                selectinload(Product.pre_order_pending),
+            )
+            .order_by(Product.sku.asc(), Product.id.asc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+        products = list(self.db.scalars(stmt).unique().all())
+        return ProductPage(
+            items=self._to_schemas(products, store_name),
+            page=page,
+            pageSize=page_size,
+            total=total,
+        )

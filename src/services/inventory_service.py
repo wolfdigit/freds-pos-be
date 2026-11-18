@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import and_, case, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -28,6 +29,7 @@ from src.schemas.inventory import (
     InventoryItemAdjustment,
     InventoryLocationChange,
     InventoryLocationDto,
+    InventoryLocationStockSummary,
     InventoryMovement as InventoryMovementSchema,
     InventoryMovementPage,
     InventoryReceipt as InventoryReceiptSchema,
@@ -218,6 +220,35 @@ def _write_movement(
     )
 
 
+@dataclass
+class CheckoutLocks:
+    """Rows locked once for a whole checkout. Kept here so every line reuses them."""
+
+    store: StoreBranch
+    locations: Dict[str, InventoryLocation]
+
+    def location(self, db: Session, location_id: str) -> Optional[InventoryLocation]:
+        # Holding the rows here also keeps them in the session's (weak) identity
+        # map; the old per-line db.get re-queried each time.
+        row = self.locations.get(location_id)
+        return row if row is not None else db.get(InventoryLocation, location_id)
+
+
+def lock_checkout_store(db: Session, store_name: str) -> CheckoutLocks:
+    """Lock every location (id order), then the store row, once per checkout.
+
+    Same order as delete/rebind, so they still wait on each other instead of
+    deadlocking. The locks last until the checkout transaction ends, so every
+    line of the order can reuse them.
+    """
+
+    locked = lock_all_locations(db)
+    store = db.scalar(select(StoreBranch).where(StoreBranch.name == store_name).with_for_update())
+    if store is None:
+        _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市")
+    return CheckoutLocks(store=store, locations={row.id: row for row in locked})
+
+
 def apply_checkout_stock(
     db: Session,
     *,
@@ -227,13 +258,15 @@ def apply_checkout_stock(
     store_name: str,
     order_id: str,
     operator_name: str,
+    locks: Optional[CheckoutLocks] = None,
 ) -> tuple[str, str]:
-    lock_all_locations(db)
-    store = db.scalar(select(StoreBranch).where(StoreBranch.name == store_name).with_for_update())
-    if store is None:
-        _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市")
+    # locks: from lock_checkout_store() earlier in this transaction.
+    # Without it this line takes the locks itself (the old per-line behaviour).
+    if locks is None:
+        locks = lock_checkout_store(db, store_name)
+    store = locks.store
     if quantity > 0:
-        location = db.get(InventoryLocation, store.inventory_location_id)
+        location = locks.location(db, store.inventory_location_id)
         if location is None:
             _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市的正常庫存點")
         row = _lock_stock(db, product_id, location)
@@ -255,10 +288,10 @@ def apply_checkout_stock(
     # A return always adds quantity. Omitted or true puts it back on the
     # sellable location. false keeps it at the returned location.
     if restock is False:
-        location = db.get(InventoryLocation, store.returned_inventory_location_id)
+        location = locks.location(db, store.returned_inventory_location_id)
         missing = "找不到門市的退貨庫存點"
     else:
-        location = db.get(InventoryLocation, store.inventory_location_id)
+        location = locks.location(db, store.inventory_location_id)
         missing = "找不到門市的正常庫存點"
     if location is None:
         _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, missing)
@@ -361,6 +394,36 @@ class InventoryService:
         rows = ensure_locations(self.db)
         normal, returned = _bindings_by_location(self.db)
         return [_to_dto(row, normal.get(row.id, []), returned.get(row.id, [])) for row in rows]
+
+    def location_stock_summary(self) -> List[InventoryLocationStockSummary]:
+        """One GROUP BY over product_inventory; every location is listed, empty ones as 0."""
+
+        active = Product.status != "deleted"
+        non_zero = ProductInventory.quantity != 0
+        rows = self.db.execute(
+            select(
+                ProductInventory.location,
+                func.coalesce(func.sum(case((active, ProductInventory.quantity), else_=0)), 0),
+                func.coalesce(func.sum(case((and_(active, non_zero), 1), else_=0)), 0),
+                func.coalesce(func.sum(case((non_zero, 1), else_=0)), 0),
+            )
+            .join(Product, Product.id == ProductInventory.product_id)
+            .group_by(ProductInventory.location)
+        ).all()
+        totals = {row[0]: (int(row[1]), int(row[2]), int(row[3]) > 0) for row in rows}
+        result: List[InventoryLocationStockSummary] = []
+        for location in ensure_locations(self.db):
+            total, count, has_stock = totals.get(location.id, (0, 0, False))
+            result.append(
+                InventoryLocationStockSummary(
+                    locationId=location.id,
+                    locationName=location.name,
+                    totalQuantity=total,
+                    productCount=count,
+                    hasNonZeroStock=has_stock,
+                )
+            )
+        return result
 
     def create_location(self, data: CreateInventoryLocationRequest) -> InventoryLocationDto:
         ensure_locations(self.db)
