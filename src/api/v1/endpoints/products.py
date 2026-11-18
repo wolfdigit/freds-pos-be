@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from src.api.deps import get_db, require_business_user
 from src.schemas.product import CreateProductRequest, Product, ProductPage, UpdateProductRequest
-from src.services.product_service import ProductService
+from src.services.product_service import ProductService, StockFilters
 
 router = APIRouter()
 
@@ -26,6 +26,17 @@ def search_products(
     brand: Optional[str] = Query(None, description="Brand filter, or ALL"),
     barcode: Optional[str] = Query(None, description="Exact barcode match"),
     inInventoryOnly: bool = Query(False, description="Only products with totalInventory > 0"),
+    loginStoreQuantityMin: Optional[int] = Query(
+        None, description="loginStoreQuantity >= N (login store's sellable location; no store = no match)"
+    ),
+    loginStoreQuantityMax: Optional[int] = Query(
+        None, description="loginStoreQuantity <= N (login store's sellable location; no store = no match)"
+    ),
+    locationId: Optional[str] = Query(None, description="Location for locationQuantityMin/Max"),
+    locationQuantityMin: Optional[int] = Query(None, description="Quantity at locationId >= N"),
+    locationQuantityMax: Optional[int] = Query(None, description="Quantity at locationId <= N"),
+    totalInventoryMin: Optional[int] = Query(None, description="totalInventory >= N"),
+    totalInventoryMax: Optional[int] = Query(None, description="totalInventory <= N"),
     page: Optional[int] = Query(None, ge=1, description="1-based page; enables the paged response"),
     pageSize: Optional[int] = Query(
         None,
@@ -43,12 +54,22 @@ def search_products(
     `{items, page, pageSize, total}`.
     """
     service = ProductService(db)
+    stock = StockFilters(
+        login_store_min=loginStoreQuantityMin,
+        login_store_max=loginStoreQuantityMax,
+        location_id=(locationId or "").strip() or None,
+        location_min=locationQuantityMin,
+        location_max=locationQuantityMax,
+        total_min=totalInventoryMin,
+        total_max=totalInventoryMax,
+    )
     filters = dict(
         keyword=keyword,
         scale=scale,
         brand=brand,
         barcode=barcode,
         in_inventory_only=inInventoryOnly,
+        stock=stock if stock != StockFilters() else None,
         store_name=user.store_name,
     )
     if page is None and pageSize is None:

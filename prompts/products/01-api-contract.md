@@ -73,8 +73,13 @@ Not accepted on create or update request schemas:
 | `brand` | string \| `ALL` | missing or `ALL` | No brand filter (`brand` exact match when set) |
 | `inInventoryOnly` | boolean | `false` | When `true`, only products with `totalInventory > 0` |
 | `barcode` | string | empty / missing | No barcode filter (`barcode` exact match when set, e.g. same-barcode siblings) |
+| `loginStoreQuantityMin` / `loginStoreQuantityMax` | integer | missing | `loginStoreQuantity` (session store's normal location, missing row = `0`) `>=` / `<=` N. With no selected store `loginStoreQuantity` is `null`, so these match nothing |
+| `locationId` + `locationQuantityMin` / `locationQuantityMax` | string + integer | missing | Quantity at `locationId` (missing row = `0`) `>=` / `<=` N. A bound without an existing `locationId` is `404 LOCATION_NOT_FOUND` |
+| `totalInventoryMin` / `totalInventoryMax` | integer | missing | `totalInventory` `>=` / `<=` N |
 | `page` | integer ≥ 1 | missing | 1-based page. Sending `page` or `pageSize` switches to the paged response |
 | `pageSize` | integer 1–200 | missing (`50` when paged) | Page size |
+
+Inventory page filters: store low stock `loginStoreQuantityMax=2`; warehouse low stock `locationId=<後方倉庫>&locationQuantityMax=2`; store out of stock `loginStoreQuantityMin=0&loginStoreQuantityMax=0`; all out of stock `totalInventoryMin=0&totalInventoryMax=0`; any stock `inInventoryOnly=true`. All bounds are inclusive and combine with every other filter and with paging.
 
 Search / filter semantics: see [`03-search-rules.md`](./03-search-rules.md). All filters run **in SQL**, not in Python after load.
 
