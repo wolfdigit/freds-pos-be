@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional, Sequence
 
 from src.models.location import InventoryLocation
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import false, func, or_, select
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.orm import Session, selectinload
 
@@ -132,6 +133,56 @@ def _to_product_schema(
 def _contains_like(column: ColumnElement, value: str) -> ColumnElement:
     escaped = value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return column.like(f"%{escaped}%", escape="\\")
+
+
+@dataclass(frozen=True)
+class StockFilters:
+    """庫存數量篩選（GET /products 的 loginStoreQuantity*/locationQuantity*/totalInventory* 參數）。
+
+    上下限都含等號；None 代表不限。沒有庫存列的地點視為 0。
+    """
+
+    login_store_min: Optional[int] = None
+    login_store_max: Optional[int] = None
+    location_id: Optional[str] = None
+    location_min: Optional[int] = None
+    location_max: Optional[int] = None
+    total_min: Optional[int] = None
+    total_max: Optional[int] = None
+
+    @property
+    def uses_login_store(self) -> bool:
+        return self.login_store_min is not None or self.login_store_max is not None
+
+    @property
+    def uses_location(self) -> bool:
+        return self.location_min is not None or self.location_max is not None
+
+
+def _quantity_at(location_id: str):
+    return (
+        select(func.coalesce(func.sum(ProductInventory.quantity), 0))
+        .where(ProductInventory.product_id == Product.id, ProductInventory.location == location_id)
+        .correlate(Product)
+        .scalar_subquery()
+    )
+
+
+def _total_quantity():
+    return (
+        select(func.coalesce(func.sum(ProductInventory.quantity), 0))
+        .where(ProductInventory.product_id == Product.id)
+        .correlate(Product)
+        .scalar_subquery()
+    )
+
+
+def _between(stmt, column, low: Optional[int], high: Optional[int]):
+    if low is not None:
+        stmt = stmt.where(column >= low)
+    if high is not None:
+        stmt = stmt.where(column <= high)
+    return stmt
 
 
 class ProductService:
@@ -297,8 +348,12 @@ class ProductService:
         brand: Optional[str],
         barcode: Optional[str],
         in_inventory_only: bool,
+        stock: Optional[StockFilters] = None,
+        store_name: Optional[str] = None,
     ):
         stmt = select(Product).where(Product.status != "deleted")
+        if stock is not None:
+            stmt = self._apply_stock_filters(stmt, stock, store_name)
 
         if scale and scale != "ALL":
             stmt = stmt.where(Product.scale == scale)
@@ -309,13 +364,7 @@ class ProductService:
             stmt = stmt.where(Product.barcode == exact_barcode)
 
         if in_inventory_only:
-            inventory_sum = (
-                select(func.coalesce(func.sum(ProductInventory.quantity), 0))
-                .where(ProductInventory.product_id == Product.id)
-                .correlate(Product)
-                .scalar_subquery()
-            )
-            stmt = stmt.where(inventory_sum > 0)
+            stmt = stmt.where(_total_quantity() > 0)
 
         trimmed_keyword = (keyword or "").strip()
         if trimmed_keyword:
@@ -333,6 +382,26 @@ class ProductService:
                     _contains_like(Product.normalized_sku, normalized_query)
                 )
             stmt = stmt.where(or_(*keyword_preds))
+        return stmt
+
+    # 依數量篩選。登入門市條件跟 loginStoreQuantity 同一個定義：目前門市的正常庫存點；
+    # 沒有選定門市時 loginStoreQuantity 是 null，所以任何登入門市條件都不會符合。
+    def _apply_stock_filters(self, stmt, stock: StockFilters, store_name: Optional[str]):
+        if stock.uses_login_store:
+            has_store, normal_id, _returned = self._login_bindings(store_name)
+            if not has_store or not normal_id:
+                return stmt.where(false())
+            stmt = _between(stmt, _quantity_at(normal_id), stock.login_store_min, stock.login_store_max)
+        if stock.uses_location:
+            if not stock.location_id or self.db.get(InventoryLocation, stock.location_id) is None:
+                raise BusinessException(
+                    status_code=404,
+                    code=BusinessErrorCode.LOCATION_NOT_FOUND,
+                    message="找不到庫存地點",
+                )
+            stmt = _between(stmt, _quantity_at(stock.location_id), stock.location_min, stock.location_max)
+        if stock.total_min is not None or stock.total_max is not None:
+            stmt = _between(stmt, _total_quantity(), stock.total_min, stock.total_max)
         return stmt
 
     def _to_schemas(self, products: Sequence[Product], store_name: Optional[str]) -> List[ProductSchema]:
@@ -358,6 +427,7 @@ class ProductService:
         brand: Optional[str] = None,
         barcode: Optional[str] = None,
         in_inventory_only: bool = False,
+        stock: Optional[StockFilters] = None,
         store_name: Optional[str] = None,
     ) -> List[ProductSchema]:
         stmt = self._filtered(
@@ -366,6 +436,8 @@ class ProductService:
             brand=brand,
             barcode=barcode,
             in_inventory_only=in_inventory_only,
+            stock=stock,
+            store_name=store_name,
         ).options(
             selectinload(Product.inventories),
             selectinload(Product.pre_order_pending),
@@ -386,6 +458,7 @@ class ProductService:
         brand: Optional[str] = None,
         barcode: Optional[str] = None,
         in_inventory_only: bool = False,
+        stock: Optional[StockFilters] = None,
         store_name: Optional[str] = None,
     ) -> ProductPage:
         filtered = self._filtered(
@@ -394,6 +467,8 @@ class ProductService:
             brand=brand,
             barcode=barcode,
             in_inventory_only=in_inventory_only,
+            stock=stock,
+            store_name=store_name,
         )
         total = self.db.scalar(select(func.count()).select_from(filtered.subquery())) or 0
         stmt = (
