@@ -16,7 +16,7 @@ The counter, return search, and mock checkout follow this contract. The HTTP ada
 - `branchId`: `branch-store` for the counter, `branch-online` for an online-store sale. Omit it on the counter and the server uses `branch-store`.
 - `customerId` only (server copies name and phone)
 - Line `productId`, `quantity`, `isManualPrice`, `unitPrice` (required if manual), `priceDiffReason`, and for returns `originalOrderId` + `originalOrderItemId` equal to the server line `id`. Do not send `preOrderId` or `preOrderItemId`.
-- On a line, `pointsDiscountApplied` when that product uses the NT$360 exchange. At most one product once, even if quantity is more than 1. Several different products may each be flagged. Only with a bound member.
+- On a line, `pointsDiscountApplied` when that unit uses the points exchange (up to NT$360 off, floored at 0). Split one unit onto its own line with `quantity: 1` and the already-reduced `unitPrice`. At most once per product. Several different products may each be flagged. Only with a bound member.
 - `shippingFee`, `payments` (`type`, `name`, `amount`, and when present `tenderedCash`, `changeAmount`, `transactionRef`), `note`
 - Header `X-Idempotency-Key`. A retried submit reuses the same key. The server replays the stored order when that key was already inserted.
 
@@ -36,9 +36,9 @@ The current `CheckoutOrder` type has no `branchId`, `branchName`, line `id`, or 
 
 The catalog and the sale line do not record `costPrice`. Do not add a cashier-facing cost column from this API.
 
-Do not send `usedPoints`, `earnedPoints`, or a member points balance. Each redeemed product line sends `pointsDiscountApplied`. The server stores 360 on that line and subtracts it from the sale total, which cannot go below 0. The receipt shows that flag on the line.
+Do not send `usedPoints`, `earnedPoints`, or a member points balance. Each redeemed product line sends `pointsDiscountApplied` with the reduced `unitPrice`. The server stores only the flag; it never subtracts anything itself. The order's `pointsDiscountAmount` is the gap `(originalPrice − unitPrice)` on flagged lines, and `discountAmount` (折讓) excludes those lines. Show 商品原價, then 折讓, then 點數折抵; they add up to `itemsSubtotal`. The receipt shows that flag on the line.
 
-A return line does not send `pointsDiscountApplied`. The refund follows `unitPrice`. The original sale still shows the NT$360 flag after the return.
+A return line does not send `pointsDiscountApplied`. The server copies the flag from the original line, the refund follows `unitPrice`, and the return order's `pointsDiscountAmount` is negative. The original sale still shows the flag after the return.
 
 ## Explicitly not in the first FE pass
 

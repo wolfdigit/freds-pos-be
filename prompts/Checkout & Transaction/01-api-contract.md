@@ -22,8 +22,8 @@ Money fields are integers (TWD). Timestamps are ISO 8601 UTC.
 | `customerPhone` | string \| null | Snapshot. Null when the member has no phone. |
 | `items` | `CheckoutOrderItem[]` | At least one |
 | `itemsSubtotal` | integer | Sum of line `subtotal` |
-| `discountAmount` | integer | Sum of `(originalPrice - unitPrice) * quantity` across manual-price lines only. The NT$360 points cut is already inside `unitPrice` and is reported separately as `pointsDiscountAmount`. May be negative on a return. |
-| `pointsDiscountAmount` | integer | Sum of line `pointsDiscountAmount`. Server-owned record of the exchange. Not subtracted again from `totalAmount`. |
+| `discountAmount` | integer | Sum of `(originalPrice - unitPrice) * quantity` across manual-price lines **without** `pointsDiscountApplied` (折讓). Stored. May be negative on a return. |
+| `pointsDiscountAmount` | integer | 點數折抵: `Σ (originalPrice - unitPrice) * quantity` across lines with `pointsDiscountApplied` — the whole gap, even when the line was also priced by hand. Computed on read, not stored. Negative on a return of a redeemed line. Not subtracted again from `totalAmount`. `itemsSubtotal = Σ originalPrice × quantity − discountAmount − pointsDiscountAmount`. |
 | `shippingFee` | integer | ≥ 0. Copied from the request. |
 | `totalAmount` | integer | Sum of line `subtotal` + shipping. Points are not subtracted again, and this total is not floored for points. A ticket may mix sale lines and return lines, so the total may be negative. |
 | `payments` | `PaymentTender[]` | At least one |
@@ -44,13 +44,12 @@ There is no invoice and no `costPrice` on the order or the line.
 | `scale` | `ModelScale` | Snapshot |
 | `brand` | string | Snapshot |
 | `originalPrice` | integer | `product.list_price` at commit. Not the client's number. |
-| `unitPrice` | integer | Price actually charged. When `pointsDiscountApplied` is true, this is the frontend price already reduced by 360. The server stores it unchanged. |
+| `unitPrice` | integer | Price actually charged. When `pointsDiscountApplied` is true, this is the frontend price already reduced by the points cut (floored at 0). The server stores it unchanged. |
 | `isManualPrice` | boolean | |
 | `priceDiffReason` | string | Optional. Present when the cashier entered a reason. |
 | `quantity` | integer | Not zero. Positive sale. Negative when this line returns product from an earlier sale line. |
-| `subtotal` | integer | `unitPrice * quantity`. If a points reduction would make this negative, **0**. A return line stays negative. |
-| `pointsDiscountApplied` | boolean | True when this product used one points exchange. Always false on a return line. |
-| `pointsDiscountAmount` | integer | **360** when applied, otherwise **0**. A record of the exchange, not a second deduction. A return line is **0**. |
+| `subtotal` | integer | `unitPrice * quantity`. No floor. A return line stays negative. |
+| `pointsDiscountApplied` | boolean | True when this line used one points exchange. A return of such a line inherits `true`. |
 | `returnedQuantity` | integer | Units of this sale line already returned. `0` on create. |
 | `originalOrderId` | string | When `quantity < 0`, the earlier checkout order this line is returning product from. Required on a return line. |
 | `originalOrderItemId` | string | When `quantity < 0`, the earlier sale line whose units are being returned. Required on a return line. |
@@ -105,7 +104,7 @@ Do not rely on a lookup before insert. Two requests can both miss that lookup an
 
 **Payment request fields:** `type`, `name`, `amount`, and optionally `tenderedCash`, `changeAmount`, `transactionRef`.
 
-`pointsDiscountApplied` defaults to false. The client does not send line `pointsDiscountAmount`.
+`pointsDiscountApplied` defaults to false. There is no line `pointsDiscountAmount`.
 
 The client does not send `id`, `orderNumber`, `createdAt`, `status`, totals, snapshots, `cashierId`, `cashierName`, `branchName`, `pointsDiscountAmount`, or `originalPrice`. Do not send `usedPoints` or `earnedPoints`. The server copies `cashierId` and `cashierName` from the current user (`src/api/deps.py`). Until staff login exists, that user is `staff-001` / `店長 Fred`. A body that still includes cashier fields is ignored.
 
@@ -113,7 +112,7 @@ The client does not send `id`, `orderNumber`, `createdAt`, `status`, totals, sna
 
 | Line kind | `unitPrice` |
 |-----------|-------------|
-| `pointsDiscountApplied: true` | Request `unitPrice`. The frontend already subtracted 360. The server stores it and does not subtract 360 again. |
+| `pointsDiscountApplied: true` | Request `unitPrice` (required, `>= 0`). The frontend already applied the points cut. The server stores it unchanged. |
 | `isManualPrice: true` | Request `unitPrice`, required, integer ≥ 0 |
 | Otherwise | Current `product.list_price`. Client price is ignored. |
 
@@ -128,7 +127,7 @@ All checks run inside the database transaction. Any failure rolls back.
 3. Negative lines return product from an earlier sale: both original ids present, that sale line exists, `abs(quantity) ≤ quantity - returnedQuantity` on that line. Else `409` `RETURN_QTY_EXCEEDED`. The earlier sale is missing → `404` `ORDER_NOT_FOUND`. The return `productId` must equal that sale line's `product_id`. This comparison always runs. It is not skipped when the product was hidden, because `product_id` is never cleared.
 4. Return customer: if both the new order and the earlier sale have a `customerId`, they must be equal. A walk-in sale may be returned onto a member. A member sale may not be returned onto a different member. Else `409` `INVALID_RETURN_CUSTOMER`.
 5. `branchId`, when sent, is `branch-store` or `branch-online`. Anything else → `422`.
-6. A line with `pointsDiscountApplied: true` must have `quantity > 0` and a `customerId` on the order. Otherwise `422`. At most one such line per `productId` on the order. A second line for the same product with the flag set → `422`. The frontend already reduced `unitPrice` by 360. The server does not change `unitPrice` again and does not read a points balance. A return line (`quantity < 0`) is stored with `pointsDiscountApplied: false` and `pointsDiscountAmount: 0` even if the original line was discounted. The refund amount is that line's `unitPrice × quantity` only.
+6. A line with `pointsDiscountApplied: true` must have `quantity == 1`, a `unitPrice >= 0`, and a `customerId` on the order. Otherwise `422`. At most one such line per `productId` on the order. A second line for the same product with the flag set → `422`. The server does not change `unitPrice` and does not read a points balance. A return line (`quantity < 0`) must not send the flag (`422`); the server copies it from the original line, so the refund amount is that line's `unitPrice × quantity` and its gap reverses `pointsDiscountAmount` on the return order.
 7. Payments: when `totalAmount ≥ 0`, the sum of `amount` must be ≥ `totalAmount`. Else `409` `PAYMENT_INSUFFICIENT`. When `totalAmount < 0`, the sum must equal `totalAmount`.
 8. `cod` is a valid tender. It is stored and returned like the other payment types.
 9. A checkout ticket can contain both sale lines (`quantity > 0`) and return lines (`quantity < 0`). That mix is valid.
@@ -141,9 +140,9 @@ In one commit:
 - Positive lines: subtract `quantity` from the login store's normal location, even when that drives the quantity below zero.
 - Negative lines always add `abs(quantity)`. `restock` omitted or `true` adds it at the normal location. `restock: false` adds it at the returned location.
 - Recompute nothing else on the product row. `totalInventory` stays a read-time sum.
-- Return: add `abs(quantity)` to the earlier sale line `returnedQuantity`. If every line on that earlier order is fully returned, its `status` becomes `refunded`. If any line has `returnedQuantity > 0`, `partially_refunded`. Otherwise leave `completed`. The earlier line's points-discount flag and 360 amount stay as they were.
+- Return: add `abs(quantity)` to the earlier sale line `returnedQuantity`. If every line on that earlier order is fully returned, its `status` becomes `refunded`. If any line has `returnedQuantity > 0`, `partially_refunded`. Otherwise leave `completed`. The earlier line's points-discount flag stays as it was.
 - Bound customer: `total_spent = max(0, total_spent + totalAmount)`.
-- Redeemed lines keep `pointsDiscountApplied` and `pointsDiscountAmount` of 360. Nothing is written to a points balance.
+- Redeemed lines keep only `pointsDiscountApplied`. Nothing is written to a points balance.
 
 ### Responses
 

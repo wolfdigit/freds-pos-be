@@ -105,8 +105,8 @@ class CheckoutOrderItem(Base):
     price_diff_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     subtotal: Mapped[int] = mapped_column(Integer, nullable=False)
+    # 只存旗標。點數折抵金額 = (original_price − unit_price) × quantity，由回應計算。
     points_discount_applied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    points_discount_amount: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     returned_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     original_order_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     original_order_item_id: Mapped[Optional[str]] = mapped_column(

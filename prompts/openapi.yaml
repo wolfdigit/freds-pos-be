@@ -699,7 +699,7 @@ paths:
         6. **Receipt & Persistence**:
            - Persist `CheckoutOrder` and return `{ order }` with the calculated amounts. The client formats the slip.
            - `orderNumber` is `SO-YYYYMMDD-HHMMSS-####` in Asia/Taipei. `####` is the max suffix for that second, plus 1. There is no retry when two sales share a second.
-           - Points discount is already inside the line `unitPrice`. The server also stores `pointsDiscountApplied` and `pointsDiscountAmount` (360). It does not subtract 360 again.
+           - Points discount is already inside the line `unitPrice` (the frontend floors it at 0). The server stores only the line flag `pointsDiscountApplied` and never subtracts anything. A flagged line needs a bound member, `quantity == 1`, `unitPrice >= 0`, and at most one per product. A return of a flagged line inherits the flag.
            - A positive line rejects `deleted: true` with `PRODUCT_NOT_FOUND`. A return may still use that product id.
            - On an idempotency unique conflict, catch it, re-select, and replay. Do not rely on a lookup before insert.
       parameters:
@@ -1981,7 +1981,6 @@ components:
         - quantity
         - subtotal
         - pointsDiscountApplied
-        - pointsDiscountAmount
         - returnedQuantity
       properties:
         id:
@@ -2013,8 +2012,7 @@ components:
           type: integer
         pointsDiscountApplied:
           type: boolean
-        pointsDiscountAmount:
-          type: integer
+          description: 此列使用點數折抵（只存旗標，金額 = (originalPrice - unitPrice) × quantity）。退貨列沿用原列旗標。
         note:
           type: string
           description: 項目備註
@@ -2094,8 +2092,10 @@ components:
           type: integer
         discountAmount:
           type: integer
+          description: 折讓 = Σ(originalPrice - unitPrice) × quantity，只算手動改價且沒有點數旗標的列。
         pointsDiscountAmount:
           type: integer
+          description: 點數折抵 = Σ(originalPrice - unitPrice) × quantity，算有點數旗標的列的全部差額（即使也手動改價）。由明細計算，不另存。
         shippingFee:
           type: integer
         totalAmount:

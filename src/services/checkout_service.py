@@ -35,7 +35,6 @@ from src.services.customer_service import canonicalize_phone
 from src.services.inventory_service import apply_checkout_stock, lock_checkout_store
 from src.services.product_service import normalize_sku
 
-POINTS_DISCOUNT_TWD = 360
 TAIPEI = ZoneInfo("Asia/Taipei")
 # 指向 product.id 的外鍵。結帳寫入時撞到它，代表商品在檢查之後已不存在。
 PRODUCT_FKS = (
@@ -54,7 +53,6 @@ class _DraftLine:
     is_manual_price: bool
     price_diff_reason: Optional[str]
     points_applied: bool
-    points_amount: int
     subtotal: int
     sku: str
     name: str
@@ -89,11 +87,18 @@ def _order_options():
     )
 
 
-def _line_subtotal(unit_price: int, quantity: int, points_applied: bool) -> int:
-    raw = unit_price * quantity
-    if points_applied and raw < 0:
-        return 0
-    return raw
+def _line_subtotal(unit_price: int, quantity: int) -> int:
+    return unit_price * quantity
+
+
+def _price_difference(item) -> int:
+    """(原價 − 成交單價) × 數量。減價為正；退貨列數量為負，所以退回的折讓為負。"""
+    return (item.original_price - item.unit_price) * item.quantity
+
+
+def _points_discount_amount(items) -> int:
+    """點數折抵 = 有點數旗標的列，原價與成交價的整個差額（手動改過價也全算點數）。"""
+    return sum(_price_difference(item) for item in items if item.points_discount_applied)
 
 
 def _to_item_schema(item: CheckoutOrderItem) -> CheckoutOrderItemSchema:
@@ -111,7 +116,6 @@ def _to_item_schema(item: CheckoutOrderItem) -> CheckoutOrderItemSchema:
         quantity=item.quantity,
         subtotal=item.subtotal,
         pointsDiscountApplied=item.points_discount_applied,
-        pointsDiscountAmount=item.points_discount_amount,
         returnedQuantity=item.returned_quantity,
         originalOrderId=item.original_order_id,
         originalOrderItemId=item.original_order_item_id,
@@ -138,7 +142,7 @@ def _to_order_schema(order: CheckoutOrder) -> CheckoutOrderSchema:
         items=[_to_item_schema(item) for item in order.items],
         itemsSubtotal=order.items_subtotal,
         discountAmount=order.discount_amount,
-        pointsDiscountAmount=sum(item.points_discount_amount for item in order.items),
+        pointsDiscountAmount=_points_discount_amount(order.items),
         shippingFee=order.shipping_fee,
         totalAmount=order.total_amount,
         payments=[
@@ -393,7 +397,9 @@ class CheckoutService:
                     original_item.scale,
                     original_item.brand,
                 )
-                points_applied = False
+                # 退貨列不能送點數旗標，但原單那一列若是點數折抵，退貨列沿用旗標，
+                # 這樣退回的差額記在點數折抵而不是折讓，訂單的金額欄位仍能加總。
+                points_applied = original_item.points_discount_applied
             else:
                 original_price = product.list_price
                 points_applied = raw.points_discount_applied
@@ -404,6 +410,10 @@ class CheckoutService:
                         _raise(422, BusinessErrorCode.INVALID_PAYMENT, "同一商品只能折抵一次")
                     if raw.unit_price is None:
                         _raise(422, BusinessErrorCode.INVALID_PAYMENT, "點數折抵必須提供單價")
+                    if raw.unit_price < 0:
+                        _raise(422, BusinessErrorCode.INVALID_PAYMENT, "點數折抵後單價不能為負數")
+                    if raw.quantity != 1:
+                        _raise(422, BusinessErrorCode.INVALID_PAYMENT, "點數折抵的品項數量必須為 1")
                     redeemed_products.add(raw.product_id)
                     unit_price = raw.unit_price
                     is_manual = raw.is_manual_price
@@ -426,8 +436,7 @@ class CheckoutService:
                     is_manual_price=is_manual,
                     price_diff_reason=reason,
                     points_applied=points_applied,
-                    points_amount=POINTS_DISCOUNT_TWD if points_applied else 0,
-                    subtotal=_line_subtotal(unit_price, raw.quantity, points_applied),
+                    subtotal=_line_subtotal(unit_price, raw.quantity),
                     sku=sku,
                     name=name,
                     scale=scale,
@@ -505,10 +514,11 @@ class CheckoutService:
         branch_name: str,
     ) -> None:
         items_subtotal = sum(line.subtotal for line in drafts)
+        # 折讓只算手動改價且沒有點數旗標的列；點數列的差額在回應的 pointsDiscountAmount。
         discount_amount = sum(
             (line.original_price - line.unit_price) * line.quantity
             for line in drafts
-            if line.is_manual_price
+            if line.is_manual_price and not line.points_applied
         )
         total_amount = items_subtotal + data.shipping_fee
         self._check_payments(data.payments, total_amount)
@@ -579,7 +589,6 @@ class CheckoutService:
                     quantity=line.quantity,
                     subtotal=line.subtotal,
                     points_discount_applied=line.points_applied,
-                    points_discount_amount=line.points_amount,
                     returned_quantity=0,
                     original_order_id=line.original_item.order_id if line.original_item else None,
                     original_order_item_id=line.original_item.id if line.original_item else None,

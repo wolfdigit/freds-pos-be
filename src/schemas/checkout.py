@@ -61,7 +61,6 @@ class CheckoutOrderItem(BaseModel):
     quantity: int
     subtotal: int
     points_discount_applied: bool = Field(..., alias="pointsDiscountApplied")
-    points_discount_amount: int = Field(..., alias="pointsDiscountAmount")
     returned_quantity: int = Field(..., alias="returnedQuantity")
     original_order_id: Optional[str] = Field(None, alias="originalOrderId")
     original_order_item_id: Optional[str] = Field(None, alias="originalOrderItemId")
@@ -87,7 +86,9 @@ class CheckoutOrder(BaseModel):
     customer_phone: Optional[str] = Field(None, alias="customerPhone")
     items: List[CheckoutOrderItem]
     items_subtotal: int = Field(..., alias="itemsSubtotal")
+    # 折讓：手動改價且沒有點數旗標的列，Σ(原價 − 成交價) × 數量。
     discount_amount: int = Field(..., alias="discountAmount")
+    # 點數折抵：有點數旗標的列，Σ(原價 − 成交價) × 數量。由各列計算，不另外存。
     points_discount_amount: int = Field(..., alias="pointsDiscountAmount")
     shipping_fee: int = Field(..., alias="shippingFee")
     total_amount: int = Field(..., alias="totalAmount")
