@@ -610,7 +610,7 @@ paths:
           in: query
           schema:
             type: string
-          description: Filter by exact or partial order number
+          description: Order number contains this text, case-insensitive and trimmed (a suffix such as `20261118-184741-0001` works)
         - name: productId
           in: query
           schema:
@@ -642,6 +642,7 @@ paths:
           in: query
           schema:
             type: string
+          description: An order item's name or SKU contains this text, or the item's product barcode contains it
         - name: minAmount
           in: query
           schema:
