@@ -34,7 +34,7 @@ erDiagram
 | `customer_name` | `String` nullable | Snapshot at commit |
 | `customer_phone` | `String` nullable | Snapshot. Canonical phone, or null. |
 | `items_subtotal` | `Integer` | Sum of line `subtotal` |
-| `discount_amount` | `Integer` | Manual list-versus-charged gap only. Not the points discount. |
+| `discount_amount` | `Integer` | 折讓: `Σ (original_price − unit_price) × quantity` over manual-price lines **without** `points_discount_applied`. The points discount is not stored on the order; the API computes `pointsDiscountAmount` from flagged lines. |
 | `shipping_fee` | `Integer` | ≥ 0 |
 | `total_amount` | `Integer` | Sum of line subtotals + shipping. Points are not subtracted again here, and this column is not floored for points. A ticket may mix sale lines and return lines, so the total may be positive, zero, or negative. |
 | `note` | `Text` nullable | |
@@ -59,13 +59,12 @@ Indexes: unique `order_number`, unique `idempotency_key`, `customer_id`, `busine
 | `scale` | `String` | Snapshot |
 | `brand` | `String` | Snapshot |
 | `original_price` | `Integer` | List price at commit |
-| `unit_price` | `Integer` | Charged price. When `points_discount_applied` is true, this is the frontend price already reduced by 360. The server does not change it again. |
+| `unit_price` | `Integer` | Charged price. When `points_discount_applied` is true, this is the frontend price already reduced by the points cut (floored at 0). The server does not change it. |
 | `is_manual_price` | `Boolean` | |
 | `price_diff_reason` | `Text` nullable | |
 | `quantity` | `Integer` | Not zero. Positive sells. Negative returns product from an earlier sale line. |
-| `subtotal` | `Integer` | `unit_price * quantity`. If a points reduction would make this negative, store **0**. That floor is on this line, not on `checkout_order.total_amount`. A return line stays negative. |
+| `subtotal` | `Integer` | `unit_price * quantity`. No floor. A return line stays negative. |
 | `points_discount_applied` | `Boolean` | Not null. Default `false`. True when this product used one points exchange on this sale. |
-| `points_discount_amount` | `Integer` | `360` when applied, otherwise `0`. Kept on the line so a later offer change does not rewrite old sales. Not subtracted again from `total_amount`. |
 | `returned_quantity` | `Integer` | Default `0`. Only increases when a later line returns units from this sale line. |
 | `original_order_id` | `String` nullable | The earlier checkout order this line is returning product from. Null on a sale line. Set when `quantity < 0`. |
 | `original_order_item_id` | `String` FK nullable | The earlier sale line whose units this line is returning. `checkout_order_item.id`, `ON DELETE RESTRICT`. Null on a sale line. |
@@ -120,18 +119,19 @@ There is no points balance on `customer`. Points are checked by the cashier outs
 
 On commit, for each positive line with `points_discount_applied`:
 
-- The frontend already reduced `unit_price` by 360. The server stores that `unit_price` and does not subtract 360 again.
-- That line records `points_discount_amount = 360` as a fact about the sale. It is not applied a second time to `total_amount`.
+- The frontend already reduced `unit_price` (by up to 360, floored at 0). The server stores that `unit_price` unchanged.
+- Only the flag is stored. The points amount is the line's whole gap `(original_price − unit_price) × quantity`, computed on read into the order's `pointsDiscountAmount`. It is not part of `discount_amount`, and it is not applied a second time to `total_amount`.
+- The line must have `quantity = 1` and `unit_price >= 0`.
 - The same `product_id` cannot be redeemed twice on one order.
 - Quantity does not add more exchanges.
 - The sale does not read or update any points column.
-- Line `subtotal` is `unit_price * quantity`. If the points reduction would make that subtotal negative, `subtotal` is **0**. This floor is per line. `total_amount` is the sum of those subtotals plus shipping, with no further points floor.
-- A later return of that product refunds the stored `unit_price` only. The original line keeps `points_discount_applied` and `points_discount_amount`. The return line stores both as false and 0.
+- Line `subtotal` is `unit_price * quantity`. `total_amount` is the sum of those subtotals plus shipping.
+- A later return of that line refunds the stored `unit_price` only. The original line keeps `points_discount_applied`. The return line inherits `points_discount_applied = true`, so its negative gap reverses the points amount on the return order.
 
 ## What is not a table
 
 - Open cart, highlighted row, search box text, brand tab. Frontend only.
 - `vipTierName` and `totalInventory`. Derived on read.
-- A points balance. The NT$360 flag is only a record of the discount the cashier applied. The price cut itself is already in `unit_price`.
+- A points balance. The points flag is only a record of the discount the cashier applied. The price cut itself is already in `unit_price`.
 - A branch or cashier entity. The two branch ids are fixed labels. Cashier stays a snapshot of the current user.
 - An invoice, a cost price, or a preorder.
