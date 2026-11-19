@@ -271,8 +271,12 @@ class CheckoutService:
         stmt = select(CheckoutOrder)
         if customer_id:
             stmt = stmt.where(CheckoutOrder.customer_id == customer_id)
-        if order_number:
-            stmt = stmt.where(CheckoutOrder.order_number == order_number)
+        order_text = (order_number or "").strip()
+        if order_text:
+            # 單號可只輸入後段（例如 20261118-184741-0001），不分大小寫。
+            stmt = stmt.where(
+                _contains_like(func.upper(CheckoutOrder.order_number), order_text.upper())
+            )
         if product_id:
             stmt = stmt.where(
                 CheckoutOrder.items.any(CheckoutOrderItem.product_id == product_id)
@@ -314,6 +318,12 @@ class CheckoutService:
                     "",
                 )
                 item_clauses.append(_contains_like(normalized_column, normalized))
+            # 訂單品項沒有存條碼，用商品主檔的條碼找回 product_id。
+            item_clauses.append(
+                CheckoutOrderItem.product_id.in_(
+                    select(Product.id).where(_contains_like(Product.barcode, product_text))
+                )
+            )
             stmt = stmt.where(CheckoutOrder.items.any(or_(*item_clauses)))
 
         total = self.db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
