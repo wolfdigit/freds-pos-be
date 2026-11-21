@@ -357,58 +357,75 @@ def test_total_inventory_includes_warehouse_returns_and_negatives(client, google
     assert hidden_id not in [row["id"] for row in only_negative.json()]
 
 
-def test_batch_adjust_requires_a_reason_and_can_set_returned_location_negative(client, google_jwks):
+def test_batch_adjust_reason_is_optional_and_can_set_returned_location_negative(client, google_jwks):
     _add_account(ADMIN_EMAIL)
-    _add_store("奇可門市")
+    shelf = _add_store("奇可門市")
     login = _login(client, google_jwks)
     _select(client, login["token"], "奇可門市")
     headers = _auth(login["token"])
     product_id = _product(client, login["token"], "SKU-BATCH")
+
+    def adjustment(changes):
+        return {
+            "productId": product_id,
+            "sku": "SKU-BATCH",
+            "name": "車",
+            "brand": "Brand",
+            "summaryText": "調整",
+            "changes": changes,
+        }
+
     blank = client.post(
         "/api/v1/inventory/batch-adjustments",
         json={
             "note": "   ",
-            "adjustments": [{
-                "productId": product_id,
-                "sku": "SKU-BATCH",
-                "name": "車",
-                "brand": "Brand",
-                "summaryText": "退貨",
-                "changes": [{
-                    "location": RETURNED_LOCATION_ID,
-                    "locationName": "退貨品",
-                    "oldQty": 0,
-                    "newQty": -4,
-                    "diff": -4,
-                }],
-            }],
+            "adjustments": [adjustment([{
+                "location": RETURNED_LOCATION_ID,
+                "locationName": "退貨品",
+                "oldQty": 0,
+                "newQty": -4,
+                "diff": -4,
+            }])],
         },
         headers=headers,
     )
-    assert blank.status_code == 422
-    applied = client.post(
+    assert blank.status_code == 200, blank.text
+    assert _stock_qty(product_id, RETURNED_LOCATION_ID) == -4
+
+    # 調撥（一邊減、一邊加）不填原因也可以。
+    transfer = client.post(
         "/api/v1/inventory/batch-adjustments",
         json={
-            "note": "退貨盤點",
-            "adjustments": [{
-                "productId": product_id,
-                "sku": "SKU-BATCH",
-                "name": "車",
-                "brand": "Brand",
-                "summaryText": "退貨",
-                "changes": [{
-                    "location": RETURNED_LOCATION_ID,
-                    "locationName": "退貨品",
-                    "oldQty": 0,
-                    "newQty": -4,
-                    "diff": -4,
-                }],
-            }],
+            "adjustments": [adjustment([
+                {"location": RETURNED_LOCATION_ID, "locationName": "退貨品", "oldQty": -4, "newQty": -6, "diff": -2},
+                {"location": shelf, "locationName": "門市", "oldQty": 0, "newQty": 2, "diff": 2},
+            ])],
         },
         headers=headers,
     )
-    assert applied.status_code == 200, applied.text
-    assert _stock_qty(product_id, RETURNED_LOCATION_ID) == -4
+    assert transfer.status_code == 200, transfer.text
+    assert _stock_qty(product_id, RETURNED_LOCATION_ID) == -6
+    assert _stock_qty(product_id, shelf) == 2
+
+    noted = client.post(
+        "/api/v1/inventory/batch-adjustments",
+        json={
+            "note": "  退貨盤點  ",
+            "adjustments": [adjustment([{
+                "location": RETURNED_LOCATION_ID,
+                "locationName": "退貨品",
+                "oldQty": -6,
+                "newQty": -7,
+                "diff": -1,
+            }])],
+        },
+        headers=headers,
+    )
+    assert noted.status_code == 200, noted.text
+
+    logs = client.get("/api/v1/inventory/adjustments/logs", headers=headers)
+    assert logs.status_code == 200, logs.text
+    assert sorted(log.get("note") or "" for log in logs.json()) == ["", "", "退貨盤點"]
 
 
 def test_checkout_deducts_each_sale_line_and_restock_false_uses_the_returned_location(client, google_jwks):

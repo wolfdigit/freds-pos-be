@@ -110,4 +110,4 @@ Query: `productId`, `locationId`, `type`, `page`, `pageSize`. `type` is one of `
 
 ### `POST /api/v1/inventory/batch-adjustments`
 
-`note` is required and must not be blank. Do not send `operatorName` or `timestamp`; the server uses the login name and the server clock. `newQty` may be negative, including on a returned location.
+`note` is optional; omit it or send blank and the server stores null. Do not send `operatorName` or `timestamp`; the server uses the login name and the server clock. `newQty` may be negative, including on a returned location.

@@ -158,16 +158,17 @@ class BatchInventoryAdjustRequest(BaseModel):
 
     operator_name: Optional[str] = Field(None, alias="operatorName")
     timestamp: Optional[str] = None
-    note: str
+    # 異動原因非必填（含庫存調撥）。空白視為沒填，存成 NULL。
+    note: Optional[str] = None
     adjustments: List[InventoryItemAdjustment]
 
     @field_validator("note")
     @classmethod
-    def note_not_blank(cls, value: str) -> str:
+    def blank_note_is_none(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
         stripped = value.strip()
-        if not stripped:
-            raise ValueError("note must not be empty")
-        return stripped
+        return stripped or None
 
 
 class InventoryAdjustmentLog(BaseModel):

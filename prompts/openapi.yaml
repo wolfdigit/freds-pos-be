@@ -1867,7 +1867,7 @@ components:
 
     BatchInventoryAdjustRequest:
       type: object
-      required: [adjustments, note]
+      required: [adjustments]
       properties:
         operatorName:
           type: string
@@ -1877,7 +1877,7 @@ components:
           description: Ignored. The server uses its own clock.
         note:
           type: string
-          description: Required. Blank text is rejected.
+          description: Optional reason (異動原因, including stock transfers). Omitted or blank text is stored as null.
         adjustments:
           type: array
           items:

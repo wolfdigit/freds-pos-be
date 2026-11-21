@@ -107,7 +107,7 @@ A short source is `409` `INSUFFICIENT_INVENTORY`. There is no partial move.
 
 ## `POST /inventory/batch-adjustments`
 
-Each `changes[]` entry sets one location to `newQty`. `note` is required and must not be blank. `operatorName` and `timestamp` are ignored; the server uses the session operator and the server clock. One bad row rolls the whole batch back.
+Each `changes[]` entry sets one location to `newQty`. `note` is optional; omitted or blank text is stored as null. `operatorName` and `timestamp` are ignored; the server uses the session operator and the server clock. One bad row rolls the whole batch back.
 
 ## `GET /inventory/movements`
 
