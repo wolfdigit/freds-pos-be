@@ -61,6 +61,7 @@ class CheckoutOrderItem(BaseModel):
     quantity: int
     subtotal: int
     points_discount_applied: bool = Field(..., alias="pointsDiscountApplied")
+    preorder_pickup: bool = Field(False, alias="preorderPickup")
     returned_quantity: int = Field(..., alias="returnedQuantity")
     original_order_id: Optional[str] = Field(None, alias="originalOrderId")
     original_order_item_id: Optional[str] = Field(None, alias="originalOrderItemId")
@@ -117,6 +118,8 @@ class CreateOrderItem(BaseModel):
     is_manual_price: bool = Field(False, alias="isManualPrice")
     price_diff_reason: Optional[str] = Field(None, alias="priceDiffReason")
     points_discount_applied: bool = Field(False, alias="pointsDiscountApplied")
+    # 預購取貨：從門市的預購保留地點扣庫存。只能用在銷售列。
+    preorder_pickup: bool = Field(False, alias="preorderPickup")
     original_order_id: Optional[str] = Field(None, alias="originalOrderId")
     original_order_item_id: Optional[str] = Field(None, alias="originalOrderItemId")
     restock: Optional[bool] = None

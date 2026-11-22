@@ -23,6 +23,9 @@ class InventoryLocation(Base):
     icon: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    # 系統地點：company（公司總倉）/ preorder（預購保留）/ defective（退貨品）。
+    # 一種只能有一個；系統地點不能刪，但可以改名、改圖示。一般地點為 NULL。
+    system_role: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, unique=True)
 
 
 class InventoryAdjustmentLog(Base):

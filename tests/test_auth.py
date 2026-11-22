@@ -19,6 +19,7 @@ from src.services.bootstrap import bootstrap_admin_if_empty
 from src.services.google_identity import GoogleTokenError, verify_google_id_token
 from src.services.inventory_service import (
     DEFAULT_STORE_LOCATION_ID,
+    PREORDER_LOCATION_ID,
     RETURNED_LOCATION_ID,
     ensure_locations,
     insert_location,
@@ -76,6 +77,7 @@ def _add_store(name: str) -> str:
                 is_default=False,
                 inventory_location_id=location.id,
                 returned_inventory_location_id=RETURNED_LOCATION_ID,
+                preorder_inventory_location_id=PREORDER_LOCATION_ID,
             )
         )
         db.commit()

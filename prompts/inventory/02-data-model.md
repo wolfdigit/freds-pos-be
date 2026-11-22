@@ -32,10 +32,11 @@ Seeded rows:
 | `is_default` | |
 | `inventory_location_id` | Required. Normal goods. FK `fk_store_branch_inventory_location`. |
 | `returned_inventory_location_id` | Required. Returned goods. FK `fk_store_branch_returned_inventory_location`. |
+| `preorder_inventory_location_id` | Required. 預購保留. FK `fk_store_branch_preorder_inventory_location`. Migration backfills existing stores to 預購保留; new stores default to it. |
 
-Both foreign keys use `ON DELETE RESTRICT`. One store may store the same id in both columns. `台北旗艦店` and `官網` both use `門市現貨` and `退貨品` until an admin rebinds them.
+All three foreign keys use `ON DELETE RESTRICT`. One store may store the same id in both columns. `台北旗艦店` and `官網` both use `門市現貨` and `退貨品` until an admin rebinds them.
 
-Deleting a location is refused while any quantity there is not exactly `0`, and while it is the only location. Stores that pointed at it are updated to `rebindToLocation` on the binding they used.
+Deleting a location is refused for a system location (`SYSTEM_LOCATION`), while any quantity there is not exactly `0`, and while it is the only location. Stores that pointed at it are updated to `rebindToLocation` on the binding they used.
 
 ## `product_inventory`
 
@@ -81,3 +82,21 @@ Manual and batch edits still write this summary. The change entries have locatio
 `checkout_order.branch_name` stores the login store name. A line that changes inventory stores `inventory_location_id` and `inventory_location_name` for the location used at that moment. A later rebind does not rewrite the line or move quantity already posted. A return with `restock` omitted or `true` records the normal location. `restock: false` records the returned location.
 
 Revision `f8c4e2a17b63` renames the earlier `stock_*` tables, columns, constraints, and indexes to these `inventory_*` names. Downgrade renames them back. It does not drop an index that is already gone.
+
+## `inventory_location.system_role`
+
+`String(16)` nullable, unique. `company` / `preorder` / `defective`; ordinary locations are `NULL`.
+
+三個系統地點一開始就存在，不能刪（`409` `SYSTEM_LOCATION`），可以改名、改圖示。系統只認 `system_role`，不認名稱。
+
+| `system_role` | 預設名稱 | id |
+| --- | --- | --- |
+| `company` | 公司總倉 | `e1a10003-0000-4000-8000-000000000003`（沿用） |
+| `defective` | 退貨品 | `e1a10005-0000-4000-8000-000000000005`（沿用，不改名） |
+| `preorder` | 預購保留 | `e1a10006-0000-4000-8000-000000000006`（新建） |
+
+`ensure_locations` 與 migration 會補齊缺的系統地點：先接管同 id（公司總倉、退貨品），再接管同名地點，都沒有才用預設名稱新建。後方倉庫、調度暫存是一般地點，可以刪。
+
+## `checkout_order_item.preorder_pickup`
+
+`Boolean NOT NULL DEFAULT false`. 銷售列標記為預購取貨時為 `true`，該列從門市的預購保留地點扣庫存，並快照那個地點。

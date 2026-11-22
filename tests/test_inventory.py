@@ -4,8 +4,15 @@ from sqlalchemy import text
 from src.core.exceptions import BusinessException
 from src.db.session import SessionFactory, engine
 from src.schemas.common import BusinessErrorCode
-from src.schemas.inventory import DeleteInventoryLocationRequest
-from src.services.inventory_service import RETURNED_LOCATION_ID, InventoryService, ensure_locations
+from src.schemas.inventory import DeleteInventoryLocationRequest, UpdateInventoryLocationRequest
+from src.services.inventory_service import (
+    COMPANY_LOCATION_ID,
+    DEFECTIVE_LOCATION_ID,
+    PREORDER_LOCATION_ID,
+    RETURNED_LOCATION_ID,
+    InventoryService,
+    ensure_locations,
+)
 from tests.test_auth import ADMIN_EMAIL, _add_account, _add_store, _auth, _login, _select, _stock_qty
 
 
@@ -206,17 +213,36 @@ def _move_all_then_delete_rebinds_the_store(client, google_jwks):
     assert shelf not in [row["id"] for row in remaining.json()]
 
 
-def test_cannot_delete_the_last_location(client):
+def test_system_locations_exist_and_cannot_be_deleted(client):
     db = SessionFactory()
     try:
         rows = ensure_locations(db)
         db.commit()
+        roles = {row.system_role: row for row in rows if row.system_role}
+        assert {role: row.name for role, row in roles.items()} == {
+            "company": "公司總倉",
+            "preorder": "預購保留",
+            "defective": "退貨品",
+        }
+        assert roles["company"].id == COMPANY_LOCATION_ID
+        assert roles["preorder"].id == PREORDER_LOCATION_ID
+        assert roles["defective"].id == DEFECTIVE_LOCATION_ID
+        # 退貨品就是 defective 系統地點，沿用原本的 id 與名稱。
+        assert DEFECTIVE_LOCATION_ID == RETURNED_LOCATION_ID
         service = InventoryService(db)
-        for row in rows[:-1]:
-            service.delete_location(row.id, DeleteInventoryLocationRequest())
-        with pytest.raises(BusinessException) as caught:
-            service.delete_location(rows[-1].id, DeleteInventoryLocationRequest())
-        assert caught.value.code == BusinessErrorCode.LAST_LOCATION
+        for row in rows:
+            if not row.system_role:
+                service.delete_location(row.id, DeleteInventoryLocationRequest())
+        for row in roles.values():
+            with pytest.raises(BusinessException) as caught:
+                service.delete_location(row.id, DeleteInventoryLocationRequest())
+            assert caught.value.code == BusinessErrorCode.SYSTEM_LOCATION
+        # 系統地點可以改名、改圖示，角色不變。
+        renamed = service.update_location(
+            PREORDER_LOCATION_ID, UpdateInventoryLocationRequest(name="預購區", icon="🎁")
+        )
+        assert renamed.name == "預購區" and renamed.system_role == "preorder"
+        assert {row.system_role for row in ensure_locations(db)} == {"company", "preorder", "defective"}
     finally:
         db.close()
 

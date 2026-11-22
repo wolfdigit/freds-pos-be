@@ -53,6 +53,7 @@ class _DraftLine:
     is_manual_price: bool
     price_diff_reason: Optional[str]
     points_applied: bool
+    preorder_pickup: bool
     subtotal: int
     sku: str
     name: str
@@ -116,6 +117,7 @@ def _to_item_schema(item: CheckoutOrderItem) -> CheckoutOrderItemSchema:
         quantity=item.quantity,
         subtotal=item.subtotal,
         pointsDiscountApplied=item.points_discount_applied,
+        preorderPickup=item.preorder_pickup,
         returnedQuantity=item.returned_quantity,
         originalOrderId=item.original_order_id,
         originalOrderItemId=item.original_order_item_id,
@@ -387,6 +389,8 @@ class CheckoutService:
                 assert original_item is not None
                 if raw.points_discount_applied:
                     _raise(422, BusinessErrorCode.INVALID_PAYMENT, "退貨品項不能使用點數折抵")
+                if raw.preorder_pickup:
+                    _raise(422, BusinessErrorCode.INVALID_PAYMENT, "退貨品項不能標記預購取貨")
                 unit_price = original_item.unit_price
                 original_price = original_item.original_price
                 is_manual = original_item.is_manual_price
@@ -436,6 +440,8 @@ class CheckoutService:
                     is_manual_price=is_manual,
                     price_diff_reason=reason,
                     points_applied=points_applied,
+                    # 預購取貨只在銷售列；退貨列照原本的回庫勾選處理。
+                    preorder_pickup=raw.quantity > 0 and raw.preorder_pickup,
                     subtotal=_line_subtotal(unit_price, raw.quantity),
                     sku=sku,
                     name=name,
@@ -568,6 +574,7 @@ class CheckoutService:
                 order_id=order_id,
                 operator_name=cashier_name,
                 locks=locks,
+                preorder_pickup=line.preorder_pickup,
             )
             if line.original_item is not None:
                 line.original_item.returned_quantity += abs(line.quantity)
@@ -589,6 +596,7 @@ class CheckoutService:
                     quantity=line.quantity,
                     subtotal=line.subtotal,
                     points_discount_applied=line.points_applied,
+                    preorder_pickup=line.preorder_pickup,
                     returned_quantity=0,
                     original_order_id=line.original_item.order_id if line.original_item else None,
                     original_order_item_id=line.original_item.id if line.original_item else None,

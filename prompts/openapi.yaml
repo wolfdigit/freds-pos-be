@@ -13,7 +13,8 @@ info:
     - **Line-Item Return Traceability**: Returns/exchanges (negative quantities) must reference `originalOrderId` and `originalOrderItemId`, with cumulative `returnedQuantity` tracking.
     - **ACID Atomicity**: Checkout/return operations execute inside a single database transaction (locking store stock, updating customer spending, and creating orders).
     - **Idempotency**: `POST /checkout/orders` supports `X-Idempotency-Key` to prevent double-charging or double stock deduction.
-    - **Authentication**: `POST /auth/google` exchanges a Google ID token for a server session. Later calls send `Authorization: Bearer <session token>`. `staff` must select a store before business APIs. `admin` may call business APIs with no store selected. `POST /checkout/orders` still needs that store for both roles and returns `403` `AUTH_STORE_REQUIRED` when it is missing. The selected login store chooses the normal and returned inventory locations used by checkout. Body `branchId` is ignored. When no store is selected, `loginStoreQuantity` and `loginStoreReturnedQuantity` are `null`.
+    - **Authentication**: `POST /auth/google` exchanges a Google ID token for a server session. Later calls send `Authorization: Bearer <session token>`. `staff` must select a store before business APIs. `admin` may call business APIs with no store selected. `POST /checkout/orders` still needs that store for both roles and returns `403` `AUTH_STORE_REQUIRED` when it is missing. The selected login store chooses the normal, returned, and preorder inventory locations used by checkout. Body `branchId` is ignored. When no store is selected, `loginStoreQuantity`, `loginStoreReturnedQuantity`, and `loginStorePreorderQuantity` are `null`.
+    - **System locations**: three locations always exist and cannot be deleted: 公司總倉 (`systemRole: company`, `e1a10003-…`), 退貨品 (`defective`, `e1a10005-…`), 預購保留 (`preorder`, `e1a10006-…`). They may be renamed or get a new icon; the server keys on `systemRole`, not the name.
 
     **Conventions**
     - Amounts are TWD integers (no cents).
@@ -560,9 +561,10 @@ paths:
       operationId: deleteLocation
       summary: Delete an empty inventory location
       description: |
+        Refuses with `409` `SYSTEM_LOCATION` for a system location (`systemRole` set: 公司總倉, 預購保留, 退貨品).
         Refuses with `409` `LAST_LOCATION` when this is the only location.
         Refuses with `409` `LOCATION_NOT_EMPTY` when any quantity is not exactly zero. A negative quantity is not zero.
-        Stores that used this location as their normal or returned location are bound to `rebindToLocation`. No new location is created.
+        Stores that used this location as their normal, returned, or preorder location are bound to `rebindToLocation`. No new location is created.
       parameters:
         - name: locationId
           in: path
@@ -688,7 +690,7 @@ paths:
            - Validate `sum(payments.amount) == totalAmount` (or `payments >= totalAmount` with cash change).
         4. **Inventory**:
            - Positive items deduct the login store's normal location (`inventoryLocationId`). The sale still completes when that quantity becomes negative.
-           - Negative items always add `abs(quantity)`. `restock` omitted or `true` adds it to the login store's normal location (`inventoryLocationId`), so it can be sold again. `restock: false` adds it to the returned location (`returnedInventoryLocationId`). The line stores `inventoryLocationId` and `inventoryLocationName` for the location that changed.
+           - Negative items always add `abs(quantity)`. `restock` omitted or `true` adds it to the login store's normal location (`inventoryLocationId`), so it can be sold again. `restock: false` adds it to the returned location (`returnedInventoryLocationId`). Positive items deduct from the normal location, or from the preorder location (`preorderInventoryLocationId`) when `preorderPickup: true`. The line stores `inventoryLocationId` and `inventoryLocationName` for the location that changed.
         5. **Member Asset Update**:
            - Update `customer.totalSpent += totalAmount`
         6. **Receipt & Persistence**:
@@ -1185,6 +1187,7 @@ components:
         - INSUFFICIENT_INVENTORY
         - LOCATION_NOT_EMPTY
         - LAST_LOCATION
+        - SYSTEM_LOCATION
         - LOCATION_NAME_TAKEN
         - INVENTORY_LOCATION_IN_USE
         - RETURN_QTY_EXCEEDED
@@ -1272,6 +1275,18 @@ components:
             type: string
           readOnly: true
           description: Stores that use this location for returned goods.
+        preorderStoreNames:
+          type: array
+          items:
+            type: string
+          readOnly: true
+          description: Stores that use this location to hold preorder stock (預購保留).
+        systemRole:
+          type: string
+          nullable: true
+          enum: [company, preorder, defective, null]
+          readOnly: true
+          description: System location role. 公司總倉 = company, 預購保留 = preorder, 退貨品 = defective. System locations cannot be deleted but can be renamed. `null` for ordinary locations.
 
     CreateInventoryLocationRequest:
       type: object
@@ -1409,6 +1424,10 @@ components:
           type: integer
           nullable: true
           description: Quantity at the session store's returned location. `null` when the session has no selected store. When a store is selected, a missing row is `0`, and the value may be negative.
+        loginStorePreorderQuantity:
+          type: integer
+          nullable: true
+          description: Quantity at the session store's preorder location (預購保留). `null` when the session has no selected store. When a store is selected, a missing row is `0`, and the value may be negative.
         note:
           type: string
         createdAt:
@@ -1840,6 +1859,10 @@ components:
         pointsDiscountApplied:
           type: boolean
           description: 此列使用點數折抵（只存旗標，金額 = (originalPrice - unitPrice) × quantity）。退貨列沿用原列旗標。
+        preorderPickup:
+          type: boolean
+          default: false
+          description: 預購取貨。這一列的庫存從門市的預購保留地點扣，不從門市庫存扣。只會出現在銷售列。
         note:
           type: string
           description: 項目備註
@@ -1972,6 +1995,10 @@ components:
         pointsDiscountApplied:
           type: boolean
           default: false
+        preorderPickup:
+          type: boolean
+          default: false
+          description: 預購取貨：從登入門市的預購保留地點扣庫存。只能用在銷售列（quantity > 0），退貨列送 true 會回 422。可以和點數折抵同時使用。
         originalOrderId:
           type: string
           description: Required when quantity < 0 (links return to original sales order)
@@ -2181,7 +2208,7 @@ components:
               example: Bearer
     StoreDto:
       type: object
-      required: [name, inventoryLocationId, inventoryLocationName, returnedInventoryLocationId, returnedInventoryLocationName]
+      required: [name, inventoryLocationId, inventoryLocationName, returnedInventoryLocationId, returnedInventoryLocationName, preorderInventoryLocationId, preorderInventoryLocationName]
       properties:
         name:
           type: string
@@ -2199,6 +2226,11 @@ components:
           description: Location that holds this store's returned goods.
         returnedInventoryLocationName:
           type: string
+        preorderInventoryLocationId:
+          type: string
+          description: Location that holds this store's preorder stock (預購保留). Preorder pickup lines deduct here.
+        preorderInventoryLocationName:
+          type: string
 
     CreateStoreRequest:
       type: object
@@ -2213,6 +2245,9 @@ components:
         returnedInventoryLocationId:
           type: string
           description: Existing location for returned goods.
+        preorderInventoryLocationId:
+          type: string
+          description: Existing location for preorder stock. Omitted → the system location 預購保留.
 
     UpdateStoreBindingRequest:
       type: object
@@ -2222,6 +2257,9 @@ components:
           type: string
         returnedInventoryLocationId:
           type: string
+        preorderInventoryLocationId:
+          type: string
+          description: Omitted → keep the current preorder binding.
 
     OAuthRole:
       type: string

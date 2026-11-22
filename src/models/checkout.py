@@ -107,6 +107,8 @@ class CheckoutOrderItem(Base):
     subtotal: Mapped[int] = mapped_column(Integer, nullable=False)
     # 只存旗標。點數折抵金額 = (original_price − unit_price) × quantity，由回應計算。
     points_discount_applied: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # 預購取貨：這一列從門市的預購保留地點扣庫存，不從門市庫存扣。只有銷售列可以勾。
+    preorder_pickup: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     returned_quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     original_order_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     original_order_item_id: Mapped[Optional[str]] = mapped_column(

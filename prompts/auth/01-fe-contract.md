@@ -120,7 +120,7 @@
 
 沒有設定預設門市的 API。`isDefault` 只出現在清單回應。角色每次請求都從白名單重讀，降權的下一筆管理請求就是 403。
 
-庫存地點（`/api/v1/inventory/locations`）不是門市清單。管理員在建立第一間門市之前就可以讀取，用來取得 `POST /api/v1/system/stores` 需要的兩個庫存點 id。
+庫存地點（`/api/v1/inventory/locations`）不是門市清單。管理員在建立第一間門市之前就可以讀取，用來取得 `POST /api/v1/system/stores` 需要的庫存點 id。
 
 若管理員刪掉店員目前的登入門市，該店員下一筆業務請求是 `403` `AUTH_STORE_REQUIRED`，要再呼叫 `POST /api/v1/auth/store` 選另一間。這不影響庫存地點。
 
@@ -138,7 +138,7 @@
 
 ## 結帳門市與庫存
 
-每間登入門市綁兩個庫存點。`inventoryLocationId` 是正常貨，`returnedInventoryLocationId` 是退貨品。兩個可以是同一個庫存點。換門市會改扣庫存的地點。多間門市可以綁同一個庫存點。
+每間登入門市綁三個庫存點。`inventoryLocationId` 是正常貨，`returnedInventoryLocationId` 是退貨品，`preorderInventoryLocationId` 是預購保留（結帳列勾預購取貨時從這裡扣）。可以是同一個庫存點。換門市會改扣庫存的地點。多間門市可以綁同一個庫存點。
 
 - 不要再依賴 body 的 `branchId`。後端會忽略它。
 - 訂單的 `branchId` 與 `branchName` 都是目前 session 的門市名稱。之後改綁不會改寫舊訂單，也不會搬走已經入帳的數量。

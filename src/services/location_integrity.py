@@ -18,6 +18,7 @@ from src.models.system import StoreBranch
 STORE_LOCATION_FKS = (
     "fk_store_branch_inventory_location",
     "fk_store_branch_returned_inventory_location",
+    "fk_store_branch_preorder_inventory_location",
 )
 
 
@@ -47,7 +48,7 @@ def is_unnamed_sqlite_fk(exc: IntegrityError) -> bool:
 def is_store_location_fk_violation(exc: IntegrityError) -> bool:
     """True when this statement only writes ``store_branch``.
 
-    That table's foreign keys both point at ``inventory_location``.
+    That table's foreign keys all point at ``inventory_location``.
     """
 
     return is_named_store_location_fk(exc) or is_unnamed_sqlite_fk(exc)
@@ -61,6 +62,7 @@ def location_is_mapped(db: Session, location_id: str) -> bool:
                 or_(
                     StoreBranch.inventory_location_id == location_id,
                     StoreBranch.returned_inventory_location_id == location_id,
+                    StoreBranch.preorder_inventory_location_id == location_id,
                 )
             )
             .limit(1)
