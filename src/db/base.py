@@ -9,5 +9,5 @@ from src.models.location import (  # noqa: F401
     InventoryMovement,
     InventoryReceipt,
 )
-from src.models.system import OAuthAccount, StoreBranch  # noqa: F401
+from src.models.system import OAuthAccount, StoreBranch, StoreProduct  # noqa: F401
 from src.models.auth import AuthSession  # noqa: F401

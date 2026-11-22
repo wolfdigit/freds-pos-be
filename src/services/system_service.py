@@ -2,12 +2,12 @@ from __future__ import annotations
 
 from typing import List
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from src.core.exceptions import BusinessException
-from src.models.system import OAuthAccount, StoreBranch
+from src.models.system import OAuthAccount, StoreBranch, StoreProduct
 from src.schemas.common import BusinessErrorCode
 from src.services.bootstrap import new_account_id
 from src.models.location import InventoryLocation
@@ -18,6 +18,7 @@ from src.schemas.system import (
     StoreDto,
     UpdateOAuthAccountRequest,
     UpdateStoreBindingRequest,
+    UpdateStoreProductScopeRequest,
 )
 from src.services.inventory_service import require_store_locations, system_location
 from src.services.location_integrity import is_store_location_fk_violation
@@ -65,6 +66,7 @@ class SystemService:
             inventory_location_id=normal.id,
             returned_inventory_location_id=returned.id,
             preorder_inventory_location_id=preorder.id,
+            product_scope=data.product_scope,
         )
         self.db.add(row)
         self._commit_store_location()
@@ -103,9 +105,25 @@ class SystemService:
             _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市")
         if len(rows) <= 1:
             _raise(409, BusinessErrorCode.LAST_STORE, "至少要保留一間門市")
+        # Postgres 的 FK 會 CASCADE；SQLite 測試庫沒開 FK，這裡明確刪掉門市商品清單。
+        self.db.execute(delete(StoreProduct).where(StoreProduct.store_name == name))
         self.db.delete(row)
         self.db.commit()
         return {"deletedStore": name}
+
+    def set_product_scope(self, name: str, data: UpdateStoreProductScopeRequest) -> StoreDto:
+        """切換門市販售範圍（任何業務帳號）。切回 'all' 時保留清單，之後再切回 'list' 會沿用。"""
+        row = self.db.scalar(select(StoreBranch).where(StoreBranch.name == name).with_for_update())
+        if row is None:
+            _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市")
+        row.product_scope = data.product_scope
+        self.db.commit()
+        normal = self.db.get(InventoryLocation, row.inventory_location_id)
+        returned = self.db.get(InventoryLocation, row.returned_inventory_location_id)
+        preorder = self.db.get(InventoryLocation, row.preorder_inventory_location_id)
+        if normal is None or returned is None or preorder is None:
+            _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市對應的庫存地點")
+        return self._store_dto(row, normal, returned, preorder)
 
     def accounts(self) -> List[OAuthAccountDto]:
         rows = self.db.scalars(select(OAuthAccount).order_by(OAuthAccount.email)).all()
@@ -179,6 +197,7 @@ class SystemService:
             returnedInventoryLocationName=returned.name,
             preorderInventoryLocationId=preorder.id,
             preorderInventoryLocationName=preorder.name,
+            productScope=row.product_scope or "all",
         )
 
     def _commit_store_location(self) -> None:

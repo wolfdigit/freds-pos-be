@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
@@ -14,6 +14,7 @@ class StoreDto(BaseModel):
     returned_inventory_location_name: str = Field(..., alias="returnedInventoryLocationName")
     preorder_inventory_location_id: str = Field(..., alias="preorderInventoryLocationId")
     preorder_inventory_location_name: str = Field(..., alias="preorderInventoryLocationName")
+    product_scope: Literal["all", "list"] = Field("all", alias="productScope")
 
 
 class CreateStoreRequest(BaseModel):
@@ -24,6 +25,7 @@ class CreateStoreRequest(BaseModel):
     returned_inventory_location_id: str = Field(..., alias="returnedInventoryLocationId", min_length=1)
     # 沒送時綁系統地點「預購保留」。
     preorder_inventory_location_id: Optional[str] = Field(None, alias="preorderInventoryLocationId", min_length=1)
+    product_scope: Literal["all", "list"] = Field("all", alias="productScope")
 
 
 class UpdateStoreBindingRequest(BaseModel):
@@ -33,6 +35,12 @@ class UpdateStoreBindingRequest(BaseModel):
     returned_inventory_location_id: str = Field(..., alias="returnedInventoryLocationId", min_length=1)
     # 沒送時維持目前的預購保留綁定。
     preorder_inventory_location_id: Optional[str] = Field(None, alias="preorderInventoryLocationId", min_length=1)
+
+
+class UpdateStoreProductScopeRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    product_scope: Literal["all", "list"] = Field(..., alias="productScope")
 
 
 class OAuthAccountDto(BaseModel):

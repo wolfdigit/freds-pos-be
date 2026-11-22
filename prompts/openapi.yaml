@@ -163,6 +163,9 @@ paths:
       tags: [products]
       operationId: searchProducts
       description: |
+        Login store with `productScope: list`: only products in that store's list (`store_product`) are returned,
+        including `barcode` lookups. Any business user may pass `allProducts=true` to skip the list (each row still has `soldInLoginStore`).
+        Admin with no selected store sees every product. `productScope: all` stores are unchanged.
         Fuzzy search by barcode, SKU without dashes (normalized), product name, or brand.
         Maps to `IProductService.searchProducts`.
         Default sort: `sku ASC`.
@@ -187,6 +190,12 @@ paths:
           schema:
             type: boolean
             default: false
+        - name: allProducts
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Ignore the login store's product list. Any business user (staff included).
       responses:
         '200':
           description: Matching products
@@ -200,6 +209,8 @@ paths:
       tags: [products]
       operationId: createProduct
       description: |
+        When the login store has `productScope: list`, the new product is added to that store's list.
+        It is not added to any other `list` store.
         Maps to `IProductService.createProduct`.
         Server assigns `id` as `prod-{uuid4}` (no dashes), computes `normalizedSku`,
         and does not create inventory rows.
@@ -680,6 +691,7 @@ paths:
         **Backend Atomic Lifecycle (Single DB Transaction)**:
         1. **Identity & Branch Resolution**: This call needs the session's selected `store_branch`. `staff` must already have one. An `admin` with no selected store receives `403` `AUTH_STORE_REQUIRED` and no quantity changes. When a store is selected, both roles use that store. `cashierId` is the whitelist account id (`acct-...`), `cashierName` is the whitelist display name (or the email when that name is blank). `branchId` / `branchName` record that login store on the order. A body `branchId` is ignored. Stock comes from that store's two bound locations. There is no separate store field for this call.
         2. **Item Pricing & Subtotals**:
+           - Login store with `productScope: list`: a positive line whose product is not in that store's list fails with `409` `PRODUCT_NOT_IN_STORE` before any write. Return lines (`quantity < 0`) are not checked, the same as delisted products.
            - For positive purchases: verify `unitPrice` against `listPrice` or customer `vipPrice` unless `isManualPrice: true` (which requires `priceDiffReason`).
            - For return/exchange items (`quantity < 0`): verify `originalOrderId` & `originalOrderItemId`, ensuring `abs(quantity) <= (qtySold - qtyReturned)`. Also enforce member ownership: if the checkout is bound to customer A, the original order cannot belong to customer B (`customerId` mismatch raises `INVALID_RETURN_CUSTOMER`; unattached guest original orders are permitted).
            - Compute `subtotal = unitPrice * quantity` for each line.
@@ -725,6 +737,15 @@ paths:
                 $ref: '#/components/schemas/CheckoutReceipt'
         '400':
           $ref: '#/components/responses/BusinessError'
+        '409':
+          description: A positive line's product is not sold at the login store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessError'
+              example:
+                code: PRODUCT_NOT_IN_STORE
+                message: '本門市未販售此商品：SKU-001 (ID: prod-...)'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -994,6 +1015,151 @@ paths:
                 code: LAST_STORE
                 message: 至少要保留一間門市
 
+  /system/stores/{storeName}/product-scope:
+    put:
+      tags: [system]
+      operationId: setStoreProductScope
+      summary: Switch a store between all products and its own list
+      description: |
+        Any business user (staff included). Other store management stays admin-only.
+        Switching back to `all` keeps the list rows, so switching to `list` again reuses them.
+        Missing store is `404` `LOCATION_NOT_FOUND`.
+      parameters:
+        - name: storeName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateStoreProductScopeRequest'
+      responses:
+        '200':
+          description: Updated store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoreDto'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /system/stores/{storeName}/products:
+    get:
+      tags: [system]
+      operationId: listStoreProducts
+      summary: Store product list editor (search the catalog, paged)
+      description: |
+        Any business user (staff included). Searches the whole catalog (deleted products omitted) with the same
+        `keyword` rules as `GET /products`, and marks each row `inList`. Sort `sku ASC, id ASC`.
+        Deleted products stay in `store_product` but are hidden here and in `listedTotal`.
+      parameters:
+        - name: storeName
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: keyword
+          in: query
+          schema:
+            type: string
+          description: SKU / barcode / name / brand
+        - name: inList
+          in: query
+          schema:
+            type: boolean
+          description: '`true`: only listed. `false`: only unlisted. Omit: both.'
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: One page
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoreProductPage'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /system/stores/{storeName}/products/batch:
+    post:
+      tags: [system]
+      operationId: batchStoreProducts
+      summary: Save list edits (add and remove in one request)
+      description: |
+        Any business user. The editor stages checkbox changes and sends them here once on 存檔.
+        `add` and `remove` are applied in one transaction: if any `add` id is unknown or deleted the whole request is
+        `404` `PRODUCT_NOT_FOUND` and nothing changes. Ids already in the list (add) or not in it (remove) are skipped
+        and not counted. `remove` accepts deleted products. An id in both lists, both lists empty, or more than 2000 ids
+        in total is `422`. `addedBy` / `addedAt` come from the signed-in account and server time.
+        Works for an `all` store too; the list takes effect once the store is switched to `list`.
+      parameters:
+        - name: storeName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StoreProductBatchRequest'
+      responses:
+        '200':
+          description: Result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoreProductChangeResult'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          description: Validation error
+
+  /system/stores/{storeName}/products/copy:
+    post:
+      tags: [system]
+      operationId: copyStoreProducts
+      summary: Copy another store's list
+      description: |
+        Any business user. Copies the source store's `store_product` rows (deleted products skipped), whatever the
+        source's `productScope` is. Missing source or target store is `404` `LOCATION_NOT_FOUND`.
+      parameters:
+        - name: storeName
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CopyStoreProductsRequest'
+      responses:
+        '200':
+          description: Result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoreProductChangeResult'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /system/oauth/accounts:
     get:
       tags: [system]
@@ -1194,6 +1360,7 @@ components:
         - PAYMENT_INSUFFICIENT
         - PRODUCT_NOT_FOUND
         - PRODUCT_SKU_DUPLICATE
+        - PRODUCT_NOT_IN_STORE
         - ORDER_NOT_FOUND
         - LOCATION_NOT_FOUND
         - INVALID_LOCATION_TRANSFER
@@ -1428,6 +1595,12 @@ components:
           type: integer
           nullable: true
           description: Quantity at the session store's preorder location (預購保留). `null` when the session has no selected store. When a store is selected, a missing row is `0`, and the value may be negative.
+        soldInLoginStore:
+          type: boolean
+          nullable: true
+          description: >-
+            Whether the login store sells this product.
+            `null` when no store is selected. Always `true` for a `productScope: all` store. For a `list` store, `true` only when the product is in `store_product`. `GET /products/{productId}` returns unlisted products with `false`; the cart treats them like delisted items.
         note:
           type: string
         createdAt:
@@ -2231,6 +2404,8 @@ components:
           description: Location that holds this store's preorder stock (預購保留). Preorder pickup lines deduct here.
         preorderInventoryLocationName:
           type: string
+        productScope:
+          $ref: '#/components/schemas/StoreProductScope'
 
     CreateStoreRequest:
       type: object
@@ -2248,6 +2423,8 @@ components:
         preorderInventoryLocationId:
           type: string
           description: Existing location for preorder stock. Omitted → the system location 預購保留.
+        productScope:
+          $ref: '#/components/schemas/StoreProductScope'
 
     UpdateStoreBindingRequest:
       type: object
@@ -2260,6 +2437,126 @@ components:
         preorderInventoryLocationId:
           type: string
           description: Omitted → keep the current preorder binding.
+
+    StoreProductScope:
+      type: string
+      enum: [all, list]
+      default: all
+      description: |
+        `all`: the store sells every product (default; existing stores).
+        `list`: the store sells only products in its `store_product` list. Product search, the inventory page,
+        and checkout use the list. Per-location columns and `totalInventory` still cover every location.
+
+    UpdateStoreProductScopeRequest:
+      type: object
+      required: [productScope]
+      properties:
+        productScope:
+          $ref: '#/components/schemas/StoreProductScope'
+
+    StoreProductItem:
+      type: object
+      description: One catalog product on the store list editor, with whether it is in the list.
+      required: [productId, sku, barcode, brand, name, listPrice, inList]
+      properties:
+        productId:
+          type: string
+        sku:
+          type: string
+        barcode:
+          type: string
+        brand:
+          type: string
+        name:
+          type: string
+        scale:
+          type: string
+          nullable: true
+        listPrice:
+          type: integer
+        imageUrl:
+          type: string
+          nullable: true
+        inList:
+          type: boolean
+        addedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Server time when added. `null` when not in the list.
+        addedBy:
+          type: string
+          nullable: true
+          description: Display name of the signed-in account that added it. `null` when not in the list.
+
+    StoreProductPage:
+      type: object
+      required: [storeName, productScope, listedTotal, items, page, pageSize, total]
+      properties:
+        storeName:
+          type: string
+        productScope:
+          $ref: '#/components/schemas/StoreProductScope'
+        listedTotal:
+          type: integer
+          description: Products in the list, excluding deleted products. Not affected by keyword / inList.
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/StoreProductItem'
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+          description: Rows matching keyword / inList.
+
+    StoreProductBatchRequest:
+      type: object
+      description: At least one id overall, at most 2000 in total, and no id in both lists.
+      properties:
+        add:
+          type: array
+          items:
+            type: string
+          default: []
+        remove:
+          type: array
+          items:
+            type: string
+          default: []
+
+    CopyStoreProductsRequest:
+      type: object
+      required: [sourceStoreName]
+      properties:
+        sourceStoreName:
+          type: string
+        replace:
+          type: boolean
+          default: false
+          description: |
+            `false`: add the source's products to this list (existing rows kept).
+            `true`: also remove products the source does not have. Rows in both keep their addedAt / addedBy.
+
+    StoreProductChangeResult:
+      type: object
+      required: [storeName, productScope, changed, added, removed, listedTotal]
+      properties:
+        storeName:
+          type: string
+        productScope:
+          $ref: '#/components/schemas/StoreProductScope'
+        changed:
+          type: integer
+          description: Rows actually added plus rows actually removed.
+        added:
+          type: integer
+        removed:
+          type: integer
+        listedTotal:
+          type: integer
 
     OAuthRole:
       type: string

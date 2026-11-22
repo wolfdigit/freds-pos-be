@@ -18,6 +18,7 @@ from src.core.exceptions import BusinessException
 from src.models.checkout import CheckoutOrder, CheckoutOrderItem, CheckoutPayment
 from src.models.customer import Customer
 from src.models.product import Product
+from src.models.system import StoreBranch, StoreProduct
 from src.schemas.checkout import (
     CheckoutOrder as CheckoutOrderSchema,
     CheckoutOrderItem as CheckoutOrderItemSchema,
@@ -216,6 +217,7 @@ class CheckoutService:
 
         customer = self._load_customer(data.customer_id)
         drafts = self._build_lines(data, customer)
+        self._check_store_products(branch_id, drafts)
         try:
             self._apply_writes(
                 data, customer, drafts, key, body_hash, cashier_id, cashier_name, branch_id, branch_id
@@ -454,6 +456,32 @@ class CheckoutService:
                 )
             )
         return drafts
+
+    # 'list' 門市只能賣清單裡的商品（數量 > 0 的列）。退貨列不檢查，跟已下架商品一樣可以退。
+    def _check_store_products(self, branch_name: str, drafts: Sequence[_DraftLine]) -> None:
+        store = self.db.get(StoreBranch, branch_name)
+        if store is None or store.product_scope != "list":
+            return
+        sale_ids = {line.product.id for line in drafts if line.quantity > 0}
+        if not sale_ids:
+            return
+        listed = set(
+            self.db.scalars(
+                select(StoreProduct.product_id).where(
+                    StoreProduct.store_name == store.name,
+                    StoreProduct.product_id.in_(sale_ids),
+                )
+                # 鎖住清單列到結帳交易結束，同時移出清單的請求會排在結帳之後。
+                .with_for_update(key_share=True)
+            ).all()
+        )
+        for line in drafts:
+            if line.quantity > 0 and line.product.id not in listed:
+                _raise(
+                    409,
+                    BusinessErrorCode.PRODUCT_NOT_IN_STORE,
+                    f"本門市未販售此商品：{line.sku} (ID: {line.product.id})",
+                )
 
     def _lock_product(self, product_id: str) -> Optional[Product]:
         """讀商品並加 FOR KEY SHARE 鎖，直到結帳交易結束。

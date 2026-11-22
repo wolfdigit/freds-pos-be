@@ -10,6 +10,7 @@ Mirror FE mock [`mockProductService.searchProducts`](../../../freds-pos-fe/src/s
 | `scale` | query | `ModelScale` or `ALL` |
 | `brand` | query | Brand string or `ALL` |
 | `inInventoryOnly` | query boolean | Default `false` |
+| `allProducts` | query boolean | Any business user. Default `false` |
 
 Filters are **AND**-combined. Within the keyword filter, match conditions are **OR**.
 
@@ -113,6 +114,15 @@ Keyword brand matching is substring/case-insensitive; the **`brand` query param*
 | `true` | Keep only products where `totalInventory > 0` |
 
 `totalInventory` = sum of `product_inventory.quantity` for that product, across every location, including negatives. `inInventoryOnly` keeps products whose sum is greater than `0`.
+
+---
+
+## Store product list filter
+
+When the session store has `productScope: list` and `allProducts` is not set, add
+`EXISTS (SELECT 1 FROM store_product WHERE store_name = :store AND product_id = product.id)`.
+It runs in SQL with the other filters, so paging and `total` only count listed products.
+`productScope: all` stores and an admin with no selected store get no extra filter.
 
 ---
 
