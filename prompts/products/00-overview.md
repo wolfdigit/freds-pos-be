@@ -5,7 +5,7 @@ The **product catalog** phase of Fred's POS backend. Companion docs in this fold
 ## Goals
 
 - Expose a FastAPI catalog that matches the frontend `IProductService` catalog methods so the UI can switch from mock/localStorage to HTTP without rewriting screens.
-- Persist products with multi-location stock rows and a separate preorder-pending aggregate (read-only on catalog endpoints).
+- Persist products with multi-location stock rows.
 - Keep **contract → frontend/mock** alignment: OpenAPI is the planned HTTP contract; the FE adapter already ships.
 
 
@@ -29,12 +29,12 @@ Catalog responsibilities:
 
 - Product **metadata** CRUD (sku, barcode, brand, name, scale, list price, optional vip price, note, optional material/color/imageUrl). The catalog does not record `costPrice`. `status` records soft delete: `active` or `deleted`.
 - On create: do not insert inventory rows. A missing row reads as `0`. **No** client quantity fields on `POST /products`.
-- Server-owned / response-only: `id`, `normalizedSku`, `totalInventory`, `preOrderPendingCount`, `inventories` (assembled on read). `totalInventory` sums every location, including negatives.
+- Server-owned / response-only: `id`, `normalizedSku`, `totalInventory`, `inventories` (assembled on read). `totalInventory` sums every location, including negatives.
 - Search filters aligned with the FE mock (`keyword`, `scale`, `brand`, `inInventoryOnly`); default sort **`sku ASC`**. Filters run **in SQL**, not in Python after load.
 
 ### Also in the OpenAPI
 
-Inventory transfers, adjustments, locations, pre-orders, store branches, and OAuth accounts are in [`../openapi.yaml`](../openapi.yaml). Catalog create does not insert inventory rows.
+Inventory transfers, adjustments, locations, store branches, and OAuth accounts are in [`../openapi.yaml`](../openapi.yaml). Catalog create does not insert inventory rows.
 
 Out of this catalog write-up:
 
@@ -50,22 +50,22 @@ Target layout matches the backend README. Catalog is wired as a thin HTTP layer 
 HTTP (api/v1/endpoints/products.py)
   → ProductService (services/product_service.py)
     → ORM models (models/product*.py)
-      → DB: product | product_inventory | product_pre_order_pending
+      → DB: product | product_inventory
 ```
 
 | Layer | Role |
 |-------|------|
 | **API / endpoints** | Route handlers, query/body parsing, status codes, dependency injection (`get_db`, optional user). No business rules beyond HTTP mapping. |
-| **Schemas** | Pydantic request/response DTOs; camelCase JSON (`normalizedSku`, `listPrice`, `preOrderPendingCount`, …) matching FE `Product`. |
-| **Services** | SKU normalize, uniqueness, create-time stock upsert, computed `totalInventory` / `preOrderPendingCount`, search filters, ignore client overwrite of server-owned fields. |
-| **Models + Alembic** | Tables, indexes, uniqueness; migration for `product`, `product_inventory`, `product_pre_order_pending`. |
+| **Schemas** | Pydantic request/response DTOs; camelCase JSON (`normalizedSku`, `listPrice`, `totalInventory`, …) matching FE `Product`. |
+| **Services** | SKU normalize, uniqueness, create-time stock upsert, computed `totalInventory`, search filters, ignore client overwrite of server-owned fields. |
+| **Models + Alembic** | Tables, indexes, uniqueness; migration for `product`, `product_inventory`. |
 
 ### Planned backend file map (document only — not implemented yet)
 
 | Piece | Path |
 |-------|------|
 | Schemas | `src/schemas/product.py` |
-| Models | `src/models/product.py` (+ stock / preorder-pending) |
+| Models | `src/models/product.py` (+ stock) |
 | Service | `src/services/product_service.py` |
 | Endpoints | `src/api/v1/endpoints/products.py` |
 | Router wire-up | `src/api/v1/api.py` |
@@ -77,9 +77,8 @@ Base URL (planned): `/api/v1` (see [`../openapi.yaml`](../openapi.yaml) servers)
 
 - **`product`** — catalog metadata; unique `sku`; `barcode` indexed but **not** unique; timestamps `created_at` / `updated_at`. Rows are not deleted. `PUT` sets `deleted` to hide or restore a product and leaves the id in place for checkout history and returns.
 - **`product_inventory`** — one row per location; unique `(product_id, location)`.
-- **`product_pre_order_pending`** — separate table (not a column on `product`); default 1:1 via unique `product_id`; no row ⇒ API returns `preOrderPendingCount: 0`.
 
-`totalInventory` = sum of stock quantities; `preOrderPendingCount` = pending table quantity (or `0`). Neither is stored on `product`.
+`totalInventory` = sum of stock quantities. It is not stored on `product`.
 
 ## Frontend alignment
 
@@ -95,9 +94,9 @@ Source of truth for shapes and catalog method signatures:
 
 1. OpenAPI is the HTTP source of truth ([`../openapi.yaml`](../openapi.yaml)); where it **narrows** vs today’s FE (`Partial<Product>`, create `stocks`), FE adapts — see [`05-fe-changes.md`](./05-fe-changes.md).
 2. Response `Product` is camelCase, with one `inventories` entry per location that has a row, integer TWD `listPrice`. There is no `costPrice`. `status` is `active` or `deleted`, and `deleted` mirrors it.
-3. Create request has **no** `inventories` / quantities. Server assigns `id`, `normalizedSku`, `preOrderPendingCount: 0`, and `totalInventory: 0`.
+3. Create request has **no** `inventories` / quantities. Server assigns `id`, `normalizedSku`, and `totalInventory: 0`.
 4. Search semantics mirror the mock (empty keyword = no keyword filter; `scale`/`brand` missing or `ALL` = no filter; `inInventoryOnly` → `totalInventory > 0`). Sort: **`sku ASC`**. Filters run **in SQL**. Details in `03-search-rules.md`.
-5. Catalog `PUT` uses **`UpdateProductRequest`** (metadata only in OpenAPI); stock / preorder never part of that schema.
+5. Catalog `PUT` uses **`UpdateProductRequest`** (metadata only in OpenAPI); stock is never part of that schema.
 
 ### ID and create defaults (summary)
 
@@ -119,4 +118,4 @@ Source of truth for shapes and catalog method signatures:
 ## Non-goals for this planning pass
 
 - Implementing endpoints, models, or migrations.
-- Inventory / preorder write APIs.
+- Inventory write APIs.

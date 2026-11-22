@@ -49,7 +49,8 @@ class Product(BaseModel):
     total_inventory: int = Field(..., alias="totalInventory")
     login_store_quantity: Optional[int] = Field(None, alias="loginStoreQuantity")
     login_store_returned_quantity: Optional[int] = Field(None, alias="loginStoreReturnedQuantity")
-    pre_order_pending_count: int = Field(..., alias="preOrderPendingCount", ge=0)
+    # 登入門市「預購保留」綁定地點的數量；沒有選定門市時為 null。
+    login_store_preorder_quantity: Optional[int] = Field(None, alias="loginStorePreorderQuantity")
     note: Optional[str] = None
     status: ProductStatus = ProductStatus.ACTIVE
     deleted: bool = False

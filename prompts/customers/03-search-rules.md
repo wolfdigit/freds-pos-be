@@ -100,4 +100,4 @@ No post-query Python filter/slice.
 - Filter by `totalSpent`.
 - Exact-phone dedicated path (removed).
 - Full-text / trigram ranking.
-- Nested preorder / order search.
+- Nested order search.

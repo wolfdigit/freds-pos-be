@@ -97,7 +97,7 @@
 
 每次請求都會重讀白名單。角色變更下一筆請求就生效。降成 `staff` 之後，若還沒選門市，業務 API 是 `AUTH_STORE_REQUIRED`；已選門市則可使用業務 API，管理 API 是 `AUTH_FORBIDDEN`。
 
-`admin` 與 `staff` 都能使用商品、會員、庫存、結帳查詢、預購。白名單與門市清單維護只限 `admin`。管理員維護白名單不需要先選門市。
+`admin` 與 `staff` 都能使用商品、會員、庫存、結帳查詢。白名單與門市清單維護只限 `admin`。管理員維護白名單不需要先選門市。
 
 要知道「目前登入門市」才能做的操作，沒有選門市時回 `403` `AUTH_STORE_REQUIRED`，不改資料。目前只有 `POST /api/v1/checkout/orders`：它扣 session 門市的正常庫存點；退貨依 `restock` 加回該門市的正常庫存點（省略或 `true`）或退貨庫存點（`false`）。有選門市就用該門市，管理員與店員相同。請求沒有另加門市參數，body 的 `branchId` 仍忽略。
 
@@ -115,12 +115,12 @@
 | `/api/v1/system/stores/{storeName}` | DELETE | 不可 | 可 | 200 `{ "deletedStore" }`；最後一間 409 `LAST_STORE`；找不到 404 `LOCATION_NOT_FOUND`；staff 403 `AUTH_FORBIDDEN` |
 | `/api/v1/system/oauth/accounts` | GET、POST、PUT、DELETE | 不可 | 可，含尚未選門市 | staff 已選門市 403 `AUTH_FORBIDDEN`；staff 尚未選門市 403 `AUTH_STORE_REQUIRED` |
 | `/api/v1/inventory/locations` 與其他庫存讀寫 | GET、POST、PUT、DELETE | 必須已選門市 | 可，含尚未選門市 | 庫存地點不是門市，也不依登入門市篩選。未登入 401 `AUTH_REQUIRED` |
-| 商品、會員、預購、`GET /api/v1/checkout/orders` | 既有方法 | 必須已選門市 | 可，含尚未選門市 | 沒有選門市時 `loginStoreQuantity` 與 `loginStoreReturnedQuantity` 為 `null` |
+| 商品、會員、`GET /api/v1/checkout/orders` | 既有方法 | 必須已選門市 | 可，含尚未選門市 | 沒有選門市時 `loginStoreQuantity` 與 `loginStoreReturnedQuantity` 為 `null` |
 | `/api/v1/checkout/orders` | POST | 必須已選門市 | 有選門市才可；沒有則 403 `AUTH_STORE_REQUIRED` | 扣目前 session 門市的正常庫存點。不接受 body 指定門市 |
 
 沒有設定預設門市的 API。`isDefault` 只出現在清單回應。角色每次請求都從白名單重讀，降權的下一筆管理請求就是 403。
 
-庫存地點（`/api/v1/inventory/locations`）不是門市清單。管理員在建立第一間門市之前就可以讀取，用來取得 `POST /api/v1/system/stores` 需要的兩個庫存點 id。
+庫存地點（`/api/v1/inventory/locations`）不是門市清單。管理員在建立第一間門市之前就可以讀取，用來取得 `POST /api/v1/system/stores` 需要的庫存點 id。
 
 若管理員刪掉店員目前的登入門市，該店員下一筆業務請求是 `403` `AUTH_STORE_REQUIRED`，要再呼叫 `POST /api/v1/auth/store` 選另一間。這不影響庫存地點。
 
@@ -138,7 +138,7 @@
 
 ## 結帳門市與庫存
 
-每間登入門市綁兩個庫存點。`inventoryLocationId` 是正常貨，`returnedInventoryLocationId` 是退貨品。兩個可以是同一個庫存點。換門市會改扣庫存的地點。多間門市可以綁同一個庫存點。
+每間登入門市綁三個庫存點。`inventoryLocationId` 是正常貨，`returnedInventoryLocationId` 是退貨品，`preorderInventoryLocationId` 是預購保留（結帳列勾預購取貨時從這裡扣）。可以是同一個庫存點。換門市會改扣庫存的地點。多間門市可以綁同一個庫存點。
 
 - 不要再依賴 body 的 `branchId`。後端會忽略它。
 - 訂單的 `branchId` 與 `branchName` 都是目前 session 的門市名稱。之後改綁不會改寫舊訂單，也不會搬走已經入帳的數量。

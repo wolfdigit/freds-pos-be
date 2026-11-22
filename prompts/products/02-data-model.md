@@ -1,13 +1,12 @@
 # Products Catalog — Data Model
 
-Persistence design for catalog endpoints. Tables: `product`, `product_inventory`, `product_pre_order_pending`. Response DTO maps snake_case DB → camelCase JSON to match FE / OpenAPI `Product`.
+Persistence design for catalog endpoints. Tables: `product`, `product_inventory`. Response DTO maps snake_case DB → camelCase JSON to match FE / OpenAPI `Product`.
 
 ## ER sketch
 
 ```mermaid
 erDiagram
   product ||--o{ product_inventory : has
-  product ||--o| product_pre_order_pending : has
   product {
     string id PK
     string sku UK
@@ -34,18 +33,13 @@ erDiagram
     string location_name
     int quantity
   }
-  product_pre_order_pending {
-    int id PK
-    string product_id FK UK
-    int quantity
-  }
 ```
 
 ---
 
 ## Table: `product`
 
-Catalog metadata only. **Does not** store `total_inventory` or `pre_order_pending_count`.
+Catalog metadata only. **Does not** store `total_inventory`.
 
 | Column | Type (suggested) | Constraints / notes |
 |--------|------------------|---------------------|
@@ -105,28 +99,6 @@ Catalog **PUT** must not change these rows. Stock mutations belong to future `/i
 
 ---
 
-## Table: `product_pre_order_pending`
-
-Separate from catalog columns. Holds pending preorder quantity for API field `preOrderPendingCount`.
-
-| Column | Type (suggested) | Constraints / notes |
-|--------|------------------|---------------------|
-| `id` | `Integer` PK / serial | |
-| `product_id` | `String` FK → `product.id` | **UNIQUE** (default **1:1** with product). `ON DELETE RESTRICT`. |
-| `quantity` | `Integer` | ≥ 0; pending count source |
-
-### Behavior
-
-- No row for a product ⇒ API returns `preOrderPendingCount: 0`.
-- With 1:1 unique `product_id`, lookup is a single row (equivalent to SUM of one value).
-- Catalog endpoints are **read-only** for this table.
-- Catalog create/update must **not** accept client overwrite of pending count and must **not** insert/update rows here.
-- Writes belong to a future preorder module.
-
-Evolution (decided path): keep **1:1** for this phase; later may replace with summing real `pre_order` / line-item rows; keep computed response field so the API shape stays stable.
-
----
-
 ## Server-computed response fields
 
 Not stored on `product`:
@@ -134,7 +106,6 @@ Not stored on `product`:
 | API field | Computation |
 |-----------|-------------|
 | `totalInventory` | `SUM(product_inventory.quantity)` for the product (missing rows treated as absent; create always ensures four rows) |
-| `preOrderPendingCount` | Pending row `quantity`, or `0` if no row |
 | `normalizedSku` | Stored on `product.normalized_sku` but always derived from `sku` on write (`upper` + strip non `[A-Z0-9]`); never trust client |
 | `inventories` | Assembled from `product_inventory` rows → camelCase `LocationInventory[]` |
 
@@ -144,7 +115,7 @@ Not stored on `product`:
 
 | Piece | Path |
 |-------|------|
-| Models | `src/models/product.py` (or split `product_inventory` / `product_pre_order_pending`) |
+| Models | `src/models/product.py` (or split `product_inventory`) |
 | Schemas | `src/schemas/product.py` |
 | Service | `src/services/product_service.py` |
 | Endpoints | `src/api/v1/endpoints/products.py` |
@@ -159,7 +130,7 @@ Register models in `src/models/__init__.py` / `src/db/base.py` so Alembic autoge
 
 1. First revision: **schema only** — all three tables + indexes/constraints above (no seed data).
 2. Prefer explicit FK + unique constraints in migration (not only ORM).
-3. **Seed later (decision B):** Alembic data migration and/or management script — insert `product` + four `product_inventory` rows per item; omit pending rows unless seed needs non-zero pending. See [`04-open-questions.md`](./04-open-questions.md).
+3. **Seed later (decision B):** Alembic data migration and/or management script — insert `product` + four `product_inventory` rows per item. See [`04-open-questions.md`](./04-open-questions.md).
 4. `created_at` / `updated_at`: use timezone-aware UTC; update `updated_at` in service on metadata PUT.
 
 ---
@@ -173,4 +144,4 @@ Register models in `src/models/__init__.py` / `src/db/base.py` so Alembic autoge
 | `list_price` | `listPrice` |
 | `vip_price` | `vipPrice` |
 | `location_name` | `locationName` |
-| (computed) | `totalInventory`, `preOrderPendingCount` |
+| (computed) | `totalInventory` |

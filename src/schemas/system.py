@@ -12,6 +12,8 @@ class StoreDto(BaseModel):
     inventory_location_name: str = Field(..., alias="inventoryLocationName")
     returned_inventory_location_id: str = Field(..., alias="returnedInventoryLocationId")
     returned_inventory_location_name: str = Field(..., alias="returnedInventoryLocationName")
+    preorder_inventory_location_id: str = Field(..., alias="preorderInventoryLocationId")
+    preorder_inventory_location_name: str = Field(..., alias="preorderInventoryLocationName")
 
 
 class CreateStoreRequest(BaseModel):
@@ -20,6 +22,8 @@ class CreateStoreRequest(BaseModel):
     name: str
     inventory_location_id: str = Field(..., alias="inventoryLocationId", min_length=1)
     returned_inventory_location_id: str = Field(..., alias="returnedInventoryLocationId", min_length=1)
+    # 沒送時綁系統地點「預購保留」。
+    preorder_inventory_location_id: Optional[str] = Field(None, alias="preorderInventoryLocationId", min_length=1)
 
 
 class UpdateStoreBindingRequest(BaseModel):
@@ -27,6 +31,8 @@ class UpdateStoreBindingRequest(BaseModel):
 
     inventory_location_id: str = Field(..., alias="inventoryLocationId", min_length=1)
     returned_inventory_location_id: str = Field(..., alias="returnedInventoryLocationId", min_length=1)
+    # 沒送時維持目前的預購保留綁定。
+    preorder_inventory_location_id: Optional[str] = Field(None, alias="preorderInventoryLocationId", min_length=1)
 
 
 class OAuthAccountDto(BaseModel):

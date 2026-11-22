@@ -53,6 +53,7 @@ There is no invoice and no `costPrice` on the order or the line.
 | `returnedQuantity` | integer | Units of this sale line already returned. `0` on create. |
 | `originalOrderId` | string | When `quantity < 0`, the earlier checkout order this line is returning product from. Required on a return line. |
 | `originalOrderItemId` | string | When `quantity < 0`, the earlier sale line whose units are being returned. Required on a return line. |
+| `preorderPickup` | boolean | Sale only. Default `false`. `true` deducts the units from the login store's preorder location (預購保留) instead of the normal location. A return line with `true` is `422`. Works together with `pointsDiscountApplied`. Echoed on the order line. |
 | `restock` | boolean | Return only. Default `true`. Omitted or `true` adds the units to the login store's normal location. `false` adds them to the returned location. |
 | `returnReason` | string | Optional |
 
@@ -75,7 +76,7 @@ A migration converts existing `credit_card` rows to `credit_card_physical` (and 
 | `changeAmount` | integer | Optional. |
 | `transactionRef` | string | Optional. Card last-4 or transfer last-5. |
 
-The server stores these fields and returns them on the order. There is no invoice on the request or the response. Checkout does not accept `preOrderId` or `preOrderItemId`.
+The server stores these fields and returns them on the order. There is no invoice on the request or the response.
 
 ---
 
@@ -100,7 +101,7 @@ Do not rely on a lookup before insert. Two requests can both miss that lookup an
 | `payments` | array | At least one |
 | `note` | string | Optional |
 
-**Item request fields:** `productId`, `quantity`, `unitPrice`, `isManualPrice`, `priceDiffReason`, `pointsDiscountApplied`, `originalOrderId`, `originalOrderItemId`, `restock`, `returnReason`. Do not send `preOrderId` or `preOrderItemId`.
+**Item request fields:** `productId`, `quantity`, `unitPrice`, `isManualPrice`, `priceDiffReason`, `pointsDiscountApplied`, `preorderPickup`, `originalOrderId`, `originalOrderItemId`, `restock`, `returnReason`.
 
 **Payment request fields:** `type`, `name`, `amount`, and optionally `tenderedCash`, `changeAmount`, `transactionRef`.
 
@@ -137,7 +138,7 @@ All checks run inside the database transaction. Any failure rolls back.
 In one commit:
 
 - Insert order, lines, payments.
-- Positive lines: subtract `quantity` from the login store's normal location, even when that drives the quantity below zero.
+- Positive lines: subtract `quantity` from the login store's normal location (or its preorder location when `preorderPickup` is true), even when that drives the quantity below zero.
 - Negative lines always add `abs(quantity)`. `restock` omitted or `true` adds it at the normal location. `restock: false` adds it at the returned location.
 - Recompute nothing else on the product row. `totalInventory` stays a read-time sum.
 - Return: add `abs(quantity)` to the earlier sale line `returnedQuantity`. If every line on that earlier order is fully returned, its `status` becomes `refunded`. If any line has `returnedQuantity > 0`, `partially_refunded`. Otherwise leave `completed`. The earlier line's points-discount flag stays as it was.

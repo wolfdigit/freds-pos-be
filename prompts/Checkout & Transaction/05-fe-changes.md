@@ -15,7 +15,7 @@ The counter, return search, and mock checkout follow this contract. The HTTP ada
 - Do not send `cashierId` or `cashierName`. The server copies them from the current user. The header can keep showing `sessionStore` until login exists.
 - `branchId`: `branch-store` for the counter, `branch-online` for an online-store sale. Omit it on the counter and the server uses `branch-store`.
 - `customerId` only (server copies name and phone)
-- Line `productId`, `quantity`, `isManualPrice`, `unitPrice` (required if manual), `priceDiffReason`, and for returns `originalOrderId` + `originalOrderItemId` equal to the server line `id`. Do not send `preOrderId` or `preOrderItemId`.
+- Line `productId`, `quantity`, `isManualPrice`, `unitPrice` (required if manual), `priceDiffReason`, and for returns `originalOrderId` + `originalOrderItemId` equal to the server line `id`.
 - On a line, `pointsDiscountApplied` when that unit uses the points exchange (up to NT$360 off, floored at 0). Split one unit onto its own line with `quantity: 1` and the already-reduced `unitPrice`. At most once per product. Several different products may each be flagged. Only with a bound member.
 - `shippingFee`, `payments` (`type`, `name`, `amount`, and when present `tenderedCash`, `changeAmount`, `transactionRef`), `note`
 - Header `X-Idempotency-Key`. A retried submit reuses the same key. The server replays the stored order when that key was already inserted.
@@ -45,4 +45,3 @@ A return line does not send `pointsDiscountApplied`. The server copies the flag 
 - Repricing the cart from `vipPrice` or tier on `attachCustomer`
 - A server-side parked ticket
 - An invoice field, an invoice number, or an e-invoice call
-- `preOrderId` or `preOrderItemId` on a checkout line

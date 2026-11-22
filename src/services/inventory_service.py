@@ -51,6 +51,19 @@ RETURNED_LOCATION_ID = DEFAULT_LOCATIONS[4][0]
 LEGACY_LOCATION_IDS = {legacy: loc_id for loc_id, *_rest, legacy in DEFAULT_LOCATIONS}
 MIN_LOCATION_COUNT = 1
 
+# 三個系統地點：一開始就存在、不能刪，可以改名和改圖示。系統只認 system_role，不認名稱。
+# 公司總倉與退貨品沿用原本的預設地點（同一個 id、不改名）；預購保留是新地點。
+# (system_role, 固定 id, 預設名稱, 圖示, 排序, 沿用同 id 的既有地點)
+SYSTEM_LOCATIONS = (
+    ("company", "e1a10003-0000-4000-8000-000000000003", "公司總倉", "🏢", 3, True),
+    ("defective", "e1a10005-0000-4000-8000-000000000005", "退貨品", "↩️", 5, True),
+    ("preorder", "e1a10006-0000-4000-8000-000000000006", "預購保留", "📋", 6, False),
+)
+COMPANY_LOCATION_ID = SYSTEM_LOCATIONS[0][1]
+DEFECTIVE_LOCATION_ID = SYSTEM_LOCATIONS[1][1]
+PREORDER_LOCATION_ID = SYSTEM_LOCATIONS[2][1]
+SYSTEM_ROLE_LABELS = {"company": "公司總倉", "preorder": "預購保留", "defective": "退貨品"}
+
 
 def _raise(status_code: int, code: BusinessErrorCode, message: str) -> None:
     raise BusinessException(status_code=status_code, code=code, message=message)
@@ -68,20 +81,64 @@ def list_locations(db: Session) -> List[InventoryLocation]:
 
 def ensure_locations(db: Session) -> List[InventoryLocation]:
     rows = list_locations(db)
-    if rows:
-        return rows
-    for loc_id, name, icon, is_default, order, _legacy in DEFAULT_LOCATIONS:
-        db.add(
-            InventoryLocation(
-                id=loc_id,
+    if not rows:
+        for loc_id, name, icon, is_default, order, _legacy in DEFAULT_LOCATIONS:
+            db.add(
+                InventoryLocation(
+                    id=loc_id,
+                    name=name,
+                    icon=icon,
+                    is_default=is_default,
+                    display_order=order,
+                )
+            )
+        db.flush()
+        rows = list_locations(db)
+    if _ensure_system_locations(db, rows):
+        rows = list_locations(db)
+    return rows
+
+
+def _ensure_system_locations(db: Session, rows: Sequence[InventoryLocation]) -> bool:
+    """確保三個系統地點都在。缺的先接管同 id（公司總倉、退貨品）、再接管同名地點，都沒有才新建。回傳是否有寫入。"""
+
+    by_role = {row.system_role: row for row in rows if row.system_role}
+    by_id = {row.id: row for row in rows}
+    by_name = {row.name: row for row in rows}
+    changed = False
+    for role, loc_id, name, icon, order, reuse_id in SYSTEM_LOCATIONS:
+        if role in by_role:
+            continue
+        existing = by_id.get(loc_id) if reuse_id else None
+        if existing is not None and existing.system_role is not None:
+            existing = None
+        if existing is None:
+            candidate = by_name.get(name)
+            existing = candidate if candidate is not None and candidate.system_role is None else None
+        if existing is not None:
+            existing.system_role = role
+        else:
+            row = InventoryLocation(
+                id=loc_id if loc_id not in by_id else str(uuid.uuid4()),
                 name=name,
                 icon=icon,
-                is_default=is_default,
+                is_default=False,
                 display_order=order,
+                system_role=role,
             )
-        )
-    db.flush()
-    return list_locations(db)
+            db.add(row)
+        changed = True
+    if changed:
+        db.flush()
+    return changed
+
+
+def system_location(db: Session, role: str) -> InventoryLocation:
+    ensure_locations(db)
+    row = db.scalar(select(InventoryLocation).where(InventoryLocation.system_role == role))
+    if row is None:
+        _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到系統庫存地點")
+    return row
 
 
 def lock_all_locations(db: Session) -> List[InventoryLocation]:
@@ -108,12 +165,17 @@ def resolve_location_id(db: Session, raw: str) -> InventoryLocation:
     return row
 
 
-def require_two_locations(db: Session, normal_id: str, returned_id: str) -> tuple[InventoryLocation, InventoryLocation]:
+def require_store_locations(
+    db: Session, normal_id: str, returned_id: str, preorder_id: Optional[str]
+) -> tuple[InventoryLocation, InventoryLocation, Optional[InventoryLocation]]:
+    """鎖住全部地點後解析門市的三個綁定。preorder_id 沒給時回傳 None，由呼叫端決定預設。"""
+
     ensure_locations(db)
     lock_all_locations(db)
     normal = resolve_location_id(db, normal_id)
     returned = resolve_location_id(db, returned_id)
-    return normal, returned
+    preorder = resolve_location_id(db, preorder_id) if preorder_id else None
+    return normal, returned, preorder
 
 
 def _is_unique_violation(exc: IntegrityError) -> bool:
@@ -259,6 +321,7 @@ def apply_checkout_stock(
     order_id: str,
     operator_name: str,
     locks: Optional[CheckoutLocks] = None,
+    preorder_pickup: bool = False,
 ) -> tuple[str, str]:
     # locks: from lock_checkout_store() earlier in this transaction.
     # Without it this line takes the locks itself (the old per-line behaviour).
@@ -266,9 +329,15 @@ def apply_checkout_stock(
         locks = lock_checkout_store(db, store_name)
     store = locks.store
     if quantity > 0:
-        location = locks.location(db, store.inventory_location_id)
+        # 預購取貨從門市的預購保留地點扣，其他銷售從門市庫存扣。都可以扣到負數。
+        if preorder_pickup:
+            location = locks.location(db, store.preorder_inventory_location_id)
+            missing = "找不到門市的預購保留地點"
+        else:
+            location = locks.location(db, store.inventory_location_id)
+            missing = "找不到門市的正常庫存點"
         if location is None:
-            _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市的正常庫存點")
+            _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, missing)
         row = _lock_stock(db, product_id, location)
         row.quantity -= quantity
         row.location_name = location.name
@@ -314,25 +383,35 @@ def apply_checkout_stock(
     return location.id, location.name
 
 
-def _bindings_by_location(db: Session) -> tuple[dict[str, List[str]], dict[str, List[str]]]:
-    normal: dict[str, List[str]] = {}
-    returned: dict[str, List[str]] = {}
+@dataclass
+class _Bindings:
+    normal: dict[str, List[str]]
+    returned: dict[str, List[str]]
+    preorder: dict[str, List[str]]
+
+
+def _bindings_by_location(db: Session) -> _Bindings:
+    bindings = _Bindings(normal={}, returned={}, preorder={})
     rows = db.scalars(select(StoreBranch).order_by(StoreBranch.name)).all()
     for store in rows:
-        normal.setdefault(store.inventory_location_id, []).append(store.name)
-        returned.setdefault(store.returned_inventory_location_id, []).append(store.name)
-    return normal, returned
+        bindings.normal.setdefault(store.inventory_location_id, []).append(store.name)
+        bindings.returned.setdefault(store.returned_inventory_location_id, []).append(store.name)
+        bindings.preorder.setdefault(store.preorder_inventory_location_id, []).append(store.name)
+    return bindings
 
 
-def _to_dto(row: InventoryLocation, normal_names: Sequence[str], returned_names: Sequence[str]) -> InventoryLocationDto:
+def _to_dto(row: InventoryLocation, bindings: Optional[_Bindings] = None) -> InventoryLocationDto:
+    bindings = bindings or _Bindings(normal={}, returned={}, preorder={})
     return InventoryLocationDto(
         id=row.id,
         name=row.name,
         icon=row.icon,
         isDefault=row.is_default,
         displayOrder=row.display_order,
-        storeNames=list(normal_names),
-        returnedStoreNames=list(returned_names),
+        storeNames=list(bindings.normal.get(row.id, [])),
+        returnedStoreNames=list(bindings.returned.get(row.id, [])),
+        preorderStoreNames=list(bindings.preorder.get(row.id, [])),
+        systemRole=row.system_role,
     )
 
 
@@ -392,8 +471,8 @@ class InventoryService:
 
     def get_locations(self) -> List[InventoryLocationDto]:
         rows = ensure_locations(self.db)
-        normal, returned = _bindings_by_location(self.db)
-        return [_to_dto(row, normal.get(row.id, []), returned.get(row.id, [])) for row in rows]
+        bindings = _bindings_by_location(self.db)
+        return [_to_dto(row, bindings) for row in rows]
 
     def location_stock_summary(self) -> List[InventoryLocationStockSummary]:
         """One GROUP BY over product_inventory; every location is listed, empty ones as 0."""
@@ -430,7 +509,7 @@ class InventoryService:
         lock_all_locations(self.db)
         row = insert_location(self.db, data.name, icon=data.icon, display_order=data.display_order)
         self._commit_location_name()
-        return _to_dto(row, [], [])
+        return _to_dto(row)
 
     def update_location(self, location_id: str, data: UpdateInventoryLocationRequest) -> InventoryLocationDto:
         # Lock locations before stock rows. Checkout locks in that same order;
@@ -454,14 +533,16 @@ class InventoryService:
         if data.display_order is not None:
             row.display_order = data.display_order
         self._commit_location_name()
-        normal, returned = _bindings_by_location(self.db)
-        return _to_dto(row, normal.get(row.id, []), returned.get(row.id, []))
+        return _to_dto(row, _bindings_by_location(self.db))
 
     def delete_location(self, location_id: str, data: DeleteInventoryLocationRequest) -> DeleteInventoryLocationResponse:
         locked = lock_all_locations(self.db)
         source = next((row for row in locked if row.id == location_id), None)
         if source is None:
             _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到欲刪除的庫存地點")
+        if source.system_role:
+            label = SYSTEM_ROLE_LABELS.get(source.system_role, source.system_role)
+            _raise(409, BusinessErrorCode.SYSTEM_LOCATION, f"系統庫存點（{label}）不能刪除，可以改名")
         if len(locked) <= MIN_LOCATION_COUNT:
             _raise(409, BusinessErrorCode.LAST_LOCATION, "至少要保留一個庫存點")
         stock_rows = list(
@@ -478,6 +559,7 @@ class InventoryService:
                     or_(
                         StoreBranch.inventory_location_id == source.id,
                         StoreBranch.returned_inventory_location_id == source.id,
+                        StoreBranch.preorder_inventory_location_id == source.id,
                     )
                 )
                 .order_by(StoreBranch.name)
@@ -499,6 +581,9 @@ class InventoryService:
                 if store.returned_inventory_location_id == source.id:
                     store.returned_inventory_location_id = target.id
                     rebound.append(ReboundStore(name=store.name, binding="returned", inventoryLocationId=target.id))
+                if store.preorder_inventory_location_id == source.id:
+                    store.preorder_inventory_location_id = target.id
+                    rebound.append(ReboundStore(name=store.name, binding="preorder", inventoryLocationId=target.id))
         for row in stock_rows:
             self.db.delete(row)
         deleted_id = source.id

@@ -5,15 +5,16 @@ info:
   description: |
     HTTP contract for Fred's POS, matching the frontend Service Adapter (`src/services/interfaces/`).
     Designed for high-performance model car specialty stores with unified checkout, multi-location stock,
-    item-level returns/exchanges, pre-order partial fulfillment, and cash drawer management.
+    item-level returns/exchanges, and cash drawer management.
 
     **Core Architectural Principles**
     - **Single Transaction Pipeline**: All sales, returns, and defect exchanges are unified under `POST /checkout/orders`.
     - **Backend Pricing & Calculation Authority**: Frontend transmits purchase/return intents and cashier-adjusted `unitPrice`; backend calculates all line subtotals, discounts, taxes, and total amounts.
     - **Line-Item Return Traceability**: Returns/exchanges (negative quantities) must reference `originalOrderId` and `originalOrderItemId`, with cumulative `returnedQuantity` tracking.
-    - **ACID Atomicity**: Checkout/return operations execute inside a single database transaction (locking store stock, updating customer spending, and creating orders). Checkout does not update pre-orders.
+    - **ACID Atomicity**: Checkout/return operations execute inside a single database transaction (locking store stock, updating customer spending, and creating orders).
     - **Idempotency**: `POST /checkout/orders` supports `X-Idempotency-Key` to prevent double-charging or double stock deduction.
-    - **Authentication**: `POST /auth/google` exchanges a Google ID token for a server session. Later calls send `Authorization: Bearer <session token>`. `staff` must select a store before business APIs. `admin` may call business APIs with no store selected. `POST /checkout/orders` still needs that store for both roles and returns `403` `AUTH_STORE_REQUIRED` when it is missing. The selected login store chooses the normal and returned inventory locations used by checkout. Body `branchId` is ignored. When no store is selected, `loginStoreQuantity` and `loginStoreReturnedQuantity` are `null`.
+    - **Authentication**: `POST /auth/google` exchanges a Google ID token for a server session. Later calls send `Authorization: Bearer <session token>`. `staff` must select a store before business APIs. `admin` may call business APIs with no store selected. `POST /checkout/orders` still needs that store for both roles and returns `403` `AUTH_STORE_REQUIRED` when it is missing. The selected login store chooses the normal, returned, and preorder inventory locations used by checkout. Body `branchId` is ignored. When no store is selected, `loginStoreQuantity`, `loginStoreReturnedQuantity`, and `loginStorePreorderQuantity` are `null`.
+    - **System locations**: three locations always exist and cannot be deleted: 公司總倉 (`systemRole: company`, `e1a10003-…`), 退貨品 (`defective`, `e1a10005-…`), 預購保留 (`preorder`, `e1a10006-…`). They may be renamed or get a new icon; the server keys on `systemRole`, not the name.
 
     **Conventions**
     - Amounts are TWD integers (no cents).
@@ -40,8 +41,6 @@ tags:
     description: Product catalog, multi-location stock, and transfers
   - name: checkout
     description: Sales orders, receipts, item-level returns and exchanges
-  - name: preorders
-    description: Customer pre-orders and arrival management
   - name: customers
     description: Members and VIP tiers
   - name: auth
@@ -204,7 +203,6 @@ paths:
         Maps to `IProductService.createProduct`.
         Server assigns `id` as `prod-{uuid4}` (no dashes), computes `normalizedSku`,
         and does not create inventory rows.
-        Does not write `product_pre_order_pending` (response `preOrderPendingCount` is `0`).
         Initial and later quantities use the inventory APIs. `totalInventory` sums every location, including negatives.
         `status` is optional. When omitted, the server stores `active` and `deleted: false`. The body has no `costPrice`.
       requestBody:
@@ -252,7 +250,7 @@ paths:
       summary: Update product information
       description: |
         Maps to `IProductService.updateProduct`.
-        Metadata only — does not mutate stock rows or `product_pre_order_pending`.
+        Metadata only — does not mutate stock rows.
         On SKU change, server recomputes `normalizedSku`; duplicate SKU returns 409.
         `status: deleted` or `deleted: true` hides the product. `status: active` or `deleted: false` shows it again. The row is not removed. If both are sent, `status` wins.
       parameters:
@@ -563,9 +561,10 @@ paths:
       operationId: deleteLocation
       summary: Delete an empty inventory location
       description: |
+        Refuses with `409` `SYSTEM_LOCATION` for a system location (`systemRole` set: 公司總倉, 預購保留, 退貨品).
         Refuses with `409` `LAST_LOCATION` when this is the only location.
         Refuses with `409` `LOCATION_NOT_EMPTY` when any quantity is not exactly zero. A negative quantity is not zero.
-        Stores that used this location as their normal or returned location are bound to `rebindToLocation`. No new location is created.
+        Stores that used this location as their normal, returned, or preorder location are bound to `rebindToLocation`. No new location is created.
       parameters:
         - name: locationId
           in: path
@@ -683,7 +682,6 @@ paths:
         2. **Item Pricing & Subtotals**:
            - For positive purchases: verify `unitPrice` against `listPrice` or customer `vipPrice` unless `isManualPrice: true` (which requires `priceDiffReason`).
            - For return/exchange items (`quantity < 0`): verify `originalOrderId` & `originalOrderItemId`, ensuring `abs(quantity) <= (qtySold - qtyReturned)`. Also enforce member ownership: if the checkout is bound to customer A, the original order cannot belong to customer B (`customerId` mismatch raises `INVALID_RETURN_CUSTOMER`; unattached guest original orders are permitted).
-           - Checkout does not accept a pre-order id and does not check `quotedPrice`, `qtyArrived`, or `qtyDelivered`.
            - Compute `subtotal = unitPrice * quantity` for each line.
         3. **Order Total**:
            - `itemsSubtotal = sum(subtotals)`
@@ -692,8 +690,7 @@ paths:
            - Validate `sum(payments.amount) == totalAmount` (or `payments >= totalAmount` with cash change).
         4. **Inventory**:
            - Positive items deduct the login store's normal location (`inventoryLocationId`). The sale still completes when that quantity becomes negative.
-           - Negative items always add `abs(quantity)`. `restock` omitted or `true` adds it to the login store's normal location (`inventoryLocationId`), so it can be sold again. `restock: false` adds it to the returned location (`returnedInventoryLocationId`). The line stores `inventoryLocationId` and `inventoryLocationName` for the location that changed.
-           - Checkout does not change a pre-order. `qtyDelivered` and pre-order status change only on `POST /preorders/{preOrderId}/fulfill`.
+           - Negative items always add `abs(quantity)`. `restock` omitted or `true` adds it to the login store's normal location (`inventoryLocationId`), so it can be sold again. `restock: false` adds it to the returned location (`returnedInventoryLocationId`). Positive items deduct from the normal location, or from the preorder location (`preorderInventoryLocationId`) when `preorderPickup: true`. The line stores `inventoryLocationId` and `inventoryLocationName` for the location that changed.
         5. **Member Asset Update**:
            - Update `customer.totalSpent += totalAmount`
         6. **Receipt & Persistence**:
@@ -745,166 +742,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CheckoutOrder'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /preorders:
-    get:
-      tags: [preorders]
-      operationId: getPendingPreOrders
-      summary: Search open pre-orders
-      description: |
-        Maps to `IPreOrderService.getPendingPreOrders`.
-        Matches customer phone, name, or order number. Excludes `completed` and `cancelled`.
-      parameters:
-        - name: query
-          in: query
-          required: true
-          schema:
-            type: string
-          description: Phone fragment, name, or order number (e.g. `0912`)
-      responses:
-        '200':
-          description: Matching open pre-orders
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/PreOrder'
-    post:
-      tags: [preorders]
-      operationId: createPreOrder
-      summary: Create pre-order
-      description: Maps to `IPreOrderService.createPreOrder`. Server assigns `id`, `orderNumber`, `status`, and `updatedAt`.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreatePreOrderRequest'
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PreOrder'
-
-  /customers/{customerId}/preorders:
-    get:
-      tags: [preorders]
-      operationId: getPreOrdersByCustomerId
-      summary: List pre-orders for a customer
-      description: Maps to `IPreOrderService.getPreOrdersByCustomerId` (all statuses).
-      parameters:
-        - $ref: '#/components/parameters/CustomerId'
-      responses:
-        '200':
-          description: Pre-orders
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/PreOrder'
-
-  /preorders/{preOrderId}:
-    get:
-      tags: [preorders]
-      operationId: getPreOrderById
-      summary: Get pre-order by ID
-      parameters:
-        - $ref: '#/components/parameters/PreOrderId'
-      responses:
-        '200':
-          description: Pre-order
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PreOrder'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    put:
-      tags: [preorders]
-      operationId: updatePreOrder
-      summary: Update pre-order information
-      description: Maps to `IPreOrderService.updatePreOrder`.
-      parameters:
-        - $ref: '#/components/parameters/PreOrderId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdatePreOrderRequest'
-      responses:
-        '200':
-          description: Updated pre-order
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PreOrder'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /preorders/{preOrderId}/arrived:
-    post:
-      tags: [preorders]
-      operationId: markItemsArrived
-      summary: Mark pre-order items arrived (Phase 2)
-      description: Updates `qtyArrived` for specified products and re-derives pre-order status.
-      parameters:
-        - $ref: '#/components/parameters/PreOrderId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MarkItemsArrivedRequest'
-      responses:
-        '200':
-          description: Updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OkResponse'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /preorders/{preOrderId}/fulfill:
-    post:
-      tags: [preorders]
-      operationId: fulfillPreOrderItems
-      summary: Fulfill pre-order items
-      description: Deducts fulfilled quantities for specific items in a pre-order.
-      parameters:
-        - $ref: '#/components/parameters/PreOrderId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [fulfilledItems]
-              properties:
-                fulfilledItems:
-                  type: array
-                  items:
-                    type: object
-                    required: [preOrderItemId, qty]
-                    properties:
-                      preOrderItemId:
-                        type: string
-                      qty:
-                        type: integer
-      responses:
-        '200':
-          description: Fulfill succeeded
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OkResponse'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -1287,13 +1124,6 @@ components:
       schema:
         type: string
       example: so-2001
-    PreOrderId:
-      name: preOrderId
-      in: path
-      required: true
-      schema:
-        type: string
-      example: po-1001
     CustomerId:
       name: customerId
       in: path
@@ -1357,6 +1187,7 @@ components:
         - INSUFFICIENT_INVENTORY
         - LOCATION_NOT_EMPTY
         - LAST_LOCATION
+        - SYSTEM_LOCATION
         - LOCATION_NAME_TAKEN
         - INVENTORY_LOCATION_IN_USE
         - RETURN_QTY_EXCEEDED
@@ -1374,7 +1205,6 @@ components:
         - CUSTOMER_HAS_UNFINISHED_ORDERS
         - INVALID_RETURN_CUSTOMER
         - IDEMPOTENCY_CONFLICT
-        - PREORDER_QTY_EXCEEDED
         - AUTH_REQUIRED
         - AUTH_NOT_CONFIGURED
         - AUTH_PROVIDER_UNAVAILABLE
@@ -1445,6 +1275,18 @@ components:
             type: string
           readOnly: true
           description: Stores that use this location for returned goods.
+        preorderStoreNames:
+          type: array
+          items:
+            type: string
+          readOnly: true
+          description: Stores that use this location to hold preorder stock (預購保留).
+        systemRole:
+          type: string
+          nullable: true
+          enum: [company, preorder, defective, null]
+          readOnly: true
+          description: System location role. 公司總倉 = company, 預購保留 = preorder, 退貨品 = defective. System locations cannot be deleted but can be renamed. `null` for ordinary locations.
 
     CreateInventoryLocationRequest:
       type: object
@@ -1582,6 +1424,10 @@ components:
           type: integer
           nullable: true
           description: Quantity at the session store's returned location. `null` when the session has no selected store. When a store is selected, a missing row is `0`, and the value may be negative.
+        loginStorePreorderQuantity:
+          type: integer
+          nullable: true
+          description: Quantity at the session store's preorder location (預購保留). `null` when the session has no selected store. When a store is selected, a missing row is `0`, and the value may be negative.
         note:
           type: string
         createdAt:
@@ -2013,6 +1859,10 @@ components:
         pointsDiscountApplied:
           type: boolean
           description: 此列使用點數折抵（只存旗標，金額 = (originalPrice - unitPrice) × quantity）。退貨列沿用原列旗標。
+        preorderPickup:
+          type: boolean
+          default: false
+          description: 預購取貨。這一列的庫存從門市的預購保留地點扣，不從門市庫存扣。只會出現在銷售列。
         note:
           type: string
           description: 項目備註
@@ -2145,6 +1995,10 @@ components:
         pointsDiscountApplied:
           type: boolean
           default: false
+        preorderPickup:
+          type: boolean
+          default: false
+          description: 預購取貨：從登入門市的預購保留地點扣庫存。只能用在銷售列（quantity > 0），退貨列送 true 會回 422。可以和點數折抵同時使用。
         originalOrderId:
           type: string
           description: Required when quantity < 0 (links return to original sales order)
@@ -2207,164 +2061,6 @@ components:
           type: integer
         total:
           type: integer
-
-    PreOrderStatus:
-      type: string
-      enum:
-        - pending
-        - partially_arrived
-        - partially_completed
-        - completed
-        - cancelled
-
-    PreOrderItem:
-      type: object
-      required:
-        - id
-        - productId
-        - sku
-        - productName
-        - scale
-        - brand
-        - quotedPrice
-        - qtyOrdered
-        - qtyArrived
-        - qtyDelivered
-      properties:
-        id:
-          type: string
-        productId:
-          type: string
-        sku:
-          type: string
-        productName:
-          type: string
-        scale:
-          $ref: '#/components/schemas/ModelScale'
-        brand:
-          type: string
-        quotedPrice:
-          type: integer
-        qtyOrdered:
-          type: integer
-        qtyArrived:
-          type: integer
-        qtyDelivered:
-          type: integer
-
-    PreOrder:
-      type: object
-      required:
-        - id
-        - orderNumber
-        - customerId
-        - customerName
-        - customerPhone
-        - orderDate
-        - status
-        - source
-        - items
-        - updatedAt
-      properties:
-        id:
-          type: string
-        orderNumber:
-          type: string
-          example: PO-202607-0019
-        customerId:
-          type: string
-        customerName:
-          type: string
-        customerPhone:
-          type: string
-        orderDate:
-          type: string
-        expectedArrivalDate:
-          type: string
-        status:
-          $ref: '#/components/schemas/PreOrderStatus'
-        source:
-          type: string
-          enum: [in_store, website]
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/PreOrderItem'
-        note:
-          type: string
-        operatorName:
-          type: string
-        updatedAt:
-          type: string
-          format: date-time
-
-    CreatePreOrderRequest:
-      type: object
-      properties:
-        customerId:
-          type: string
-        customerName:
-          type: string
-        customerPhone:
-          type: string
-        orderDate:
-          type: string
-        expectedArrivalDate:
-          type: string
-        source:
-          type: string
-          enum: [in_store, website]
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/PreOrderItem'
-        note:
-          type: string
-        operatorName:
-          type: string
-
-    UpdatePreOrderRequest:
-      type: object
-      properties:
-        customerId:
-          type: string
-        customerName:
-          type: string
-        customerPhone:
-          type: string
-        orderDate:
-          type: string
-        expectedArrivalDate:
-          type: string
-        status:
-          $ref: '#/components/schemas/PreOrderStatus'
-        source:
-          type: string
-          enum: [in_store, website]
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/PreOrderItem'
-        note:
-          type: string
-        operatorName:
-          type: string
-
-    MarkItemsArrivedRequest:
-      type: object
-      required: [arrivedItems]
-      properties:
-        arrivedItems:
-          type: array
-          items:
-            type: object
-            required: [productId, qty]
-            properties:
-              productId:
-                type: string
-              qty:
-                type: integer
-                minimum: 1
 
     VipTier:
       type: string
@@ -2512,7 +2208,7 @@ components:
               example: Bearer
     StoreDto:
       type: object
-      required: [name, inventoryLocationId, inventoryLocationName, returnedInventoryLocationId, returnedInventoryLocationName]
+      required: [name, inventoryLocationId, inventoryLocationName, returnedInventoryLocationId, returnedInventoryLocationName, preorderInventoryLocationId, preorderInventoryLocationName]
       properties:
         name:
           type: string
@@ -2530,6 +2226,11 @@ components:
           description: Location that holds this store's returned goods.
         returnedInventoryLocationName:
           type: string
+        preorderInventoryLocationId:
+          type: string
+          description: Location that holds this store's preorder stock (預購保留). Preorder pickup lines deduct here.
+        preorderInventoryLocationName:
+          type: string
 
     CreateStoreRequest:
       type: object
@@ -2544,6 +2245,9 @@ components:
         returnedInventoryLocationId:
           type: string
           description: Existing location for returned goods.
+        preorderInventoryLocationId:
+          type: string
+          description: Existing location for preorder stock. Omitted → the system location 預購保留.
 
     UpdateStoreBindingRequest:
       type: object
@@ -2553,6 +2257,9 @@ components:
           type: string
         returnedInventoryLocationId:
           type: string
+        preorderInventoryLocationId:
+          type: string
+          description: Omitted → keep the current preorder binding.
 
     OAuthRole:
       type: string

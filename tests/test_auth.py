@@ -19,6 +19,7 @@ from src.services.bootstrap import bootstrap_admin_if_empty
 from src.services.google_identity import GoogleTokenError, verify_google_id_token
 from src.services.inventory_service import (
     DEFAULT_STORE_LOCATION_ID,
+    PREORDER_LOCATION_ID,
     RETURNED_LOCATION_ID,
     ensure_locations,
     insert_location,
@@ -76,6 +77,7 @@ def _add_store(name: str) -> str:
                 is_default=False,
                 inventory_location_id=location.id,
                 returned_inventory_location_id=RETURNED_LOCATION_ID,
+                preorder_inventory_location_id=PREORDER_LOCATION_ID,
             )
         )
         db.commit()
@@ -225,7 +227,7 @@ def test_admin_without_a_store_can_use_business_apis_and_checkout_still_needs_on
         client.get("/api/v1/products", headers=staff_headers),
         client.get("/api/v1/customers", headers=staff_headers),
         client.get("/api/v1/checkout/orders", headers=staff_headers),
-        client.get("/api/v1/preorders", params={"query": "車"}, headers=staff_headers),
+        client.get("/api/v1/inventory/movements", headers=staff_headers),
         client.post("/api/v1/inventory/locations", json={"name": "店員地點"}, headers=staff_headers),
         client.post("/api/v1/checkout/orders", json=checkout_body, headers=staff_headers),
         client.get("/api/v1/system/oauth/accounts", headers=staff_headers),
@@ -314,7 +316,7 @@ def test_admin_without_a_store_can_use_business_apis_and_checkout_still_needs_on
 
     assert client.get("/api/v1/customers", headers=admin_headers).status_code == 200
     assert client.get("/api/v1/checkout/orders", headers=admin_headers).status_code == 200
-    assert client.get("/api/v1/preorders", params={"query": "車"}, headers=admin_headers).status_code == 200
+    assert client.get("/api/v1/inventory/movements", headers=admin_headers).status_code == 200
     accounts = client.get("/api/v1/system/oauth/accounts", headers=admin_headers)
     assert accounts.status_code == 200, accounts.text
     assert ADMIN_EMAIL in {row["email"] for row in accounts.json()}

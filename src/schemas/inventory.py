@@ -4,7 +4,8 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-StoreBindingRole = Literal["normal", "returned"]
+StoreBindingRole = Literal["normal", "returned", "preorder"]
+SystemLocationRole = Literal["company", "preorder", "defective"]
 
 
 class OkResponse(BaseModel):
@@ -23,6 +24,9 @@ class InventoryLocationDto(BaseModel):
     display_order: int = Field(1, alias="displayOrder")
     store_names: List[str] = Field(default_factory=list, alias="storeNames")
     returned_store_names: List[str] = Field(default_factory=list, alias="returnedStoreNames")
+    preorder_store_names: List[str] = Field(default_factory=list, alias="preorderStoreNames")
+    # 系統地點（公司總倉 / 預購保留 / 退貨品）不能刪；一般地點為 null。
+    system_role: Optional[SystemLocationRole] = Field(None, alias="systemRole")
 
 
 class InventoryLocationStockSummary(BaseModel):

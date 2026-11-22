@@ -20,7 +20,8 @@ BE contract lives in [`../openapi.yaml`](../openapi.yaml). FE `docs/openapi.yaml
 | Checkout sale | Deduct `inventoryLocationId`. A negative result still succeeds. |
 | Checkout return | `restock` omitted or `true` adds quantity at `inventoryLocationId`. `restock: false` adds it at `returnedInventoryLocationId`. A return always changes quantity. |
 | Delete location | Body `rebindToLocation` when `storeNames` or `returnedStoreNames` is not empty. `409` `LAST_LOCATION` when this is the only location. `409` `LOCATION_NOT_EMPTY` when any quantity is not exactly `0`, including negatives. |
-| `BusinessErrorCode` | Add `INSUFFICIENT_INVENTORY`, `LOCATION_NOT_EMPTY`, `LAST_LOCATION`, `LOCATION_NAME_TAKEN`, and `INVENTORY_LOCATION_IN_USE`. |
+| 預購保留 | Store DTO / create / rebind add `preorderInventoryLocationId` (+ name). `InventoryLocationDto` adds `preorderStoreNames` and `systemRole`; system locations show 🔒 and cannot be deleted (`409` `SYSTEM_LOCATION`). Product adds `loginStorePreorderQuantity`. Checkout sale lines may send `preorderPickup: true`. |
+| `BusinessErrorCode` | Add `SYSTEM_LOCATION`, `INSUFFICIENT_INVENTORY`, `LOCATION_NOT_EMPTY`, `LAST_LOCATION`, `LOCATION_NAME_TAKEN`, and `INVENTORY_LOCATION_IN_USE`. |
 
 ## Types
 

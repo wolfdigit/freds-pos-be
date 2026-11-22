@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 from pydantic import BaseModel
@@ -13,9 +13,7 @@ from src.schemas.customer import (
     UpdateCustomerRequest,
 )
 from src.schemas.inventory import OkResponse
-from src.schemas.preorder import PreOrder
 from src.services.customer_service import CustomerService
-from src.services.preorder_service import PreOrderService
 
 router = APIRouter()
 
@@ -127,17 +125,3 @@ def update_customer_spending(
 ) -> OkResponse:
     CustomerService(db).add_spending(customerId, body.amount)
     return OkResponse()
-
-
-@router.get(
-    "/{customerId}/preorders",
-    response_model=List[PreOrder],
-    response_model_by_alias=True,
-    summary="List pre-orders for a customer",
-)
-def customer_preorders(
-    customerId: str = Path(..., description="Customer id"),
-    db: Session = Depends(get_db),
-    _user=Depends(require_business_user),
-) -> List[PreOrder]:
-    return PreOrderService(db).by_customer(customerId)

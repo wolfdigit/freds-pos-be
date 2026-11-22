@@ -13,10 +13,11 @@ Prefix `/api/v1`. Amounts and quantities are integers. A business failure uses `
 | `name` | create only | New store name |
 | `inventoryLocationId` | yes | Existing location for normal goods |
 | `returnedInventoryLocationId` | yes | Existing location for returned goods |
+| `preorderInventoryLocationId` | no | Existing location for preorder stock. Create: omitted → 預購保留. Update: omitted → unchanged. |
 
 An unknown id is `404` `LOCATION_NOT_FOUND`. The same id may be sent for both bindings. There is no `newLocation` field, and the server does not create a location during store create. `PUT /system/stores/{storeName}` is admin-only.
 
-`GET /system/stores` and `GET /auth/stores` include `inventoryLocationId`, `inventoryLocationName`, `returnedInventoryLocationId`, and `returnedInventoryLocationName`.
+`GET /system/stores` and `GET /auth/stores` include `inventoryLocationId`, `inventoryLocationName`, `returnedInventoryLocationId`, `returnedInventoryLocationName`, `preorderInventoryLocationId`, and `preorderInventoryLocationName`.
 
 A typed location name on `POST /inventory/locations` or a rename is trimmed first. After trimming it must be at most 64 characters. A longer name is a `422` validation error (`detail`, not `BusinessError`). That width matches `product_stock.location_name` before the column was widened, so `alembic downgrade` can narrow the copied name. The stored columns stay wider. A trimmed name must not match an existing name. A match is `409` `LOCATION_NAME_TAKEN`.
 
@@ -35,6 +36,8 @@ Returns every location. Order by `displayOrder`, then `id`. The list is not filt
 | `displayOrder` | number | |
 | `storeNames` | string[] | Stores that use this id as `inventoryLocationId` |
 | `returnedStoreNames` | string[] | Stores that use this id as `returnedInventoryLocationId` |
+| `preorderStoreNames` | string[] | Stores that use this id as `preorderInventoryLocationId` |
+| `systemRole` | `company` \| `preorder` \| `defective` \| null | System locations cannot be deleted |
 
 There is no `isActive` field.
 
@@ -58,7 +61,7 @@ Stock totals per location, computed with one `GROUP BY` in SQL, for the settings
 
 Body: optional `rebindToLocation`. This call does not move quantity.
 
-`409` `LAST_LOCATION` when this is the only location. `409` `LOCATION_NOT_EMPTY` when any quantity is not exactly `0`. A negative quantity blocks the delete. Transfer it or set it to `0` first. A returned location may be set to a negative quantity with the same adjustment calls.
+`409` `SYSTEM_LOCATION` for a system location. `409` `LAST_LOCATION` when this is the only location. `409` `LOCATION_NOT_EMPTY` when any quantity is not exactly `0`. A negative quantity blocks the delete. Transfer it or set it to `0` first. A returned location may be set to a negative quantity with the same adjustment calls.
 
 When every quantity is `0` or missing and another location exists, each store that used this id for normal goods, returned goods, or both is bound to `rebindToLocation` on that same role. The field is required in this case and must be a different existing location. The same location may then hold both roles. A missing or invalid target is `400` `INVALID_LOCATION_TRANSFER`. The response `reboundStoreNames` lists `{ name, binding, inventoryLocationId }` where `binding` is `normal` or `returned`.
 
@@ -119,5 +122,6 @@ Filters: `productId`, `locationId`, `type`, `page`, `pageSize`. Newest first. Ty
 2. A positive line deducts `inventoryLocationId`. The result may be negative. The line snapshots that location.
 3. A negative line with `restock` omitted or `true` adds the count to `inventoryLocationId` and snapshots that location.
 4. `restock: false` adds the count to `returnedInventoryLocationId` and snapshots that location. A return always changes quantity.
+5. A positive line with `preorderPickup: true` deducts `preorderInventoryLocationId` instead of `inventoryLocationId` and snapshots that location.
 
 There is no condition-change endpoint.

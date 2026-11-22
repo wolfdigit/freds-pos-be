@@ -34,7 +34,7 @@ Member-catalog responsibilities:
 - `updateCustomerSpending` / `POST /customers/{customerId}/spending` — checkout owns `totalSpent` (and any order-level points) atomically.
 - Writes to `totalSpent` from any catalog endpoint (create always `0`; update schema excludes the field).
 - `rewardPoints`, `minPoints`, `POST .../reward-points`, `GET .../by-phone/{phone}`.
-- Preorder / order history nested under a customer.
+- Order history nested under a customer.
 - Seeding mock customers (**decision B**, later phase).
 
 Auth stays optional/dummy for this phase (`src/api/deps.py`).

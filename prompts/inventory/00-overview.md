@@ -1,6 +1,6 @@
 # Inventory — Overview
 
-Each store is bound to two inventory locations. `inventoryLocationId` holds normal goods. `returnedInventoryLocationId` holds returned goods. The two ids may be the same. Several stores may share either location. Checkout deducts the login store's normal location. A return with `restock` omitted or `true` adds quantity back there. `restock: false` adds it at the returned location.
+Each store is bound to three inventory locations. `inventoryLocationId` holds normal goods. `returnedInventoryLocationId` holds returned goods. `preorderInventoryLocationId` holds stock reserved for preorders (預購保留); a checkout line with `preorderPickup: true` deducts there instead of the normal location. The ids may be the same. Several stores may share either location. Checkout deducts the login store's normal location. A return with `restock` omitted or `true` adds quantity back there. `restock: false` adds it at the returned location.
 
 `台北旗艦店` and `官網` both start with normal stock on `門市現貨` (`e1a10001-0000-4000-8000-000000000001`) and returned stock on `退貨品` (`e1a10005-0000-4000-8000-000000000005`).
 
@@ -38,3 +38,17 @@ Rebind, delete, and rename lock every location row in id order before a store ro
 | [`05-fe-changes.md`](./05-fe-changes.md) | Frontend sync list |
 
 The live contract is [`../openapi.yaml`](../openapi.yaml).
+
+## 預購保留與系統地點
+
+預購清單不由本系統維護；系統只保留預購數量。
+
+三個系統地點一開始就存在，不能刪（`409` `SYSTEM_LOCATION`），可以改名、改圖示。系統只認 `system_role`，不認名稱。
+
+| `system_role` | 預設名稱 | id |
+| --- | --- | --- |
+| `company` | 公司總倉 | `e1a10003-0000-4000-8000-000000000003`（沿用） |
+| `defective` | 退貨品 | `e1a10005-0000-4000-8000-000000000005`（沿用，不改名） |
+| `preorder` | 預購保留 | `e1a10006-0000-4000-8000-000000000006`（新建） |
+
+`ensure_locations` 與 migration 會補齊缺的系統地點：先接管同 id（公司總倉、退貨品），再接管同名地點，都沒有才用預設名稱新建。後方倉庫、調度暫存是一般地點，可以刪。

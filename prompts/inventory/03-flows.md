@@ -37,9 +37,9 @@
 ## Delete a location
 
 1. Lock every location in id order.
-2. If this is the only location, return `LAST_LOCATION`.
+2. If it has a `system_role`, return `SYSTEM_LOCATION`. If this is the only location, return `LAST_LOCATION`.
 3. Lock the stock rows at this location. If any quantity is not exactly `0`, return `LOCATION_NOT_EMPTY`.
-4. Lock the stores that use this id as either binding. `rebindToLocation` must be a different existing location. Set the matching column. One store may end with the same id for both roles.
+4. Lock the stores that use this id as any of the three bindings. `rebindToLocation` must be a different existing location. Set the matching column. One store may end with the same id for both roles.
 5. Delete the zero stock rows, flush those deletes and the rebinds, then delete the location. The location foreign key is `RESTRICT`, so the location row cannot be deleted while a zero-quantity row still references it.
 6. If a store foreign key still fails, roll back and return `INVENTORY_LOCATION_IN_USE`.
 

@@ -19,7 +19,7 @@ from src.schemas.system import (
     UpdateOAuthAccountRequest,
     UpdateStoreBindingRequest,
 )
-from src.services.inventory_service import require_two_locations
+from src.services.inventory_service import require_store_locations, system_location
 from src.services.location_integrity import is_store_location_fk_violation
 
 def _raise(status_code: int, code: BusinessErrorCode, message: str) -> None:
@@ -37,9 +37,10 @@ class SystemService:
         for row in rows:
             normal = locations.get(row.inventory_location_id)
             returned = locations.get(row.returned_inventory_location_id)
-            if normal is None or returned is None:
+            preorder = locations.get(row.preorder_inventory_location_id)
+            if normal is None or returned is None or preorder is None:
                 _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市對應的庫存地點")
-            result.append(self._store_dto(row, normal, returned))
+            result.append(self._store_dto(row, normal, returned, preorder))
         return result
 
     def create_store(self, data: CreateStoreRequest, *, actor_role: str) -> StoreDto:
@@ -49,31 +50,47 @@ class SystemService:
             _raise(400, BusinessErrorCode.INVALID_LOCATION_TRANSFER, "門市名稱不可空白")
         if self.db.get(StoreBranch, name) is not None:
             _raise(400, BusinessErrorCode.INVALID_LOCATION_TRANSFER, "門市已存在")
-        normal, returned = require_two_locations(
-            self.db, data.inventory_location_id, data.returned_inventory_location_id
+        normal, returned, preorder = require_store_locations(
+            self.db,
+            data.inventory_location_id,
+            data.returned_inventory_location_id,
+            data.preorder_inventory_location_id,
         )
+        if preorder is None:
+            # 沒指定時綁系統地點「預購保留」。
+            preorder = system_location(self.db, "preorder")
         row = StoreBranch(
             name=name,
             is_default=False,
             inventory_location_id=normal.id,
             returned_inventory_location_id=returned.id,
+            preorder_inventory_location_id=preorder.id,
         )
         self.db.add(row)
         self._commit_store_location()
-        return self._store_dto(row, normal, returned)
+        return self._store_dto(row, normal, returned, preorder)
 
     def rebind_store(self, name: str, data: UpdateStoreBindingRequest, *, actor_role: str) -> StoreDto:
         self._require_actor_admin(actor_role)
-        normal, returned = require_two_locations(
-            self.db, data.inventory_location_id, data.returned_inventory_location_id
+        normal, returned, preorder = require_store_locations(
+            self.db,
+            data.inventory_location_id,
+            data.returned_inventory_location_id,
+            data.preorder_inventory_location_id,
         )
         row = self.db.scalar(select(StoreBranch).where(StoreBranch.name == name).with_for_update())
         if row is None:
             _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市")
+        if preorder is None:
+            # 沒送時維持目前的預購保留綁定。
+            preorder = self.db.get(InventoryLocation, row.preorder_inventory_location_id)
+            if preorder is None:
+                _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市對應的庫存地點")
         row.inventory_location_id = normal.id
         row.returned_inventory_location_id = returned.id
+        row.preorder_inventory_location_id = preorder.id
         self._commit_store_location()
-        return self._store_dto(row, normal, returned)
+        return self._store_dto(row, normal, returned, preorder)
 
     def delete_store(self, name: str, *, actor_role: str) -> dict:
         self._require_actor_admin(actor_role)
@@ -146,7 +163,13 @@ class SystemService:
         self.db.commit()
         return {"deletedEmail": key}
 
-    def _store_dto(self, row: StoreBranch, normal: InventoryLocation, returned: InventoryLocation) -> StoreDto:
+    def _store_dto(
+        self,
+        row: StoreBranch,
+        normal: InventoryLocation,
+        returned: InventoryLocation,
+        preorder: InventoryLocation,
+    ) -> StoreDto:
         return StoreDto(
             name=row.name,
             isDefault=row.is_default,
@@ -154,6 +177,8 @@ class SystemService:
             inventoryLocationName=normal.name,
             returnedInventoryLocationId=returned.id,
             returnedInventoryLocationName=returned.name,
+            preorderInventoryLocationId=preorder.id,
+            preorderInventoryLocationName=preorder.name,
         )
 
     def _commit_store_location(self) -> None:

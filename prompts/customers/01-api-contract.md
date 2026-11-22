@@ -135,7 +135,7 @@ Rules:
 
 Hard-delete. **FE API-only** this phase.
 
-Unfinished order/preorder → `409` `CUSTOMER_HAS_UNFINISHED_ORDERS` (cannot fire until those tables exist). Terminal history: `SET NULL` + keep name/phone snapshots.
+Unfinished order → `409` `CUSTOMER_HAS_UNFINISHED_ORDERS` (cannot fire until those tables exist). Terminal history: `SET NULL` + keep name/phone snapshots.
 
 | Status | Body |
 |--------|------|
@@ -165,7 +165,7 @@ Unfinished order/preorder → `409` `CUSTOMER_HAS_UNFINISHED_ORDERS` (cannot fir
 | `404` | `CUSTOMER_NOT_FOUND` | Missing `customerId` on get/update/delete |
 | `409` | `CUSTOMER_PHONE_DUPLICATE` | Duplicate non-null canonical phone |
 | `409` | `CUSTOMER_EMAIL_DUPLICATE` | Duplicate non-null lowercased email |
-| `409` | `CUSTOMER_HAS_UNFINISHED_ORDERS` | Delete blocked (after checkout/preorder exist) |
+| `409` | `CUSTOMER_HAS_UNFINISHED_ORDERS` | Delete blocked (after checkout exists) |
 | `422` | (FastAPI default) | Invalid body, empty name, malformed email, bad page/pageSize, invalid enums |
 
 Auth: optional/dummy.
@@ -181,4 +181,4 @@ Keep [`../openapi.yaml`](../openapi.yaml) in sync with this file.
 - `phone` and `email` optional; OpenAPI 3.1 type `[string, null]` on response and request (always present on response, value may be `null`).
 - `note` optional `string` only — do **not** mark `nullable: true` / `null` in the type.
 - `createdAt` and `updatedAt` on `Customer`.
-- Do not add spending / nested preorder paths.
+- Do not add spending paths.

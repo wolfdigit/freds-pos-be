@@ -29,6 +29,17 @@ class StoreBranch(Base):
         nullable=False,
         index=True,
     )
+    # 預購保留：會員來門市取預購時從這裡扣。新門市預設綁系統地點「預購保留」。
+    preorder_inventory_location_id: Mapped[str] = mapped_column(
+        String(64),
+        ForeignKey(
+            "inventory_location.id",
+            name="fk_store_branch_preorder_inventory_location",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+        index=True,
+    )
 
 
 class OAuthAccount(Base):

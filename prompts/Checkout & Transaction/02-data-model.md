@@ -68,10 +68,11 @@ Indexes: unique `order_number`, unique `idempotency_key`, `customer_id`, `busine
 | `returned_quantity` | `Integer` | Default `0`. Only increases when a later line returns units from this sale line. |
 | `original_order_id` | `String` nullable | The earlier checkout order this line is returning product from. Null on a sale line. Set when `quantity < 0`. |
 | `original_order_item_id` | `String` FK nullable | The earlier sale line whose units this line is returning. `checkout_order_item.id`, `ON DELETE RESTRICT`. Null on a sale line. |
+| `preorder_pickup` | `Boolean` | Default `false`. Sale line picked up from 預購保留; stock was deducted from the store's preorder location. |
 | `restock` | `Boolean` nullable | Meaningful when this line is returning product (`quantity < 0`) |
 | `return_reason` | `Text` nullable | Why those units are being returned |
 
-There is no `cost_price`. There are no preorder columns.
+There is no `cost_price`.
 
 Unique `(order_id, line_no)`. Index `product_id`, `original_order_item_id`.
 
@@ -95,11 +96,12 @@ Unique `(order_id, line_no)`.
 
 ## Stock write
 
-Checkout uses the login store's two bound locations. The normal location is `inventory_location_id`. The returned location is `returned_inventory_location_id`.
+Checkout uses the login store's three bound locations. The normal location is `inventory_location_id`. The returned location is `returned_inventory_location_id`. The preorder location is `preorder_inventory_location_id`.
 
 | Line | Effect |
 |------|--------|
 | `quantity > 0` | Subtract `quantity` at the normal location. The commit is not refused when that quantity goes negative. |
+| `quantity > 0` and `preorder_pickup` | Subtract `quantity` at the preorder location instead. Also may go negative. |
 | `quantity < 0` and `restock` is omitted or true | Add `abs(quantity)` at the normal location. Those units can be sold again. |
 | `quantity < 0` and `restock` is false | Add `abs(quantity)` at the returned location. Checkout does not sell from that location. |
 
@@ -134,4 +136,4 @@ On commit, for each positive line with `points_discount_applied`:
 - `vipTierName` and `totalInventory`. Derived on read.
 - A points balance. The points flag is only a record of the discount the cashier applied. The price cut itself is already in `unit_price`.
 - A branch or cashier entity. The two branch ids are fixed labels. Cashier stays a snapshot of the current user.
-- An invoice, a cost price, or a preorder.
+- An invoice or a cost price.

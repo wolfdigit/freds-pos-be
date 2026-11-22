@@ -49,7 +49,7 @@ def _actor_name(actor_name: Optional[str]) -> Optional[str]:
     return _blank_to_none(actor_name)
 
 
-# 將 ORM Product 轉成 API 的 ProductSchema（含庫存與預購待出）。
+# 將 ORM Product 轉成 API 的 ProductSchema（含庫存）。
 # product: 已載入關聯的商品
 def _qty_at(stocks: Sequence[LocationInventory], location_id: Optional[str]) -> int:
     if location_id is None:
@@ -64,6 +64,7 @@ def _to_product_schema(
     *,
     login_location_id: Optional[str] = None,
     login_returned_location_id: Optional[str] = None,
+    login_preorder_location_id: Optional[str] = None,
     has_login_store: bool = False,
 ) -> ProductSchema:
     inventories: List[LocationInventory] = []
@@ -91,14 +92,11 @@ def _to_product_schema(
     if has_login_store:
         login_store_quantity = _qty_at(inventories, login_location_id)
         login_store_returned_quantity = _qty_at(inventories, login_returned_location_id)
+        login_store_preorder_quantity = _qty_at(inventories, login_preorder_location_id)
     else:
         login_store_quantity = None
         login_store_returned_quantity = None
-    pending = (
-        product.pre_order_pending.quantity
-        if product.pre_order_pending is not None
-        else 0
-    )
+        login_store_preorder_quantity = None
 
     return ProductSchema(
         id=product.id,
@@ -118,7 +116,7 @@ def _to_product_schema(
         totalInventory=total_inventory,
         loginStoreQuantity=login_store_quantity,
         loginStoreReturnedQuantity=login_store_returned_quantity,
-        preOrderPendingCount=pending,
+        loginStorePreorderQuantity=login_store_preorder_quantity,
         note=product.note,
         status=product.status,
         deleted=product.deleted,
@@ -191,14 +189,13 @@ class ProductService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    # 依 product_id (商品主鍵) 查商品並預載庫存與預購；找不到則拋 404。
+    # 依 product_id (商品主鍵) 查商品並預載庫存；找不到則拋 404。
     def _get_by_id_or_raise(self, product_id: str) -> Product:
         product = self.db.get(
             Product,
             product_id,
             options=[
                 selectinload(Product.inventories),
-                selectinload(Product.pre_order_pending),
             ],
         )
         if product is None:
@@ -226,13 +223,21 @@ class ProductService:
 
     # 新增商品並建立各地點庫存列（數量 0）。
     # data: 建立商品的請求內容。
-    def _login_bindings(self, store_name: Optional[str]) -> tuple[bool, Optional[str], Optional[str]]:
+    def _login_bindings(
+        self, store_name: Optional[str]
+    ) -> tuple[bool, Optional[str], Optional[str], Optional[str]]:
+        """(有登入門市, 門市庫存, 退貨, 預購保留) 三個綁定的地點 id。"""
         if not store_name:
-            return False, None, None
+            return False, None, None, None
         store = self.db.get(StoreBranch, store_name)
         if store is None:
-            return False, None, None
-        return True, store.inventory_location_id, store.returned_inventory_location_id
+            return False, None, None, None
+        return (
+            True,
+            store.inventory_location_id,
+            store.returned_inventory_location_id,
+            store.preorder_inventory_location_id,
+        )
 
     def create(
         self,
@@ -273,12 +278,13 @@ class ProductService:
 
     # 依 product_id (商品主鍵) 取得單一商品的 API 資料。
     def get_by_id(self, product_id: str, *, store_name: Optional[str] = None) -> ProductSchema:
-        has_login_store, normal_id, returned_id = self._login_bindings(store_name)
+        has_login_store, normal_id, returned_id, preorder_id = self._login_bindings(store_name)
         return _to_product_schema(
             self._get_by_id_or_raise(product_id),
             ensure_locations(self.db),
             login_location_id=normal_id,
             login_returned_location_id=returned_id,
+            login_preorder_location_id=preorder_id,
             has_login_store=has_login_store,
         )
 
@@ -388,7 +394,7 @@ class ProductService:
     # 沒有選定門市時 loginStoreQuantity 是 null，所以任何登入門市條件都不會符合。
     def _apply_stock_filters(self, stmt, stock: StockFilters, store_name: Optional[str]):
         if stock.uses_login_store:
-            has_store, normal_id, _returned = self._login_bindings(store_name)
+            has_store, normal_id, _returned, _preorder = self._login_bindings(store_name)
             if not has_store or not normal_id:
                 return stmt.where(false())
             stmt = _between(stmt, _quantity_at(normal_id), stock.login_store_min, stock.login_store_max)
@@ -406,13 +412,14 @@ class ProductService:
 
     def _to_schemas(self, products: Sequence[Product], store_name: Optional[str]) -> List[ProductSchema]:
         locations = ensure_locations(self.db)
-        has_login_store, normal_id, returned_id = self._login_bindings(store_name)
+        has_login_store, normal_id, returned_id, preorder_id = self._login_bindings(store_name)
         return [
             _to_product_schema(
                 p,
                 locations,
                 login_location_id=normal_id,
                 login_returned_location_id=returned_id,
+                login_preorder_location_id=preorder_id,
                 has_login_store=has_login_store,
             )
             for p in products
@@ -440,7 +447,6 @@ class ProductService:
             store_name=store_name,
         ).options(
             selectinload(Product.inventories),
-            selectinload(Product.pre_order_pending),
         )
         stmt = stmt.order_by(Product.sku.asc())
         products = list(self.db.scalars(stmt).unique().all())
@@ -474,7 +480,6 @@ class ProductService:
         stmt = (
             filtered.options(
                 selectinload(Product.inventories),
-                selectinload(Product.pre_order_pending),
             )
             .order_by(Product.sku.asc(), Product.id.asc())
             .offset((page - 1) * page_size)
