@@ -75,7 +75,7 @@ A migration converts existing `credit_card` rows to `credit_card_physical` (and 
 | `changeAmount` | integer | Optional. |
 | `transactionRef` | string | Optional. Card last-4 or transfer last-5. |
 
-The server stores these fields and returns them on the order. There is no invoice on the request or the response. Checkout does not accept `preOrderId` or `preOrderItemId`.
+The server stores these fields and returns them on the order. There is no invoice on the request or the response.
 
 ---
 
@@ -100,7 +100,7 @@ Do not rely on a lookup before insert. Two requests can both miss that lookup an
 | `payments` | array | At least one |
 | `note` | string | Optional |
 
-**Item request fields:** `productId`, `quantity`, `unitPrice`, `isManualPrice`, `priceDiffReason`, `pointsDiscountApplied`, `originalOrderId`, `originalOrderItemId`, `restock`, `returnReason`. Do not send `preOrderId` or `preOrderItemId`.
+**Item request fields:** `productId`, `quantity`, `unitPrice`, `isManualPrice`, `priceDiffReason`, `pointsDiscountApplied`, `originalOrderId`, `originalOrderItemId`, `restock`, `returnReason`.
 
 **Payment request fields:** `type`, `name`, `amount`, and optionally `tenderedCash`, `changeAmount`, `transactionRef`.
 

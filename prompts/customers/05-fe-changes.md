@@ -23,7 +23,7 @@ Customers paths live in the merged [`../openapi.yaml`](../openapi.yaml) alongsid
 | `DELETE /customers/{customerId}` | Keep. `204`; `404` `CUSTOMER_NOT_FOUND`; `409` `CUSTOMER_HAS_UNFINISHED_ORDERS`. FE **does not** expose delete UI this phase. |
 | `Customer` | Optional `phone` and `email` as `[string, null]`; required `createdAt` + `updatedAt`; **no `rewardPoints`**. `note` optional string (not nullable). |
 | `BusinessErrorCode` | Keep `CUSTOMER_NOT_FOUND`, `CUSTOMER_PHONE_DUPLICATE`, `CUSTOMER_EMAIL_DUPLICATE`, `CUSTOMER_HAS_UNFINISHED_ORDERS`. **Remove** `CUSTOMER_POINTS_INSUFFICIENT`. |
-| Spending / preorder-under-customer paths | **Do not** add `POST /customers/{id}/spending` or `GET /customers/{id}/preorders`. |
+| Spending path | **Do not** add `POST /customers/{id}/spending`. |
 
 ---
 
@@ -48,7 +48,7 @@ Customers paths live in the merged [`../openapi.yaml`](../openapi.yaml) alongsid
 | `ICustomerService.searchCustomers` | Argument → `CustomerSearchParams`. Return `CustomerSearchResponse` (or at least paged `items` + `total`). Pass `keyword` / `vipTier` / `page` / `pageSize`. |
 | `ICustomerService.createCustomer` | Create request without `id` / timestamps / `vipTierName` / `totalSpent` / `rewardPoints`. Phone and email optional. |
 | `ICustomerService.updateCustomer` | Second arg → `UpdateCustomerRequest`. No `rewardPoints`. |
-| `ICustomerService.deleteCustomer` | **Keep.** HTTP `204`. **No UI caller this phase.** Map `409` `CUSTOMER_HAS_UNFINISHED_ORDERS` when checkout/preorder exist. |
+| `ICustomerService.deleteCustomer` | **Keep.** HTTP `204`. **No UI caller this phase.** Map `409` `CUSTOMER_HAS_UNFINISHED_ORDERS` when checkout exists. |
 | `ICustomerService.getCustomerByPhone` | **Remove** (or stop calling). Bind via `searchCustomers({ keyword: phone })`. |
 | `ICustomerService.addRewardPoints` | **Remove.** |
 | `mockCustomerService.createCustomer` | Stop persisting client `vipTierName` / `totalSpent` / `rewardPoints`; always `totalSpent: 0`; missing `vipTier` → `regular`; set `vipTierName` from map; id `cust-{uuid}`; optional phone (`null` OK); optional email (`null` OK); unique canonical non-null phone; unique non-null email. |

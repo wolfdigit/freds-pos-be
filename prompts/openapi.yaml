@@ -5,13 +5,13 @@ info:
   description: |
     HTTP contract for Fred's POS, matching the frontend Service Adapter (`src/services/interfaces/`).
     Designed for high-performance model car specialty stores with unified checkout, multi-location stock,
-    item-level returns/exchanges, pre-order partial fulfillment, and cash drawer management.
+    item-level returns/exchanges, and cash drawer management.
 
     **Core Architectural Principles**
     - **Single Transaction Pipeline**: All sales, returns, and defect exchanges are unified under `POST /checkout/orders`.
     - **Backend Pricing & Calculation Authority**: Frontend transmits purchase/return intents and cashier-adjusted `unitPrice`; backend calculates all line subtotals, discounts, taxes, and total amounts.
     - **Line-Item Return Traceability**: Returns/exchanges (negative quantities) must reference `originalOrderId` and `originalOrderItemId`, with cumulative `returnedQuantity` tracking.
-    - **ACID Atomicity**: Checkout/return operations execute inside a single database transaction (locking store stock, updating customer spending, and creating orders). Checkout does not update pre-orders.
+    - **ACID Atomicity**: Checkout/return operations execute inside a single database transaction (locking store stock, updating customer spending, and creating orders).
     - **Idempotency**: `POST /checkout/orders` supports `X-Idempotency-Key` to prevent double-charging or double stock deduction.
     - **Authentication**: `POST /auth/google` exchanges a Google ID token for a server session. Later calls send `Authorization: Bearer <session token>`. `staff` must select a store before business APIs. `admin` may call business APIs with no store selected. `POST /checkout/orders` still needs that store for both roles and returns `403` `AUTH_STORE_REQUIRED` when it is missing. The selected login store chooses the normal and returned inventory locations used by checkout. Body `branchId` is ignored. When no store is selected, `loginStoreQuantity` and `loginStoreReturnedQuantity` are `null`.
 
@@ -40,8 +40,6 @@ tags:
     description: Product catalog, multi-location stock, and transfers
   - name: checkout
     description: Sales orders, receipts, item-level returns and exchanges
-  - name: preorders
-    description: Customer pre-orders and arrival management
   - name: customers
     description: Members and VIP tiers
   - name: auth
@@ -204,7 +202,6 @@ paths:
         Maps to `IProductService.createProduct`.
         Server assigns `id` as `prod-{uuid4}` (no dashes), computes `normalizedSku`,
         and does not create inventory rows.
-        Does not write `product_pre_order_pending` (response `preOrderPendingCount` is `0`).
         Initial and later quantities use the inventory APIs. `totalInventory` sums every location, including negatives.
         `status` is optional. When omitted, the server stores `active` and `deleted: false`. The body has no `costPrice`.
       requestBody:
@@ -252,7 +249,7 @@ paths:
       summary: Update product information
       description: |
         Maps to `IProductService.updateProduct`.
-        Metadata only — does not mutate stock rows or `product_pre_order_pending`.
+        Metadata only — does not mutate stock rows.
         On SKU change, server recomputes `normalizedSku`; duplicate SKU returns 409.
         `status: deleted` or `deleted: true` hides the product. `status: active` or `deleted: false` shows it again. The row is not removed. If both are sent, `status` wins.
       parameters:
@@ -683,7 +680,6 @@ paths:
         2. **Item Pricing & Subtotals**:
            - For positive purchases: verify `unitPrice` against `listPrice` or customer `vipPrice` unless `isManualPrice: true` (which requires `priceDiffReason`).
            - For return/exchange items (`quantity < 0`): verify `originalOrderId` & `originalOrderItemId`, ensuring `abs(quantity) <= (qtySold - qtyReturned)`. Also enforce member ownership: if the checkout is bound to customer A, the original order cannot belong to customer B (`customerId` mismatch raises `INVALID_RETURN_CUSTOMER`; unattached guest original orders are permitted).
-           - Checkout does not accept a pre-order id and does not check `quotedPrice`, `qtyArrived`, or `qtyDelivered`.
            - Compute `subtotal = unitPrice * quantity` for each line.
         3. **Order Total**:
            - `itemsSubtotal = sum(subtotals)`
@@ -693,7 +689,6 @@ paths:
         4. **Inventory**:
            - Positive items deduct the login store's normal location (`inventoryLocationId`). The sale still completes when that quantity becomes negative.
            - Negative items always add `abs(quantity)`. `restock` omitted or `true` adds it to the login store's normal location (`inventoryLocationId`), so it can be sold again. `restock: false` adds it to the returned location (`returnedInventoryLocationId`). The line stores `inventoryLocationId` and `inventoryLocationName` for the location that changed.
-           - Checkout does not change a pre-order. `qtyDelivered` and pre-order status change only on `POST /preorders/{preOrderId}/fulfill`.
         5. **Member Asset Update**:
            - Update `customer.totalSpent += totalAmount`
         6. **Receipt & Persistence**:
@@ -745,166 +740,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CheckoutOrder'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /preorders:
-    get:
-      tags: [preorders]
-      operationId: getPendingPreOrders
-      summary: Search open pre-orders
-      description: |
-        Maps to `IPreOrderService.getPendingPreOrders`.
-        Matches customer phone, name, or order number. Excludes `completed` and `cancelled`.
-      parameters:
-        - name: query
-          in: query
-          required: true
-          schema:
-            type: string
-          description: Phone fragment, name, or order number (e.g. `0912`)
-      responses:
-        '200':
-          description: Matching open pre-orders
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/PreOrder'
-    post:
-      tags: [preorders]
-      operationId: createPreOrder
-      summary: Create pre-order
-      description: Maps to `IPreOrderService.createPreOrder`. Server assigns `id`, `orderNumber`, `status`, and `updatedAt`.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreatePreOrderRequest'
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PreOrder'
-
-  /customers/{customerId}/preorders:
-    get:
-      tags: [preorders]
-      operationId: getPreOrdersByCustomerId
-      summary: List pre-orders for a customer
-      description: Maps to `IPreOrderService.getPreOrdersByCustomerId` (all statuses).
-      parameters:
-        - $ref: '#/components/parameters/CustomerId'
-      responses:
-        '200':
-          description: Pre-orders
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/PreOrder'
-
-  /preorders/{preOrderId}:
-    get:
-      tags: [preorders]
-      operationId: getPreOrderById
-      summary: Get pre-order by ID
-      parameters:
-        - $ref: '#/components/parameters/PreOrderId'
-      responses:
-        '200':
-          description: Pre-order
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PreOrder'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    put:
-      tags: [preorders]
-      operationId: updatePreOrder
-      summary: Update pre-order information
-      description: Maps to `IPreOrderService.updatePreOrder`.
-      parameters:
-        - $ref: '#/components/parameters/PreOrderId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/UpdatePreOrderRequest'
-      responses:
-        '200':
-          description: Updated pre-order
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PreOrder'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /preorders/{preOrderId}/arrived:
-    post:
-      tags: [preorders]
-      operationId: markItemsArrived
-      summary: Mark pre-order items arrived (Phase 2)
-      description: Updates `qtyArrived` for specified products and re-derives pre-order status.
-      parameters:
-        - $ref: '#/components/parameters/PreOrderId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MarkItemsArrivedRequest'
-      responses:
-        '200':
-          description: Updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OkResponse'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /preorders/{preOrderId}/fulfill:
-    post:
-      tags: [preorders]
-      operationId: fulfillPreOrderItems
-      summary: Fulfill pre-order items
-      description: Deducts fulfilled quantities for specific items in a pre-order.
-      parameters:
-        - $ref: '#/components/parameters/PreOrderId'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [fulfilledItems]
-              properties:
-                fulfilledItems:
-                  type: array
-                  items:
-                    type: object
-                    required: [preOrderItemId, qty]
-                    properties:
-                      preOrderItemId:
-                        type: string
-                      qty:
-                        type: integer
-      responses:
-        '200':
-          description: Fulfill succeeded
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/OkResponse'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -1287,13 +1122,6 @@ components:
       schema:
         type: string
       example: so-2001
-    PreOrderId:
-      name: preOrderId
-      in: path
-      required: true
-      schema:
-        type: string
-      example: po-1001
     CustomerId:
       name: customerId
       in: path
@@ -1374,7 +1202,6 @@ components:
         - CUSTOMER_HAS_UNFINISHED_ORDERS
         - INVALID_RETURN_CUSTOMER
         - IDEMPOTENCY_CONFLICT
-        - PREORDER_QTY_EXCEEDED
         - AUTH_REQUIRED
         - AUTH_NOT_CONFIGURED
         - AUTH_PROVIDER_UNAVAILABLE
@@ -2207,164 +2034,6 @@ components:
           type: integer
         total:
           type: integer
-
-    PreOrderStatus:
-      type: string
-      enum:
-        - pending
-        - partially_arrived
-        - partially_completed
-        - completed
-        - cancelled
-
-    PreOrderItem:
-      type: object
-      required:
-        - id
-        - productId
-        - sku
-        - productName
-        - scale
-        - brand
-        - quotedPrice
-        - qtyOrdered
-        - qtyArrived
-        - qtyDelivered
-      properties:
-        id:
-          type: string
-        productId:
-          type: string
-        sku:
-          type: string
-        productName:
-          type: string
-        scale:
-          $ref: '#/components/schemas/ModelScale'
-        brand:
-          type: string
-        quotedPrice:
-          type: integer
-        qtyOrdered:
-          type: integer
-        qtyArrived:
-          type: integer
-        qtyDelivered:
-          type: integer
-
-    PreOrder:
-      type: object
-      required:
-        - id
-        - orderNumber
-        - customerId
-        - customerName
-        - customerPhone
-        - orderDate
-        - status
-        - source
-        - items
-        - updatedAt
-      properties:
-        id:
-          type: string
-        orderNumber:
-          type: string
-          example: PO-202607-0019
-        customerId:
-          type: string
-        customerName:
-          type: string
-        customerPhone:
-          type: string
-        orderDate:
-          type: string
-        expectedArrivalDate:
-          type: string
-        status:
-          $ref: '#/components/schemas/PreOrderStatus'
-        source:
-          type: string
-          enum: [in_store, website]
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/PreOrderItem'
-        note:
-          type: string
-        operatorName:
-          type: string
-        updatedAt:
-          type: string
-          format: date-time
-
-    CreatePreOrderRequest:
-      type: object
-      properties:
-        customerId:
-          type: string
-        customerName:
-          type: string
-        customerPhone:
-          type: string
-        orderDate:
-          type: string
-        expectedArrivalDate:
-          type: string
-        source:
-          type: string
-          enum: [in_store, website]
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/PreOrderItem'
-        note:
-          type: string
-        operatorName:
-          type: string
-
-    UpdatePreOrderRequest:
-      type: object
-      properties:
-        customerId:
-          type: string
-        customerName:
-          type: string
-        customerPhone:
-          type: string
-        orderDate:
-          type: string
-        expectedArrivalDate:
-          type: string
-        status:
-          $ref: '#/components/schemas/PreOrderStatus'
-        source:
-          type: string
-          enum: [in_store, website]
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/PreOrderItem'
-        note:
-          type: string
-        operatorName:
-          type: string
-
-    MarkItemsArrivedRequest:
-      type: object
-      required: [arrivedItems]
-      properties:
-        arrivedItems:
-          type: array
-          items:
-            type: object
-            required: [productId, qty]
-            properties:
-              productId:
-                type: string
-              qty:
-                type: integer
-                minimum: 1
 
     VipTier:
       type: string

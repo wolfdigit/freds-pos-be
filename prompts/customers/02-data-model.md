@@ -19,7 +19,7 @@ erDiagram
   }
 ```
 
-**Primary key is `id`.** Future checkout / preorder FKs: `customer_id` nullable, **`ON DELETE SET NULL`**, plus name/phone snapshots. Those tables are **not** created here.
+**Primary key is `id`.** Future checkout FKs: `customer_id` nullable, **`ON DELETE SET NULL`**, plus name/phone snapshots. Those tables are **not** created here.
 
 ---
 
@@ -115,7 +115,7 @@ JSON type is **`string`**, optional (not in `required`). Do **not** mark OpenAPI
 1. Schema only — no seed. Existing `customer` table (if already migrated) needs a **follow-up revision**: drop `reward_points`; make `phone` and `email` nullable.
 2. Unique `phone` allowing multiple `NULL`; unique `email` allowing multiple `NULL`.
 3. `created_at` / `updated_at` timezone-aware UTC; bump `updated_at` on PUT.
-4. No checkout/preorder FKs in this table.
+4. No checkout FKs in this table.
 
 ## Mapping cheatsheet
 

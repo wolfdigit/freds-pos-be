@@ -10,7 +10,6 @@ Decisions from the planning discussion are recorded below. Items marked **Decide
 |---|-------|----------|------|
 | 1 | Duplicate SKU error | **A** — `409` + `{ code: PRODUCT_SKU_DUPLICATE, message: … }` (e.g. `貨號已存在`) | 2026-09-07 |
 | 2 | PUT stock / computed fields | **Tighten OpenAPI** — `UpdateProductRequest` metadata-only; those fields are **not** in the contract (not “silent ignore” / not ad-hoc 422 on forbidden keys). FE must stop sending `Partial<Product>`. | 2026-09-07 |
-| 3 | Pending table cardinality | **A** — 1:1 aggregate (`product_id` UNIQUE + `quantity`) for this phase; later may become SUM over real preorder rows without changing API field shape. | 2026-09-07 |
 | 4 | Seeding mock products | **B** — Alembic data migration and/or management script in a **later phase** (not in the first schema-only migration). | 2026-09-07 |
 | 5 | Create-time stock qty | **No quantities on `POST /products`** — create always inserts four `product_inventory` rows at `0`; FE sets real qty via future inventory APIs. | 2026-09-07 |
 | 6 | Search sort | **`sku ASC`**; still add `created_at` / `updated_at` for audit. | 2026-09-07 |
@@ -32,16 +31,9 @@ Decisions from the planning discussion are recorded below. Items marked **Decide
 ### 2. PUT body — contract excludes non-metadata fields
 
 - Named schema `UpdateProductRequest`: only `sku`, `barcode`, `brand`, `name`, `scale`, `listPrice`, `vipPrice`, `note`, `material`, `color`, `imageUrl`, `status`, `deleted`. `status` is `active` or `deleted`. The catalog does not record `costPrice`.
-- **Do not** document `stocks`, `totalInventory`, `id`, `normalizedSku`, `preOrderPendingCount` on update
+- **Do not** document `stocks`, `totalInventory`, `id`, `normalizedSku` on update
 - FE: replace `Partial<Product>` update payload with a dedicated update type aligned to OpenAPI
 - Implementation may use Pydantic `extra='ignore'` as a safety net; the **source of truth** is the narrowed OpenAPI schema
-
-### 3. `product_pre_order_pending` — 1:1 now
-
-- Unique `product_id` + `quantity`
-- No row ⇒ `preOrderPendingCount: 0`
-- Catalog read-only; future preorder module owns writes
-- Optional later: replace with SUM over real preorder line items without changing response field name
 
 ### 4. Seed — later phase (B)
 
@@ -72,10 +64,9 @@ Decisions from the planning discussion are recorded below. Items marked **Decide
 |-------|----------|
 | Scope | Catalog only: `GET/POST /products`, `GET/PUT /products/{id}` |
 | Inventory APIs | Out of scope; future `/inventory/*` owns stock qty mutations |
-| Storage | `product` + `product_inventory` + `product_pre_order_pending` |
+| Storage | `product` + `product_inventory` |
 | Barcode uniqueness | **Not** unique; **non-unique index** for search |
 | SKU uniqueness | Unique; duplicate → `PRODUCT_SKU_DUPLICATE` |
-| Pending count storage | Separate 1:1 table; not a column on `product` |
 | Contract direction | Align OpenAPI → FE (FE adapts where contract narrows) |
 | Create `id` | Server `prod-{uuid4}` no dashes; no client `id` |
 | Create inventory | No rows on create; no client quantities |
@@ -94,5 +85,4 @@ Decisions from the planning discussion are recorded below. Items marked **Decide
 |------|--------|
 | Exact Chinese copy for `PRODUCT_SKU_DUPLICATE` | Default `貨號已存在` unless marketing/ops prefers otherwise |
 | Seed script vs Alembic data revision | Choose when entering seed phase (both allowed under decision B) |
-| Pending 1:1 → SUM over preorder lines | After preorder module exists |
 | Inventory OpenAPI | Separate planning pass |

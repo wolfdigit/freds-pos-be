@@ -4,7 +4,7 @@ Decisions for this planning pass. Do not reopen them without a reason. The last 
 
 Today's date for this log: 2026-09-28.
 
-Confirmed with you on 2026-09-28: the open cart is the only thing that can be modified; a completed sale stays fixed; saving a sale also updates store stock, member `totalSpent`, returns, preorder pickup, and payments; product search reuses `GET /products`; price is list price unless the cashier overrides it; the online store is a branch.
+Confirmed with you on 2026-09-28: the open cart is the only thing that can be modified; a completed sale stays fixed; saving a sale also updates store stock, member `totalSpent`, returns, and payments; product search reuses `GET /products`; price is list price unless the cashier overrides it; the online store is a branch.
 
 Added the same day, then corrected: the NT$360 points exchange is **per product line**, at most once for each product on the sale. Several products can each take one exchange. The discounted unit price floors at 0. The system does not keep a points balance. The cashier checks points in the real world and sets the flag.
 
@@ -18,7 +18,7 @@ Added the same day, then corrected: the NT$360 points exchange is **per product 
 | 4 | Product search | **Reuse `GET /products`.** No autocomplete endpoint, no separate rank, no separate limit. |
 | 5 | Suggestion size | **Removed.** The catalog list is the counter list. |
 | 6 | Discontinued products | **Soft delete only.** Product `status` is `active` or `deleted`. There is no discontinued state. |
-| 7 | Charged price | Manual price only when `isManualPrice` is true. Otherwise **list price**, including a preorder pickup. Client `unitPrice` is ignored when the line is not manual. |
+| 7 | Charged price | Manual price only when `isManualPrice` is true. Otherwise **list price**. Client `unitPrice` is ignored when the line is not manual. |
 | 8 | VIP auto-price | **Deferred.** Current `attachCustomer` does not reprice the cart. Do not apply `vipPrice` or tier percent in this phase. |
 | 9 | `originalPrice` | Always the list price at commit, so discount is list minus charged. |
 | 10 | Cost | **Removed.** The catalog and the sale line do not record `cost_price`. |
@@ -31,8 +31,7 @@ Added the same day, then corrected: the NT$360 points exchange is **per product 
 | 17 | `totalSpent` | Checkout adds `totalAmount` inside the sale transaction, floored at `0`. Catalog endpoints still cannot set it. |
 | 18 | Stock | Positive lines deduct the login store's normal location and may go negative. There is no `INSUFFICIENT_STORE_INVENTORY` on checkout. `restock` omitted or true adds the return at that normal location. `restock: false` adds it at the returned location. A return always changes quantity. |
 | 19 | Returns | Negative quantity requires `originalOrderId` and `originalOrderItemId`. Cap is `quantity - returnedQuantity`. A member sale cannot be returned onto a different member. A return refunds **`unitPrice` only**. A return of a flagged line inherits the flag, so its negative gap lands in the return order's `pointsDiscountAmount`. The original line keeps its flag. |
-| 20 | Preorder authoring | **No create/edit API.** This pass adds `pre_order` and `pre_order_item` so pickup can increment `qty_delivered` and derive status. |
-| 21 | Payments | At least one tender. Fields match the frontend OpenAPI: `type`, `name`, `amount`, `tenderedCash`, `changeAmount`, `transactionRef`. Writable types are `cash`, `bank_transfer_ctbc`, `bank_transfer_ubot`, `credit_card_physical`, `credit_card_online`, `line_pay`, `cod`. A migration converts legacy `credit_card` rows to `credit_card_physical` and `bank_transfer` to `bank_transfer_ctbc`. Those two legacy types are rejected on new checkouts. Non-negative totals require payment sum ≥ total. Negative totals require payment sum = total. Checkout does not accept preorder ids. |
+| 21 | Payments | At least one tender. Fields match the frontend OpenAPI: `type`, `name`, `amount`, `tenderedCash`, `changeAmount`, `transactionRef`. Writable types are `cash`, `bank_transfer_ctbc`, `bank_transfer_ubot`, `credit_card_physical`, `credit_card_online`, `line_pay`, `cod`. A migration converts legacy `credit_card` rows to `credit_card_physical` and `bank_transfer` to `bank_transfer_ctbc`. Those two legacy types are rejected on new checkouts. Non-negative totals require payment sum ≥ total. Negative totals require payment sum = total. |
 | 22 | Idempotency | Optional header `X-Idempotency-Key`, stored as `idempotency_key`. Same key, same current user, and same body replays the order JSON. Same key with a different body or a different user → `409`. On unique conflict, catch, re-select, and apply those same rules. A lookup before insert is not enough. |
 | 23 | History paging | `page` / `pageSize` like customers. Sort **`createdAt DESC`**. |
 | 24 | Auth | Optional/dummy for this phase. |
@@ -48,7 +47,6 @@ Added the same day, then corrected: the NT$360 points exchange is **per product 
 
 - Staff login. Checkout already snapshots the current user. Login replaces the demo user in `src/api/deps.py`; it does not put cashier fields back on the body.
 - VIP price and tier discounts when a member is bound and the line is not manually priced.
-- Preorder create, arrival, and cancel APIs.
 - Invoices stay out. This system does not store an invoice number or call an e-invoice gateway.
 - Parking a ticket on the server across browsers.
 - Editing or voiding a completed order in place.

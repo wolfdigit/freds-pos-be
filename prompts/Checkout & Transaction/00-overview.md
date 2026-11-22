@@ -51,7 +51,6 @@ Recording responsibilities:
 - Draft / parked tickets on the server. Refresh keeps the cart in frontend storage only.
 - Editing a completed order (price, buyer, lines, payments). Later returns append a new order and only then change `returnedQuantity` and `status` on the original.
 - VIP auto-pricing. A bound member does not change the price. `vipPrice` and tier discounts stay for a later pass.
-- Preorders. This phase does not record, pick up, or author preorders.
 - Invoices. There is no invoice number, invoice type, carrier, tax id, or buyer title on the request, the order, history search, or the receipt.
 - A server-rendered receipt. `POST /checkout/orders` returns the order fields as JSON. The frontend composes the slip.
 - Seeding historical orders.

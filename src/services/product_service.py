@@ -49,7 +49,7 @@ def _actor_name(actor_name: Optional[str]) -> Optional[str]:
     return _blank_to_none(actor_name)
 
 
-# 將 ORM Product 轉成 API 的 ProductSchema（含庫存與預購待出）。
+# 將 ORM Product 轉成 API 的 ProductSchema（含庫存）。
 # product: 已載入關聯的商品
 def _qty_at(stocks: Sequence[LocationInventory], location_id: Optional[str]) -> int:
     if location_id is None:
@@ -94,11 +94,6 @@ def _to_product_schema(
     else:
         login_store_quantity = None
         login_store_returned_quantity = None
-    pending = (
-        product.pre_order_pending.quantity
-        if product.pre_order_pending is not None
-        else 0
-    )
 
     return ProductSchema(
         id=product.id,
@@ -118,7 +113,6 @@ def _to_product_schema(
         totalInventory=total_inventory,
         loginStoreQuantity=login_store_quantity,
         loginStoreReturnedQuantity=login_store_returned_quantity,
-        preOrderPendingCount=pending,
         note=product.note,
         status=product.status,
         deleted=product.deleted,
@@ -191,14 +185,13 @@ class ProductService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    # 依 product_id (商品主鍵) 查商品並預載庫存與預購；找不到則拋 404。
+    # 依 product_id (商品主鍵) 查商品並預載庫存；找不到則拋 404。
     def _get_by_id_or_raise(self, product_id: str) -> Product:
         product = self.db.get(
             Product,
             product_id,
             options=[
                 selectinload(Product.inventories),
-                selectinload(Product.pre_order_pending),
             ],
         )
         if product is None:
@@ -440,7 +433,6 @@ class ProductService:
             store_name=store_name,
         ).options(
             selectinload(Product.inventories),
-            selectinload(Product.pre_order_pending),
         )
         stmt = stmt.order_by(Product.sku.asc())
         products = list(self.db.scalars(stmt).unique().all())
@@ -474,7 +466,6 @@ class ProductService:
         stmt = (
             filtered.options(
                 selectinload(Product.inventories),
-                selectinload(Product.pre_order_pending),
             )
             .order_by(Product.sku.asc(), Product.id.asc())
             .offset((page - 1) * page_size)

@@ -25,14 +25,14 @@ The frontend OpenAPI (2026-10-17) supersedes the phone-optional and `regular` / 
 | 13 | Email in keyword search | **Include** email contains (case-insensitive) when email is non-null. | 2026-09-13 |
 | 14 | DB primary key | **`customer.id`** — same as `product.id`. JSON `id` / path `{customerId}` are that column. Future FKs reference `customer.id`. | 2026-09-13 |
 | 15 | Create `vipTier` | **Optional** — omit / missing → default **`regular`**. | 2026-09-13 |
-| 16 | Purchase / preorder this phase | **A** — profile only. Member detail tabs will see **empty lists** until checkout / preorder modules exist. | 2026-09-13 |
+| 16 | Purchase history this phase | **A** — profile only. Member detail tabs will see **empty lists** until the checkout module exists. | 2026-09-13 |
 | 17 | Implementation timing | Contract YAML + planning docs stay in `prompts/`. Application code follows an explicit implement pass. | 2026-09-13 |
 | 18 | Phone format | Canonicalize (strip spaces / hyphens / parentheses). Empty after canonicalize → `NULL`. Unique among non-null. **No** Taiwan-only `09xxxxxxxx` / E.164 rule. **Revised by #34:** optional. | 2026-09-13 |
 | 19 | Search VIP / points | **`vipTier`** (`ALL` / missing = no filter). **`minPoints` superseded by #27** — removed. | 2026-09-13 |
 | 20 | Reward points mutate | **Superseded by #27** — no member `rewardPoints`. | 2026-09-13 |
-| 21 | Delete | **`DELETE /customers/{id}`** hard-delete. **API-only this phase**. `204` / `404`. Unfinished order/preorder → `409`. Completed history allowed; later FKs **`SET NULL`**. | 2026-09-13 |
+| 21 | Delete | **`DELETE /customers/{id}`** hard-delete. **API-only this phase**. `204` / `404`. Unfinished order → `409`. Completed history allowed; later FKs **`SET NULL`**. | 2026-09-13 |
 | 22 | Add-points UI | **Superseded by #27** — no add-points API or UI. | 2026-09-13 |
-| 23 | Unfinished statuses | **Block** unless status is `completed`, `refunded`, or **`cancelled`**. `partially_refunded` **does** block. **`cancelled` preorders do not block.** | 2026-09-13 |
+| 23 | Unfinished statuses | **Block** unless status is `completed`, `refunded`, or **`cancelled`**. `partially_refunded` **does** block. | 2026-09-13 |
 | 24 | Delete with completed history | **Allowed.** Later `customer_id` FKs **`ON DELETE SET NULL`**. History rows **must keep** denormalized `customerName` / `customerPhone` snapshots. | 2026-09-13 |
 | 25 | Implementation scope | **Backend only** this pass. No FE `05-fe-changes` except as a later checklist. | 2026-09-13 |
 | 26 | OpenAPI file | **Merged** [`../openapi.yaml`](../openapi.yaml) — products + customers in one file. | 2026-09-13 |
@@ -143,11 +143,11 @@ The frontend OpenAPI (2026-10-17) supersedes the phone-optional and `regular` / 
 - Invalid enum → `422`
 - Column `vip_tier` should default to `regular` in the ORM / DB as well
 
-### 16. Purchase history / preorders — later modules
+### 16. Purchase history — later modules
 
 - This phase stores and serves **profile only**
-- `GET /customers/{id}/preorders` and `GET /customers/{id}/orders` are **not** added
-- UI tabs stay empty (or keep using mock checkout/preorder) until those modules write rows
+- `GET /customers/{id}/orders` is **not** added
+- UI tabs stay empty (or keep using mock checkout) until that module writes rows
 
 ### 17. Implement vs planning
 
@@ -180,7 +180,7 @@ The frontend OpenAPI (2026-10-17) supersedes the phone-optional and `regular` / 
 - Hard delete (row gone). No soft-delete / `discontinued` flag
 - **FE:** API-only this phase — no delete button / confirm dialog until a later FE pass
 - After delete, unique non-null `phone` / non-null `email` are free for a new member
-- Leftover `totalSpent` on the member row is discarded with the delete (history amounts stay on order/preorder rows)
+- Leftover `totalSpent` on the member row is discarded with the delete (history amounts stay on order rows)
 
 ### 23. Unfinished statuses (block delete)
 
@@ -189,24 +189,22 @@ The frontend OpenAPI (2026-10-17) supersedes the phone-optional and `regular` / 
 | Kind | Status |
 |------|--------|
 | Order | `completed`, `refunded` |
-| Preorder | `completed`, **`cancelled`** (if `refunded` is added later, treat as terminal too) |
 
 **Unfinished** (any other status → `409` `CUSTOMER_HAS_UNFINISHED_ORDERS`):
 
 | Kind | Status (today’s FE) |
 |------|---------------------|
 | Order | `partially_refunded` |
-| Preorder | `pending`, `partially_arrived`, `partially_completed` |
 
 Rule for future statuses: terminal = `completed` \| `refunded` \| `cancelled`. Everything else blocks.
 
-This catalog phase has no order/preorder tables, so the check cannot fire yet. Checkout/preorder modules implement the query before `DELETE`.
+This catalog phase has no order tables, so the check cannot fire yet. The checkout module implements the query before `DELETE`.
 
 ### 24. Completed / cancelled history — delete then `SET NULL` + snapshots
 
 - A member **may** be deleted while terminal history remains (`completed` / `refunded` / `cancelled`)
 - Later FKs: `customer_id` **nullable**, `ON DELETE SET NULL` (do **not** `CASCADE` history away; do **not** `RESTRICT` terminal rows)
-- **Required snapshots:** each order/preorder row stores `customerName` and `customerPhone` at bind/create. Member delete **must not** clear those columns. Receipts / history still show the member after `customer_id` is `NULL`
+- **Required snapshots:** each order row stores `customerName` and `customerPhone` at bind/create. Member delete **must not** clear those columns. Receipts / history still show the member after `customer_id` is `NULL`
 - Service order when checkout exists: (1) if any unfinished row → `409` (2) delete `customer` (`customer_id` → `NULL`; name/phone snapshots unchanged)
 
 ### 25. Implementation scope — backend only
@@ -270,7 +268,7 @@ This catalog phase has no order/preorder tables, so the check cannot fire yet. C
 | Delete | Hard `DELETE`; API-only UI; `204` / `404`; `409` unless `completed`/`refunded`/`cancelled`; history `SET NULL` + **keep name/phone snapshots** |
 | Search params | `keyword` + `vipTier` (`ALL`) + `page` / `pageSize` |
 | Spending / checkout writes | Out of scope; future checkout owns `totalSpent` increments |
-| Nested preorders / history | Out of scope this phase (**A**); empty until checkout/preorder modules |
+| Nested order history | Out of scope this phase (**A**); empty until the checkout module |
 | Phone format | Canonicalize; unique among non-null; empty → `NULL`; not TW-only / not E.164 |
 | Phone lookup | `GET /customers?keyword=` only |
 | YAML / code | Contract in `prompts/openapi.yaml`; next code pass must match **this** revision |

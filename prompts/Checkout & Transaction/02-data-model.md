@@ -71,7 +71,7 @@ Indexes: unique `order_number`, unique `idempotency_key`, `customer_id`, `busine
 | `restock` | `Boolean` nullable | Meaningful when this line is returning product (`quantity < 0`) |
 | `return_reason` | `Text` nullable | Why those units are being returned |
 
-There is no `cost_price`. There are no preorder columns.
+There is no `cost_price`.
 
 Unique `(order_id, line_no)`. Index `product_id`, `original_order_item_id`.
 
@@ -134,4 +134,4 @@ On commit, for each positive line with `points_discount_applied`:
 - `vipTierName` and `totalInventory`. Derived on read.
 - A points balance. The points flag is only a record of the discount the cashier applied. The price cut itself is already in `unit_price`.
 - A branch or cashier entity. The two branch ids are fixed labels. Cashier stays a snapshot of the current user.
-- An invoice, a cost price, or a preorder.
+- An invoice or a cost price.

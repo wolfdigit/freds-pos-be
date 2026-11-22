@@ -24,7 +24,6 @@ CamelCase JSON matching FE `Product` (`freds-pos-fe/src/types/product.ts`).
 | `vipPrice` | integer? | TWD, ≥ 0 when present |
 | `inventories` | `LocationInventory[]` | One entry per stored location. A missing row is `0` and is omitted until a write creates it. |
 | `totalInventory` | integer | Server-computed: sum of every location's quantity, including negatives |
-| `preOrderPendingCount` | integer | Server-computed from `product_pre_order_pending` (no row → `0`) |
 | `note` | string? | |
 | `status` | `active` \| `deleted` | Soft-delete record. Create stores `active`. `PUT` sets `deleted` to hide the product and `active` to show it again. The row stays. `GET /products` omits `deleted`. `GET /products/{productId}` still returns it. |
 | `deleted` | boolean | Mirrors `status`. `true` when `status` is `deleted`. |
@@ -53,7 +52,6 @@ Not accepted on create or update request schemas:
 - `id` (create: never accept)
 - `normalizedSku`
 - `totalInventory`
-- `preOrderPendingCount`
 - `stocks` (create: server initializes; update: not in contract)
 - `deleted` on create (server stores `false`). `status` may be sent on create; when omitted the server stores `active`. `status: deleted` hides the product. `status: active` shows it again. The row stays. There is no `DELETE /products/{productId}`.
 - `costPrice`. The catalog does not record it.
@@ -109,13 +107,12 @@ Auth: optional/dummy (`deps.get_current_user_optional`).
 
 The catalog does not record `costPrice` or product `status`. Omit `scale` and the server stores no scale.
 
-**Not in request schema:** `id`, `normalizedSku`, `totalInventory`, `preOrderPendingCount`, **`stocks` / any quantity fields**, **`costPrice`**, **`status`**
+**Not in request schema:** `id`, `normalizedSku`, `totalInventory`, **`stocks` / any quantity fields**, **`costPrice`**, **`status`**
 
 #### Create-time stock rows (server-only)
 
 - Always insert **all four** locations (`store`, `warehouse`, `company`, `other`) with **`quantity: 0`** and fixed `locationName`.
 - Client cannot set quantities on create; FE uses future **inventory APIs** after create for initial stock.
-- Do **not** insert `product_pre_order_pending` rows; response `preOrderPendingCount` = `0`.
 
 #### `id` generation
 
@@ -177,12 +174,12 @@ All fields optional / partial:
 
 **Excluded from OpenAPI schema (not part of the contract):**
 
-`stocks`, `totalInventory`, `id`, `normalizedSku`, `preOrderPendingCount`
+`stocks`, `totalInventory`, `id`, `normalizedSku`
 
 Rules:
 
 - On `sku` change: recompute `normalizedSku`; duplicate → `409` `PRODUCT_SKU_DUPLICATE`.
-- Never mutate stock rows or `product_pre_order_pending` via this endpoint.
+- Never mutate stock rows via this endpoint.
 - Prices: non-negative integers when provided.
 - `status: deleted` or `deleted: true` hides the product from `GET /products` and from a new sale. `status: active` or `deleted: false` shows it again. If both are sent, `status` wins. The row is not removed. `GET /products/{productId}` still returns a hidden product.
 
@@ -223,7 +220,7 @@ This phase’s contract is [`../openapi.yaml`](../openapi.yaml) (products tag; m
 
 ### 1. `CreateProductRequest`
 
-- **Remove from `required`:** `normalizedSku`, `totalInventory`, `preOrderPendingCount`, `stocks`
+- **Remove from `required`:** `normalizedSku`, `totalInventory`, `stocks`
 - **Remove `stocks` (and any quantity)** from the create request schema
 - Required: `sku`, `barcode`, `brand`, `name`, `listPrice`
 - Optional: `scale`, `material`, `color`, `imageUrl`, `vipPrice`, `note`, `status`
@@ -233,7 +230,6 @@ This phase’s contract is [`../openapi.yaml`](../openapi.yaml) (products tag; m
 
 - Server assigns `id` as `prod-{uuid4}` (no dashes)
 - Does not create inventory rows; no client quantities
-- Does not write `product_pre_order_pending`
 - Initial / ongoing stock qty via future inventory APIs
 
 ### 3. `UpdateProductRequest`
@@ -251,4 +247,4 @@ Replace opaque PUT body with named schema — **metadata fields only**; exclude 
 
 ### 6. Inventory and the rest of the frontend contract
 
-`/inventory/*`, `/preorders`, `/system/stores`, and `/system/oauth/accounts` are in [`../openapi.yaml`](../openapi.yaml).
+`/inventory/*`, `/system/stores`, and `/system/oauth/accounts` are in [`../openapi.yaml`](../openapi.yaml).

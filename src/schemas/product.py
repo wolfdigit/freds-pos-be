@@ -49,7 +49,6 @@ class Product(BaseModel):
     total_inventory: int = Field(..., alias="totalInventory")
     login_store_quantity: Optional[int] = Field(None, alias="loginStoreQuantity")
     login_store_returned_quantity: Optional[int] = Field(None, alias="loginStoreReturnedQuantity")
-    pre_order_pending_count: int = Field(..., alias="preOrderPendingCount", ge=0)
     note: Optional[str] = None
     status: ProductStatus = ProductStatus.ACTIVE
     deleted: bool = False
