@@ -124,6 +124,7 @@ The client does not send `id`, `orderNumber`, `createdAt`, `status`, totals, sna
 All checks run inside the database transaction. Any failure rolls back.
 
 1. Every `productId` exists. Missing → `404` `PRODUCT_NOT_FOUND`. A positive line also requires `product.deleted` false. A return line may name a soft-deleted product, because the row is still there.
+1a. Login store with `productScope: list`: every positive line's product must be in that store's `store_product` list. Else `409` `PRODUCT_NOT_IN_STORE`, before any write. Return lines are not checked, the same as a delisted product. The check locks the matched list rows (`FOR KEY SHARE`) until the checkout commits. See [`../store-products/00-overview.md`](../store-products/00-overview.md).
 2. Positive lines deduct `store` stock even when the shelf quantity is short. Short stock is not an error. The counter shows a warning popup; the cashier decides. The server commits.
 3. Negative lines return product from an earlier sale: both original ids present, that sale line exists, `abs(quantity) ≤ quantity - returnedQuantity` on that line. Else `409` `RETURN_QTY_EXCEEDED`. The earlier sale is missing → `404` `ORDER_NOT_FOUND`. The return `productId` must equal that sale line's `product_id`. This comparison always runs. It is not skipped when the product was hidden, because `product_id` is never cleared.
 4. Return customer: if both the new order and the earlier sale have a `customerId`, they must be equal. A walk-in sale may be returned onto a member. A member sale may not be returned onto a different member. Else `409` `INVALID_RETURN_CUSTOMER`.
@@ -151,7 +152,7 @@ In one commit:
 |--------|------|
 | `201` | `CheckoutReceipt`: `{ order }`. `order` is `CheckoutOrder`. The server does not return receipt HTML. |
 | `404` | `PRODUCT_NOT_FOUND`, `CUSTOMER_NOT_FOUND`, `ORDER_NOT_FOUND` |
-| `409` | Return quantity, return customer, payment, or idempotency conflicts |
+| `409` | Return quantity, return customer, payment, or idempotency conflicts; `PRODUCT_NOT_IN_STORE` |
 | `422` | Malformed body, empty items, zero quantity, or unknown branch |
 
 The `201` body is the calculated `order` only. There is no invoice and no receipt HTML. The client formats the slip from `order.branchName`, `order.orderNumber`, `order.cashierName`, `order.createdAt`, each item's `name`, `quantity`, `unitPrice`, and `subtotal`, `order.shippingFee`, `order.payments`, and `order.totalAmount`.

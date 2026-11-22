@@ -24,6 +24,7 @@ CamelCase JSON matching FE `Product` (`freds-pos-fe/src/types/product.ts`).
 | `vipPrice` | integer? | TWD, ≥ 0 when present |
 | `inventories` | `LocationInventory[]` | One entry per stored location. A missing row is `0` and is omitted until a write creates it. |
 | `totalInventory` | integer | Server-computed: sum of every location's quantity, including negatives |
+| `soldInLoginStore` | boolean \| null | Server-computed. `null` with no selected store. `true` for a `productScope: all` store. For a `list` store, whether the product is in `store_product`. |
 | `note` | string? | |
 | `status` | `active` \| `deleted` | Soft-delete record. Create stores `active`. `PUT` sets `deleted` to hide the product and `active` to show it again. The row stays. `GET /products` omits `deleted`. `GET /products/{productId}` still returns it. |
 | `deleted` | boolean | Mirrors `status`. `true` when `status` is `deleted`. |
@@ -76,6 +77,9 @@ Not accepted on create or update request schemas:
 | `totalInventoryMin` / `totalInventoryMax` | integer | missing | `totalInventory` `>=` / `<=` N |
 | `page` | integer ≥ 1 | missing | 1-based page. Sending `page` or `pageSize` switches to the paged response |
 | `pageSize` | integer 1–200 | missing (`50` when paged) | Page size |
+| `allProducts` | boolean | `false` | Skip the login store's product list. Any business user |
+
+Store product list: when the login store has `productScope: list`, only products in its `store_product` list are returned (`EXISTS`, in SQL, before paging and `total`). This includes `barcode` lookups. An admin with no selected store sees every product. See [`../store-products/00-overview.md`](../store-products/00-overview.md).
 
 Inventory page filters: store low stock `loginStoreQuantityMax=2`; warehouse low stock `locationId=<後方倉庫>&locationQuantityMax=2`; store out of stock `loginStoreQuantityMin=0&loginStoreQuantityMax=0`; all out of stock `totalInventoryMin=0&totalInventoryMax=0`; any stock `inInventoryOnly=true`. All bounds are inclusive and combine with every other filter and with paging.
 
@@ -113,6 +117,10 @@ The catalog does not record `costPrice` or product `status`. Omit `scale` and th
 
 - Always insert **all four** locations (`store`, `warehouse`, `company`, `other`) with **`quantity: 0`** and fixed `locationName`.
 - Client cannot set quantities on create; FE uses future **inventory APIs** after create for initial stock.
+
+#### Store product list
+
+When the login store has `productScope: list`, the new product is added to that store's list (`created_by` = the signed-in account's display name). It is not added to any other `list` store.
 
 #### `id` generation
 

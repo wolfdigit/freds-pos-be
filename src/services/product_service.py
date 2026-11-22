@@ -8,13 +8,13 @@ from typing import List, Optional, Sequence
 
 from src.models.location import InventoryLocation
 
-from sqlalchemy import false, func, or_, select
+from sqlalchemy import exists, false, func, or_, select
 from sqlalchemy.sql.elements import ColumnElement
 from sqlalchemy.orm import Session, selectinload
 
 from src.core.exceptions import BusinessException
 from src.models.product import Product, ProductInventory
-from src.models.system import StoreBranch
+from src.models.system import StoreBranch, StoreProduct
 from src.schemas.common import BusinessErrorCode
 from src.schemas.product import (
     CreateProductRequest,
@@ -66,6 +66,7 @@ def _to_product_schema(
     login_returned_location_id: Optional[str] = None,
     login_preorder_location_id: Optional[str] = None,
     has_login_store: bool = False,
+    sold_in_login_store: Optional[bool] = None,
 ) -> ProductSchema:
     inventories: List[LocationInventory] = []
     seen = set()
@@ -117,6 +118,7 @@ def _to_product_schema(
         loginStoreQuantity=login_store_quantity,
         loginStoreReturnedQuantity=login_store_returned_quantity,
         loginStorePreorderQuantity=login_store_preorder_quantity,
+        soldInLoginStore=sold_in_login_store if has_login_store else None,
         note=product.note,
         status=product.status,
         deleted=product.deleted,
@@ -175,6 +177,31 @@ def _total_quantity():
     )
 
 
+# 商品關鍵字：名稱／品牌（不分大小寫）、條碼、正規化貨號的子字串。空白關鍵字回 None。
+def keyword_predicate(keyword: Optional[str]) -> Optional[ColumnElement]:
+    trimmed_keyword = (keyword or "").strip()
+    if not trimmed_keyword:
+        return None
+    keyword_preds = [
+        _contains_like(func.lower(Product.name), trimmed_keyword.lower()),
+        _contains_like(func.lower(Product.brand), trimmed_keyword.lower()),
+        _contains_like(Product.barcode, trimmed_keyword),
+    ]
+    normalized_query = normalize_sku(trimmed_keyword)
+    if normalized_query:
+        keyword_preds.append(_contains_like(Product.normalized_sku, normalized_query))
+    return or_(*keyword_preds)
+
+
+# 商品在 store_name 的門市商品清單裡（EXISTS，走 store_product 主鍵）。
+def sold_in_store(store_name: str) -> ColumnElement:
+    return exists(
+        select(StoreProduct.product_id)
+        .where(StoreProduct.store_name == store_name, StoreProduct.product_id == Product.id)
+        .correlate(Product)
+    )
+
+
 def _between(stmt, column, low: Optional[int], high: Optional[int]):
     if low is not None:
         stmt = stmt.where(column >= low)
@@ -223,6 +250,37 @@ class ProductService:
 
     # 新增商品並建立各地點庫存列（數量 0）。
     # data: 建立商品的請求內容。
+    def _login_store(self, store_name: Optional[str]) -> Optional[StoreBranch]:
+        if not store_name:
+            return None
+        return self.db.get(StoreBranch, store_name)
+
+    # 登入門市是 'list' 模式時回門市名稱（要套商品清單），否則 None。
+    def _list_scope_store(self, store_name: Optional[str]) -> Optional[str]:
+        store = self._login_store(store_name)
+        if store is None or store.product_scope != "list":
+            return None
+        return store.name
+
+    # 每個商品在登入門市是否販售。沒有登入門市時回空 dict（API 欄位為 null）。
+    def _sold_flags(self, store_name: Optional[str], product_ids: Sequence[str]) -> dict[str, bool]:
+        store = self._login_store(store_name)
+        if store is None:
+            return {}
+        if store.product_scope != "list":
+            return {pid: True for pid in product_ids}
+        if not product_ids:
+            return {}
+        listed = set(
+            self.db.scalars(
+                select(StoreProduct.product_id).where(
+                    StoreProduct.store_name == store.name,
+                    StoreProduct.product_id.in_(list(product_ids)),
+                )
+            ).all()
+        )
+        return {pid: pid in listed for pid in product_ids}
+
     def _login_bindings(
         self, store_name: Optional[str]
     ) -> tuple[bool, Optional[str], Optional[str], Optional[str]]:
@@ -273,6 +331,18 @@ class ProductService:
             updated_by=actor,
         )
         self.db.add(product)
+        # 新商品不會自動加入其他 'list' 門市；只有在 'list' 門市登入時建立的，加入該門市清單。
+        scope_store = self._list_scope_store(store_name)
+        if scope_store is not None:
+            self.db.flush()
+            self.db.add(
+                StoreProduct(
+                    store_name=scope_store,
+                    product_id=product.id,
+                    created_at=now,
+                    created_by=actor or "",
+                )
+            )
         self.db.commit()
         return self.get_by_id(product.id, store_name=store_name)
 
@@ -286,6 +356,7 @@ class ProductService:
             login_returned_location_id=returned_id,
             login_preorder_location_id=preorder_id,
             has_login_store=has_login_store,
+            sold_in_login_store=self._sold_flags(store_name, [product_id]).get(product_id),
         )
 
     # 更新指定商品已提供的欄位。
@@ -356,6 +427,7 @@ class ProductService:
         in_inventory_only: bool,
         stock: Optional[StockFilters] = None,
         store_name: Optional[str] = None,
+        scope_store: Optional[str] = None,
     ):
         stmt = select(Product).where(Product.status != "deleted")
         if stock is not None:
@@ -372,22 +444,11 @@ class ProductService:
         if in_inventory_only:
             stmt = stmt.where(_total_quantity() > 0)
 
-        trimmed_keyword = (keyword or "").strip()
-        if trimmed_keyword:
-            name_match = _contains_like(
-                func.lower(Product.name), trimmed_keyword.lower()
-            )
-            brand_match = _contains_like(
-                func.lower(Product.brand), trimmed_keyword.lower()
-            )
-            barcode_match = _contains_like(Product.barcode, trimmed_keyword)
-            keyword_preds = [name_match, brand_match, barcode_match]
-            normalized_query = normalize_sku(trimmed_keyword)
-            if normalized_query:
-                keyword_preds.append(
-                    _contains_like(Product.normalized_sku, normalized_query)
-                )
-            stmt = stmt.where(or_(*keyword_preds))
+        predicate = keyword_predicate(keyword)
+        if predicate is not None:
+            stmt = stmt.where(predicate)
+        if scope_store is not None:
+            stmt = stmt.where(sold_in_store(scope_store))
         return stmt
 
     # 依數量篩選。登入門市條件跟 loginStoreQuantity 同一個定義：目前門市的正常庫存點；
@@ -413,6 +474,7 @@ class ProductService:
     def _to_schemas(self, products: Sequence[Product], store_name: Optional[str]) -> List[ProductSchema]:
         locations = ensure_locations(self.db)
         has_login_store, normal_id, returned_id, preorder_id = self._login_bindings(store_name)
+        sold = self._sold_flags(store_name, [p.id for p in products])
         return [
             _to_product_schema(
                 p,
@@ -421,11 +483,13 @@ class ProductService:
                 login_returned_location_id=returned_id,
                 login_preorder_location_id=preorder_id,
                 has_login_store=has_login_store,
+                sold_in_login_store=sold.get(p.id),
             )
             for p in products
         ]
 
     # 依條件搜尋商品，回傳全部符合者（舊版前端使用的形狀）。排序 sku ASC。
+    # all_products: 看全部商品，不套登入門市的商品清單（任何業務帳號都可以）。
     def search(
         self,
         *,
@@ -436,6 +500,7 @@ class ProductService:
         in_inventory_only: bool = False,
         stock: Optional[StockFilters] = None,
         store_name: Optional[str] = None,
+        all_products: bool = False,
     ) -> List[ProductSchema]:
         stmt = self._filtered(
             keyword=keyword,
@@ -445,6 +510,7 @@ class ProductService:
             in_inventory_only=in_inventory_only,
             stock=stock,
             store_name=store_name,
+            scope_store=None if all_products else self._list_scope_store(store_name),
         ).options(
             selectinload(Product.inventories),
         )
@@ -466,6 +532,7 @@ class ProductService:
         in_inventory_only: bool = False,
         stock: Optional[StockFilters] = None,
         store_name: Optional[str] = None,
+        all_products: bool = False,
     ) -> ProductPage:
         filtered = self._filtered(
             keyword=keyword,
@@ -475,6 +542,7 @@ class ProductService:
             in_inventory_only=in_inventory_only,
             stock=stock,
             store_name=store_name,
+            scope_store=None if all_products else self._list_scope_store(store_name),
         )
         total = self.db.scalar(select(func.count()).select_from(filtered.subquery())) or 0
         stmt = (

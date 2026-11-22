@@ -37,6 +37,9 @@ def search_products(
     locationQuantityMax: Optional[int] = Query(None, description="Quantity at locationId <= N"),
     totalInventoryMin: Optional[int] = Query(None, description="totalInventory >= N"),
     totalInventoryMax: Optional[int] = Query(None, description="totalInventory <= N"),
+    allProducts: bool = Query(
+        False, description="Ignore the login store's product list (list-scope stores); any business user"
+    ),
     page: Optional[int] = Query(None, ge=1, description="1-based page; enables the paged response"),
     pageSize: Optional[int] = Query(
         None,
@@ -48,6 +51,10 @@ def search_products(
     user=Depends(require_business_user),
 ) -> Union[ProductPage, List[Product]]:
     """Default sort: sku ASC.
+
+    When the login store's productScope is 'list', only products in that
+    store's list are returned (any business user may pass allProducts=true). Admin without
+    a store sees every product.
 
     Without page/pageSize the response is the full array (unchanged, for the
     already deployed frontend). With either one it is
@@ -71,6 +78,7 @@ def search_products(
         in_inventory_only=inInventoryOnly,
         stock=stock if stock != StockFilters() else None,
         store_name=user.store_name,
+        all_products=allProducts,
     )
     if page is None and pageSize is None:
         return service.search(**filters)
