@@ -18,7 +18,7 @@ def test_product_responses_have_no_preorder_pending_count(client, google_jwks):
     headers, _shelf = _setup(client, google_jwks)
     product_id = _create(client, headers, "SKU-NOPO")
 
-    listed = _get(client, headers)[0]
+    listed = _get(client, headers)["items"][0]
     paged = _get(client, headers, page=1, pageSize=10)["items"][0]
     single = client.get(f"/api/v1/products/{product_id}", headers=headers).json()
     for body in (listed, paged, single):

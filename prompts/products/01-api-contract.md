@@ -59,9 +59,9 @@ Not accepted on create or update request schemas:
 
 ---
 
-## `GET /products` — `searchProducts`
+## `GET /products` — `searchProductPage`
 
-**Maps to:** `IProductService.searchProducts`
+**Maps to:** `IProductService.searchProductPage`
 
 ### Query parameters
 
@@ -75,8 +75,8 @@ Not accepted on create or update request schemas:
 | `loginStoreQuantityMin` / `loginStoreQuantityMax` | integer | missing | `loginStoreQuantity` (session store's normal location, missing row = `0`) `>=` / `<=` N. With no selected store `loginStoreQuantity` is `null`, so these match nothing |
 | `locationId` + `locationQuantityMin` / `locationQuantityMax` | string + integer | missing | Quantity at `locationId` (missing row = `0`) `>=` / `<=` N. A bound without an existing `locationId` is `404 LOCATION_NOT_FOUND` |
 | `totalInventoryMin` / `totalInventoryMax` | integer | missing | `totalInventory` `>=` / `<=` N |
-| `page` | integer ≥ 1 | missing | 1-based page. Sending `page` or `pageSize` switches to the paged response |
-| `pageSize` | integer 1–200 | missing (`50` when paged) | Page size |
+| `page` | integer ≥ 1 | `1` | 1-based page |
+| `pageSize` | integer 1–200 | `50` | Page size |
 | `allProducts` | boolean | `false` | Skip the login store's product list. Any business user |
 
 Store product list: when the login store has `productScope: list`, only products in its `store_product` list are returned (`EXISTS`, in SQL, before paging and `total`). This includes `barcode` lookups. An admin with no selected store sees every product. See [`../store-products/00-overview.md`](../store-products/00-overview.md).
@@ -89,13 +89,12 @@ Search / filter semantics: see [`03-search-rules.md`](./03-search-rules.md). All
 
 | Status | Body |
 |--------|------|
-| `200` | `Product[]` when neither `page` nor `pageSize` is sent (unchanged full list) |
-| `200` | `{ items: Product[], page, pageSize, total }` when `page` or `pageSize` is sent. `total` counts every match of the filters; a page past the end has `items: []` |
+| `200` | `{ items: Product[], page, pageSize, total }`. Defaults: `page=1`, `pageSize=50`. `total` counts every match of the filters; a page past the end has `items: []` |
 | `422` | `page < 1`, `pageSize` outside 1–200 |
 
 **Default sort:** `sku ASC` (confirmed). The paged response breaks ties by `id ASC` so pages do not overlap. `created_at` / `updated_at` exist for audit only.
 
-Auth: optional/dummy (`deps.get_current_user_optional`).
+Auth: required business user (`deps.require_business_user`).
 
 ---
 

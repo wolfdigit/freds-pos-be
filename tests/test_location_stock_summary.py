@@ -55,7 +55,7 @@ def test_summary_lists_every_location_with_signed_totals(client, google_jwks):
     }
 
     # 跟前端原本用整份商品清單加總的結果一致。
-    products = client.get("/api/v1/products", headers=headers).json()
+    products = client.get("/api/v1/products", headers=headers).json()["items"]
     for location_id, row in body.items():
         rows = [inv for p in products for inv in p["inventories"] if inv["location"] == location_id]
         assert row["totalQuantity"] == sum(inv["quantity"] for inv in rows)

@@ -265,7 +265,7 @@ def test_admin_without_a_store_can_use_business_apis_and_checkout_still_needs_on
 
     empty_products = client.get("/api/v1/products", headers=admin_headers)
     assert empty_products.status_code == 200
-    assert empty_products.json() == []
+    assert empty_products.json() == {"items": [], "page": 1, "pageSize": 50, "total": 0}
     created_product = client.post(
         "/api/v1/products",
         json={"sku": "SKU-ADMIN", "barcode": "222", "brand": "Brand", "name": "車", "listPrice": 100},
@@ -296,8 +296,8 @@ def test_admin_without_a_store_can_use_business_apis_and_checkout_still_needs_on
     assert body["loginStoreReturnedQuantity"] is None
     searched = client.get("/api/v1/products", headers=admin_headers)
     assert searched.status_code == 200
-    assert searched.json()[0]["loginStoreQuantity"] is None
-    assert searched.json()[0]["loginStoreReturnedQuantity"] is None
+    assert searched.json()["items"][0]["loginStoreQuantity"] is None
+    assert searched.json()["items"][0]["loginStoreReturnedQuantity"] is None
     assert _stock_qty(product["id"], DEFAULT_STORE_LOCATION_ID) == 4
 
     refused = client.post(
