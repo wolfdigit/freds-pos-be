@@ -119,3 +119,68 @@ def test_amount_paging_and_returnable_quantity(client, google_jwks):
     assert found[0]["items"][0]["quantity"] == 3
     assert found[0]["items"][0]["returnedQuantity"] == 1
     assert found[0]["status"] == "partially_refunded"
+
+
+def test_store_name_filters_orders_by_checkout_store(client, google_jwks):
+    """storeName：只列在該門市結帳的訂單（branchId）。退貨單算處理退貨的門市；不帶 = 全部門市。"""
+    from src.db.session import SessionFactory
+    from src.models.checkout import CheckoutOrder
+
+    headers = _ready(client, google_jwks)
+    _add_store("台南快閃店")
+    token = headers["Authorization"].split()[1]
+    car = _product(client, headers, "SKU-CAR", "4710000000017", "紅色跑車", 100)
+    main_sale = _sell(client, headers, car, 1, 100)
+    _select(client, token, "台南快閃店")
+    popup_sale = _sell(client, headers, car, 2, 200)
+    item = main_sale["items"][0]
+    refund = client.post(
+        URL,
+        json={
+            "items": [
+                {
+                    "productId": car,
+                    "quantity": -1,
+                    "originalOrderId": main_sale["id"],
+                    "originalOrderItemId": item["id"],
+                    "returnReason": "QA-退貨",
+                }
+            ],
+            "shippingFee": 0,
+            "payments": [{"type": "cash", "name": "現金", "amount": -100}],
+        },
+        headers=headers,
+    )
+    assert refund.status_code == 201, refund.text
+    popup_return = refund.json()["order"]
+    assert popup_return["branchId"] == "台南快閃店"
+
+    # 舊版訂單的 branch_id 不是門市名稱（branch-store），只在全部門市出現。
+    legacy = _sell(client, headers, car, 1, 100)
+    db = SessionFactory()
+    try:
+        row = db.get(CheckoutOrder, legacy["id"])
+        row.branch_id = "branch-store"
+        row.branch_name = "台北旗艦店"
+        db.commit()
+    finally:
+        db.close()
+
+    everything = _search(client, headers, pageSize=100)
+    assert everything["total"] == 4
+    main = _search(client, headers, storeName="奇可門市", pageSize=100)
+    assert _numbers(main) == [main_sale["orderNumber"]]
+    assert main["items"][0]["branchName"] == "奇可門市"
+    popup = _search(client, headers, storeName=" 台南快閃店 ", pageSize=100)
+    assert set(_numbers(popup)) == {popup_sale["orderNumber"], popup_return["orderNumber"]}
+    # 跟其他條件一起用，也跟分頁一起用。
+    assert _numbers(_search(client, headers, storeName="台南快閃店", maxAmount=0)) == [popup_return["orderNumber"]]
+    paged = _search(client, headers, storeName="台南快閃店", page=1, pageSize=1)
+    assert paged["total"] == 2
+    assert len(paged["items"]) == 1
+    # 空白 = 沒帶。
+    assert _search(client, headers, storeName="  ", pageSize=100)["total"] == 4
+
+    missing = client.get(URL, params={"storeName": "不存在的門市"}, headers=headers)
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "STORE_NOT_FOUND"

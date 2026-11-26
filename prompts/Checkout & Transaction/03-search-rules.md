@@ -38,6 +38,7 @@ Adding to the cart, changing quantity, switching SKU, and manual price stay in `
 | `startDate` | `created_at >=` |
 | `endDate` | `created_at <` |
 | `minAmount` / `maxAmount` | Inclusive bounds on `total_amount` |
+| `storeName` | `branch_id` equals this store (the login store at checkout; a return counts toward the store that processed it). Blank = all stores. Unknown store → `404 STORE_NOT_FOUND` |
 | `status` | Exact, unless missing or `all` |
 
 Sort: `created_at DESC`, `id DESC`.

@@ -174,6 +174,7 @@ The `201` body is the calculated `order` only. There is no invoice and no receip
 | `endDate` | — | Exclusive upper bound, ISO 8601 |
 | `minAmount` | — | `totalAmount ≥` |
 | `maxAmount` | — | `totalAmount ≤` |
+| `storeName` | — | `branchId =` this store. Blank = all stores. Unknown store → `404 STORE_NOT_FOUND`. Daily report store buttons use it |
 | `status` | missing or `all` | Exact status filter |
 | `page` | `1` | ≥ 1 |
 | `pageSize` | `20` | Max `100` |

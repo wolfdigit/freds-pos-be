@@ -62,6 +62,10 @@ def search_checkout_orders(
     minAmount: Optional[int] = Query(None),
     maxAmount: Optional[int] = Query(None),
     status_filter: Optional[OrderStatusQuery] = Query(None, alias="status"),
+    storeName: Optional[str] = Query(
+        None,
+        description="Only orders checked out at this store (branchId). Blank = all stores. Unknown store = 404 STORE_NOT_FOUND",
+    ),
     page: int = Query(1, ge=1),
     pageSize: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -81,6 +85,7 @@ def search_checkout_orders(
         status=status_value,
         page=page,
         page_size=pageSize,
+        store_name=storeName,
     )
 
 
