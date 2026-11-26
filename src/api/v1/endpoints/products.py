@@ -1,4 +1,4 @@
-from typing import List, Optional, Union
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Path, Query, status
 from sqlalchemy.orm import Session
@@ -16,7 +16,7 @@ MAX_PRODUCT_PAGE_SIZE = 200
 
 @router.get(
     "",
-    response_model=Union[ProductPage, List[Product]],
+    response_model=ProductPage,
     response_model_by_alias=True,
     summary="Search products",
 )
@@ -40,25 +40,23 @@ def search_products(
     allProducts: bool = Query(
         False, description="Ignore the login store's product list (list-scope stores); any business user"
     ),
-    page: Optional[int] = Query(None, ge=1, description="1-based page; enables the paged response"),
-    pageSize: Optional[int] = Query(
-        None,
+    page: int = Query(1, ge=1, description="1-based page"),
+    pageSize: int = Query(
+        DEFAULT_PRODUCT_PAGE_SIZE,
         ge=1,
         le=MAX_PRODUCT_PAGE_SIZE,
-        description=f"Page size (default {DEFAULT_PRODUCT_PAGE_SIZE}); enables the paged response",
+        description=f"Page size (default {DEFAULT_PRODUCT_PAGE_SIZE}, max {MAX_PRODUCT_PAGE_SIZE})",
     ),
     db: Session = Depends(get_db),
     user=Depends(require_business_user),
-) -> Union[ProductPage, List[Product]]:
+) -> ProductPage:
     """Default sort: sku ASC.
 
     When the login store's productScope is 'list', only products in that
     store's list are returned (any business user may pass allProducts=true). Admin without
     a store sees every product.
 
-    Without page/pageSize the response is the full array (unchanged, for the
-    already deployed frontend). With either one it is
-    `{items, page, pageSize, total}`.
+    Always returns `{items, page, pageSize, total}`. Defaults: page=1, pageSize=50.
     """
     service = ProductService(db)
     stock = StockFilters(
@@ -80,11 +78,9 @@ def search_products(
         store_name=user.store_name,
         all_products=allProducts,
     )
-    if page is None and pageSize is None:
-        return service.search(**filters)
     return service.search_page(
-        page=page or 1,
-        page_size=pageSize or DEFAULT_PRODUCT_PAGE_SIZE,
+        page=page,
+        page_size=pageSize,
         **filters,
     )
 

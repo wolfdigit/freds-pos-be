@@ -371,7 +371,7 @@ def test_total_inventory_includes_warehouse_returns_and_negatives(client, google
     assert body["loginStoreReturnedQuantity"] == -3
     assert body["totalInventory"] == 2
     listed = client.get("/api/v1/products", params={"inInventoryOnly": True}, headers=headers)
-    assert product_id in [row["id"] for row in listed.json()]
+    assert product_id in [row["id"] for row in listed.json()["items"]]
 
     hidden_id = _product(client, login["token"], "SKU-NEG")
     client.post(
@@ -380,7 +380,7 @@ def test_total_inventory_includes_warehouse_returns_and_negatives(client, google
         headers=headers,
     )
     only_negative = client.get("/api/v1/products", params={"inInventoryOnly": True}, headers=headers)
-    assert hidden_id not in [row["id"] for row in only_negative.json()]
+    assert hidden_id not in [row["id"] for row in only_negative.json()["items"]]
 
 
 def test_batch_adjust_reason_is_optional_and_can_set_returned_location_negative(client, google_jwks):

@@ -488,37 +488,8 @@ class ProductService:
             for p in products
         ]
 
-    # 依條件搜尋商品，回傳全部符合者（舊版前端使用的形狀）。排序 sku ASC。
+    # 依條件搜尋一頁商品，並附上符合條件的總筆數。
     # all_products: 看全部商品，不套登入門市的商品清單（任何業務帳號都可以）。
-    def search(
-        self,
-        *,
-        keyword: Optional[str] = None,
-        scale: Optional[str] = None,
-        brand: Optional[str] = None,
-        barcode: Optional[str] = None,
-        in_inventory_only: bool = False,
-        stock: Optional[StockFilters] = None,
-        store_name: Optional[str] = None,
-        all_products: bool = False,
-    ) -> List[ProductSchema]:
-        stmt = self._filtered(
-            keyword=keyword,
-            scale=scale,
-            brand=brand,
-            barcode=barcode,
-            in_inventory_only=in_inventory_only,
-            stock=stock,
-            store_name=store_name,
-            scope_store=None if all_products else self._list_scope_store(store_name),
-        ).options(
-            selectinload(Product.inventories),
-        )
-        stmt = stmt.order_by(Product.sku.asc())
-        products = list(self.db.scalars(stmt).unique().all())
-        return self._to_schemas(products, store_name)
-
-    # 同樣的篩選，但只回一頁，並附上符合條件的總筆數。
     # 排序 sku ASC、id ASC，翻頁時順序固定。
     def search_page(
         self,

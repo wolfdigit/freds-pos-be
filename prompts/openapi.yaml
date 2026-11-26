@@ -161,15 +161,18 @@ paths:
   /products:
     get:
       tags: [products]
-      operationId: searchProducts
+      operationId: searchProductPage
       description: |
         Login store with `productScope: list`: only products in that store's list (`store_product`) are returned,
         including `barcode` lookups. Any business user may pass `allProducts=true` to skip the list (each row still has `soldInLoginStore`).
         Admin with no selected store sees every product. `productScope: all` stores are unchanged.
         Fuzzy search by barcode, SKU without dashes (normalized), product name, or brand.
-        Maps to `IProductService.searchProducts`.
-        Default sort: `sku ASC`.
+        The `barcode` query parameter is an exact match.
+        Maps to `IProductService.searchProductPage`.
+        Default sort: `sku ASC`, then `id ASC`.
+        Always returns `{items, page, pageSize, total}`. Defaults: `page=1`, `pageSize=50` (max 200).
         Omits products with `status: deleted`. `GET /products/{productId}` still returns a hidden row.
+        Auth: `require_business_user`.
       parameters:
         - name: keyword
           in: query
@@ -185,26 +188,74 @@ paths:
           schema:
             type: string
           description: Brand filter, or `ALL`
+        - name: barcode
+          in: query
+          schema:
+            type: string
+          description: Exact barcode match
         - name: inInventoryOnly
           in: query
           schema:
             type: boolean
             default: false
+        - name: loginStoreQuantityMin
+          in: query
+          schema:
+            type: integer
+        - name: loginStoreQuantityMax
+          in: query
+          schema:
+            type: integer
+        - name: locationId
+          in: query
+          schema:
+            type: string
+        - name: locationQuantityMin
+          in: query
+          schema:
+            type: integer
+        - name: locationQuantityMax
+          in: query
+          schema:
+            type: integer
+        - name: totalInventoryMin
+          in: query
+          schema:
+            type: integer
+        - name: totalInventoryMax
+          in: query
+          schema:
+            type: integer
         - name: allProducts
           in: query
           schema:
             type: boolean
             default: false
           description: Ignore the login store's product list. Any business user (staff included).
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: 1-based page
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Page size (default 50, max 200)
       responses:
         '200':
-          description: Matching products
+          description: One page of matching products
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Product'
+                $ref: '#/components/schemas/ProductPage'
+        '422':
+          description: `page` < 1 or `pageSize` outside 1–200
     post:
       tags: [products]
       operationId: createProduct
@@ -1631,6 +1682,22 @@ components:
           type: boolean
           description: |
             Mirrors `status`. `true` when `status` is `deleted`, otherwise `false`.
+
+    ProductPage:
+      type: object
+      required: [items, page, pageSize, total]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Product'
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+          description: Rows matching the filters, not just this page.
 
     CreateProductRequest:
       type: object

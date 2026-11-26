@@ -1,4 +1,4 @@
-"""GET /products 分頁：不帶分頁參數時維持原本陣列格式；帶 page/pageSize 時回 {items, page, pageSize, total}。"""
+"""GET /products 一律回 {items, page, pageSize, total}；預設 page=1、pageSize=50。"""
 
 from src.services.inventory_service import RETURNED_LOCATION_ID
 from tests.test_auth import ADMIN_EMAIL, _add_account, _add_store, _auth, _login, _select, _set_location_qty
@@ -28,14 +28,16 @@ def _get(client, headers, **params):
     return response.json()
 
 
-def test_without_paging_params_the_full_array_is_unchanged(client, google_jwks):
+def test_without_paging_params_defaults_to_the_first_page(client, google_jwks):
     headers, _shelf = _setup(client, google_jwks)
     for sku in ["SKU-C", "SKU-A", "SKU-B"]:
         _create(client, headers, sku)
     body = _get(client, headers)
-    assert isinstance(body, list)
-    assert [row["sku"] for row in body] == ["SKU-A", "SKU-B", "SKU-C"]
-    assert {"totalInventory", "loginStoreQuantity", "inventories"} <= set(body[0])
+    assert body["page"] == 1
+    assert body["pageSize"] == 50
+    assert body["total"] == 3
+    assert [row["sku"] for row in body["items"]] == ["SKU-A", "SKU-B", "SKU-C"]
+    assert {"totalInventory", "loginStoreQuantity", "inventories"} <= set(body["items"][0])
 
 
 def test_pages_cover_every_match_once_in_sku_order(client, google_jwks):
@@ -96,9 +98,11 @@ def test_filters_apply_before_paging_and_total_counts_matches(client, google_jwk
     assert row["loginStoreQuantity"] == -1
     assert row["loginStoreReturnedQuantity"] == 3
 
-    # 同樣的篩選，分頁和不分頁拿到同一組商品。
-    unpaged = _get(client, headers, inInventoryOnly=True)
-    assert [r["id"] for r in unpaged] == [r["id"] for r in stocked["items"]]
+    # 不帶 page/pageSize 時用預設第一頁，同一組篩選結果一致。
+    defaulted = _get(client, headers, inInventoryOnly=True)
+    assert defaulted["page"] == 1
+    assert defaulted["pageSize"] == 50
+    assert [r["id"] for r in defaulted["items"]] == [r["id"] for r in stocked["items"]]
 
 
 def test_barcode_filter_is_an_exact_match(client, google_jwks):
@@ -106,7 +110,9 @@ def test_barcode_filter_is_an_exact_match(client, google_jwks):
     first = _create(client, headers, "BAR-1", barcode="4710001")
     second = _create(client, headers, "BAR-2", barcode="4710001")
     _create(client, headers, "BAR-3", barcode="47100012")
-    assert [row["id"] for row in _get(client, headers, barcode="4710001")] == [first, second]
+    matched = _get(client, headers, barcode="4710001")
+    assert matched["page"] == 1
+    assert [row["id"] for row in matched["items"]] == [first, second]
     paged = _get(client, headers, barcode="4710001", page=1, pageSize=1)
     assert paged["total"] == 2
     assert [row["id"] for row in paged["items"]] == [first]

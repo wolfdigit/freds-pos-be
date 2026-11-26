@@ -37,7 +37,7 @@ def test_login_store_low_stock_matches_login_store_quantity(client, google_jwks)
     assert _skus(_get(client, headers, loginStoreQuantityMax=2, page=2, pageSize=2)) == ["D-NEG", "E-WH"]
     # 每一筆都符合 loginStoreQuantity <= 2（沒有庫存列算 0，負數也算）。
     everything = _get(client, headers)
-    expected = [row["sku"] for row in everything if row["loginStoreQuantity"] <= 2]
+    expected = [row["sku"] for row in everything["items"] if row["loginStoreQuantity"] <= 2]
     assert _skus(_get(client, headers, loginStoreQuantityMax=2)) == expected
 
 

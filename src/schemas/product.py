@@ -63,7 +63,7 @@ class Product(BaseModel):
 
 
 class ProductPage(BaseModel):
-    """One page of GET /products (only when page or pageSize is given)."""
+    """One page of GET /products."""
 
     model_config = ConfigDict(populate_by_name=True)
 

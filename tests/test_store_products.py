@@ -66,10 +66,10 @@ def test_existing_stores_default_to_all_and_sell_everything(client, google_jwks)
     stores = client.get("/api/v1/auth/stores", headers=headers).json()
     assert [row["productScope"] for row in stores] == ["all"]
     # 管理員沒選門市：看全部商品，soldInLoginStore 為 null。
-    rows = client.get("/api/v1/products", headers=headers).json()
+    rows = client.get("/api/v1/products", headers=headers).json()["items"]
     assert [row["soldInLoginStore"] for row in rows] == [None]
     _select(client, login["token"], MAIN)
-    rows = client.get("/api/v1/products", headers=headers).json()
+    rows = client.get("/api/v1/products", headers=headers).json()["items"]
     assert [row["soldInLoginStore"] for row in rows] == [True]
 
 
@@ -82,7 +82,16 @@ def test_list_store_only_lists_its_products_everywhere(client, google_jwks):
     # 條碼掃描與關鍵字一樣套清單。
     assert _skus(client.get("/api/v1/products", params={"barcode": "C"}, headers=staff).json()) == []
     assert _skus(client.get("/api/v1/products", params={"barcode": "D"}, headers=staff).json()) == ["D"]
-    assert all(row["soldInLoginStore"] for row in client.get("/api/v1/products", headers=staff).json())
+    # 條碼 + allProducts + 分頁：可找到清單外商品，且是分頁物件。
+    skipped = client.get(
+        "/api/v1/products",
+        params={"barcode": "C", "allProducts": "true", "page": 1, "pageSize": 50},
+        headers=staff,
+    ).json()
+    assert skipped["total"] == 1
+    assert _skus(skipped) == ["C"]
+    assert skipped["items"][0]["soldInLoginStore"] is False
+    assert all(row["soldInLoginStore"] for row in client.get("/api/v1/products", headers=staff).json()["items"])
 
     # 單一商品不受清單影響，但會標示 soldInLoginStore。
     single = client.get(f"/api/v1/products/{ids['C']}", headers=staff)
@@ -103,7 +112,7 @@ def test_list_store_only_lists_its_products_everywhere(client, google_jwks):
     admin_token = admin["Authorization"].split()[1]
     _select(client, admin_token, POPUP)
     assert _skus(client.get("/api/v1/products", headers=admin).json()) == ["A", "B", "D"]
-    everything = client.get("/api/v1/products", params={"allProducts": "true"}, headers=admin).json()
+    everything = client.get("/api/v1/products", params={"allProducts": "true"}, headers=admin).json()["items"]
     assert {row["sku"]: row["soldInLoginStore"] for row in everything} == {
         "A": True,
         "B": True,
@@ -117,7 +126,7 @@ def test_inventory_columns_still_cover_every_location(client, google_jwks):
     _admin, staff, _token, ids, main_shelf, popup_shelf = _setup(client, google_jwks)
     _set_location_qty(ids["A"], main_shelf, 5)
     _set_location_qty(ids["A"], popup_shelf, 2)
-    row = next(r for r in client.get("/api/v1/products", headers=staff).json() if r["sku"] == "A")
+    row = next(r for r in client.get("/api/v1/products", headers=staff).json()["items"] if r["sku"] == "A")
     assert row["totalInventory"] == 7
     assert row["loginStoreQuantity"] == 2
     by_location = {item["location"]: item["quantity"] for item in row["inventories"]}

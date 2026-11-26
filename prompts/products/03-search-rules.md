@@ -1,6 +1,6 @@
 # Products Catalog — Search Rules
 
-Mirror FE mock [`mockProductService.searchProducts`](../../../freds-pos-fe/src/services/mock/mockProductService.ts) and [`skuNormalizer`](../../../freds-pos-fe/src/utils/skuNormalizer.ts). Backend `GET /products` must match this behavior so UI adapters do not need special cases.
+Mirror FE mock [`mockProductService.searchProductPage`](../../../freds-pos-fe/src/services/mock/mockProductService.ts) and [`skuNormalizer`](../../../freds-pos-fe/src/utils/skuNormalizer.ts). Backend `GET /products` must match this behavior so UI adapters do not need special cases.
 
 ## Query parameters
 

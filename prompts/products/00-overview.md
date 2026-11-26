@@ -19,7 +19,7 @@ The **product catalog** phase of Fred's POS backend. Companion docs in this fold
 
 | Method | Path                    | Maps to                          |
 | ------ | ----------------------- | -------------------------------- |
-| `GET`  | `/products`             | `IProductService.searchProducts` |
+| `GET`  | `/products`             | `IProductService.searchProductPage` |
 | `POST` | `/products`             | `IProductService.createProduct`  |
 | `GET`  | `/products/{productId}` | `IProductService.getProductById` |
 | `PUT`  | `/products/{productId}` | `IProductService.updateProduct`  |
