@@ -111,8 +111,8 @@
 | `/api/v1/auth/store` | POST | 可選、可換 | 可選、可換 | 200；不存在 400 `AUTH_STORE_INVALID` |
 | `/api/v1/system/stores` | GET | 不可 | 可，含尚未選門市 | staff 403 `AUTH_FORBIDDEN` |
 | `/api/v1/system/stores` | POST | 不可 | 可。沒有任何門市時，尚未選門市的管理員仍可建第一間 | 201；staff 403 `AUTH_FORBIDDEN` |
-| `/api/v1/system/stores/{storeName}` | PUT | 不可 | 可。改這間門市的正常貨與退貨庫存點 | 200 門市；兩個 id 都可以，也可以相同；找不到門市或庫存點 404；staff 403 `AUTH_FORBIDDEN` |
-| `/api/v1/system/stores/{storeName}` | DELETE | 不可 | 可 | 200 `{ "deletedStore" }`；最後一間 409 `LAST_STORE`；找不到 404 `LOCATION_NOT_FOUND`；staff 403 `AUTH_FORBIDDEN` |
+| `/api/v1/system/stores/{storeName}` | PUT | 不可 | 可。改這間門市的正常貨與退貨庫存點 | 200 門市；兩個 id 都可以，也可以相同；找不到門市 404 `STORE_NOT_FOUND`、找不到庫存點 404 `LOCATION_NOT_FOUND`；staff 403 `AUTH_FORBIDDEN` |
+| `/api/v1/system/stores/{storeName}` | DELETE | 不可 | 可 | 200 `{ "deletedStore" }`；最後一間 409 `LAST_STORE`；找不到 404 `STORE_NOT_FOUND`；staff 403 `AUTH_FORBIDDEN` |
 | `/api/v1/system/oauth/accounts` | GET、POST、PUT、DELETE | 不可 | 可，含尚未選門市 | staff 已選門市 403 `AUTH_FORBIDDEN`；staff 尚未選門市 403 `AUTH_STORE_REQUIRED` |
 | `/api/v1/inventory/locations` 與其他庫存讀寫 | GET、POST、PUT、DELETE | 必須已選門市 | 可，含尚未選門市 | 庫存地點不是門市，也不依登入門市篩選。未登入 401 `AUTH_REQUIRED` |
 | 商品、會員、`GET /api/v1/checkout/orders` | 既有方法 | 必須已選門市 | 可，含尚未選門市 | 沒有選門市時 `loginStoreQuantity` 與 `loginStoreReturnedQuantity` 為 `null` |

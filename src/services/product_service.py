@@ -255,6 +255,19 @@ class ProductService:
             return None
         return self.db.get(StoreBranch, store_name)
 
+    # GET /products 的門市：有帶 storeName 就看那間（必須存在），否則看登入門市。
+    def context_store_name(self, login_store_name: Optional[str], requested: Optional[str]) -> Optional[str]:
+        name = (requested or "").strip()
+        if not name:
+            return login_store_name
+        if self.db.get(StoreBranch, name) is None:
+            raise BusinessException(
+                status_code=404,
+                code=BusinessErrorCode.STORE_NOT_FOUND,
+                message="找不到門市",
+            )
+        return name
+
     # 登入門市是 'list' 模式時回門市名稱（要套商品清單），否則 None。
     def _list_scope_store(self, store_name: Optional[str]) -> Optional[str]:
         store = self._login_store(store_name)

@@ -307,7 +307,7 @@ def lock_checkout_store(db: Session, store_name: str) -> CheckoutLocks:
     locked = lock_all_locations(db)
     store = db.scalar(select(StoreBranch).where(StoreBranch.name == store_name).with_for_update())
     if store is None:
-        _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市")
+        _raise(404, BusinessErrorCode.STORE_NOT_FOUND, "找不到門市")
     return CheckoutLocks(store=store, locations={row.id: row for row in locked})
 
 

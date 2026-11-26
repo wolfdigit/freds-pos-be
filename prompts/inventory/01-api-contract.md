@@ -15,7 +15,7 @@ Prefix `/api/v1`. Amounts and quantities are integers. A business failure uses `
 | `returnedInventoryLocationId` | yes | Existing location for returned goods |
 | `preorderInventoryLocationId` | no | Existing location for preorder stock. Create: omitted → 預購保留. Update: omitted → unchanged. |
 
-An unknown id is `404` `LOCATION_NOT_FOUND`. The same id may be sent for both bindings. There is no `newLocation` field, and the server does not create a location during store create. `PUT /system/stores/{storeName}` is admin-only.
+An unknown location id is `404` `LOCATION_NOT_FOUND`; an unknown `{storeName}` on `PUT` is `404` `STORE_NOT_FOUND`. The same id may be sent for both bindings. There is no `newLocation` field, and the server does not create a location during store create. `PUT /system/stores/{storeName}` is admin-only.
 
 `GET /system/stores` and `GET /auth/stores` include `inventoryLocationId`, `inventoryLocationName`, `returnedInventoryLocationId`, `returnedInventoryLocationName`, `preorderInventoryLocationId`, and `preorderInventoryLocationName`.
 

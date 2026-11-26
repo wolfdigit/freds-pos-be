@@ -77,9 +77,12 @@ Not accepted on create or update request schemas:
 | `totalInventoryMin` / `totalInventoryMax` | integer | missing | `totalInventory` `>=` / `<=` N |
 | `page` | integer ≥ 1 | `1` | 1-based page |
 | `pageSize` | integer 1–200 | `50` | Page size |
-| `allProducts` | boolean | `false` | Skip the login store's product list. Any business user |
+| `allProducts` | boolean | `false` | Skip the store's product list. Any business user. Wins over `storeName`'s list |
+| `storeName` | string | missing / blank | Look at this store instead of the session store for this request: its product list, `loginStoreQuantity` / `loginStoreReturnedQuantity` / `loginStorePreorderQuantity`, `soldInLoginStore` and `loginStoreQuantityMin/Max`. Works with an admin who has no selected store. Unknown store → `404 STORE_NOT_FOUND`. Any business user |
 
 Store product list: when the login store has `productScope: list`, only products in its `store_product` list are returned (`EXISTS`, in SQL, before paging and `total`). This includes `barcode` lookups. An admin with no selected store sees every product. See [`../store-products/00-overview.md`](../store-products/00-overview.md).
+
+Inventory page store buttons: the selected store sends `storeName=<store>` (the login store may omit it); 全部商品 sends `allProducts=true`. Restock lookups (`barcode`, keyword) send the same params.
 
 Inventory page filters: store low stock `loginStoreQuantityMax=2`; warehouse low stock `locationId=<後方倉庫>&locationQuantityMax=2`; store out of stock `loginStoreQuantityMin=0&loginStoreQuantityMax=0`; all out of stock `totalInventoryMin=0&totalInventoryMax=0`; any stock `inInventoryOnly=true`. All bounds are inclusive and combine with every other filter and with paging.
 
