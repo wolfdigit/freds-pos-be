@@ -275,8 +275,19 @@ class CheckoutService:
         status: Optional[str],
         page: int,
         page_size: int,
+        store_name: Optional[str] = None,
     ) -> CheckoutOrderSearchResponse:
         stmt = select(CheckoutOrder)
+        store = (store_name or "").strip()
+        if store:
+            # 只看在這間門市結帳的訂單（branch_id 是結帳當下的登入門市；退貨單算處理退貨的門市）。
+            if self.db.get(StoreBranch, store) is None:
+                raise BusinessException(
+                    status_code=404,
+                    code=BusinessErrorCode.STORE_NOT_FOUND,
+                    message="找不到門市",
+                )
+            stmt = stmt.where(CheckoutOrder.branch_id == store)
         if customer_id:
             stmt = stmt.where(CheckoutOrder.customer_id == customer_id)
         order_text = (order_number or "").strip()
