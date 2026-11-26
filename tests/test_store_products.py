@@ -336,3 +336,62 @@ def test_all_scope_store_checkout_is_unchanged(client, google_jwks):
     _admin, staff, token, ids, _main, _popup = _setup(client, google_jwks)
     _select(client, token, MAIN)
     assert client.post("/api/v1/checkout/orders", json=_sale(ids["C"]), headers=staff).status_code == 201
+
+
+def test_store_name_param_looks_at_another_store(client, google_jwks):
+    """storeName：這次查詢改看指定門市（清單、loginStore* 數量、soldInLoginStore、門市數量篩選）。"""
+    admin, staff, staff_token, ids, main_shelf, popup_shelf = _setup(client, google_jwks)
+    _set_location_qty(ids["A"], main_shelf, 4)
+    _set_location_qty(ids["A"], popup_shelf, 1)
+    _set_location_qty(ids["C"], main_shelf, 2)
+
+    def get(params, headers=staff):
+        return client.get("/api/v1/products", params=params, headers=headers)
+
+    # 登入快閃店（list），查奇可門市（all）：全部商品、數量與販售旗標都看奇可門市。
+    main_rows = get({"storeName": MAIN}).json()["items"]
+    assert _skus(main_rows) == ["A", "B", "C", "D", "E"]
+    assert all(row["soldInLoginStore"] is True for row in main_rows)
+    assert {row["sku"]: row["loginStoreQuantity"] for row in main_rows}["A"] == 4
+    # 不帶 storeName 仍是登入門市，跟現在的前端一樣。
+    popup_rows = get({}).json()["items"]
+    assert _skus(popup_rows) == ["A", "B", "D"]
+    assert {row["sku"]: row["loginStoreQuantity"] for row in popup_rows}["A"] == 1
+    # 空白 storeName 視為沒帶。
+    assert _skus(get({"storeName": "  "}).json()) == ["A", "B", "D"]
+
+    # 門市數量篩選跟著 storeName。
+    low = get({"storeName": MAIN, "loginStoreQuantityMin": 2, "loginStoreQuantityMax": 2}).json()
+    assert _skus(low) == ["C"]
+    assert _skus(get({"loginStoreQuantityMin": 1}).json()) == ["A"]
+
+    # 登入奇可門市，查快閃店：套快閃店清單，條碼查詢也一樣。
+    _select(client, staff_token, MAIN)
+    assert _skus(get({}).json()) == ["A", "B", "C", "D", "E"]
+    popup = get({"storeName": POPUP, "page": 1, "pageSize": 2}).json()
+    assert popup["total"] == 3
+    assert _skus(popup) == ["A", "B"]
+    assert _skus(get({"storeName": POPUP, "barcode": "C"}).json()) == []
+    assert _skus(get({"storeName": POPUP, "barcode": "D"}).json()) == ["D"]
+    # allProducts 優先：看全部，但 soldInLoginStore 仍標示快閃店有沒有賣。
+    everything = get({"storeName": POPUP, "allProducts": "true"}).json()["items"]
+    assert {row["sku"]: row["soldInLoginStore"] for row in everything} == {
+        "A": True,
+        "B": True,
+        "C": False,
+        "D": True,
+        "E": False,
+    }
+
+    # 找不到的門市。
+    missing = get({"storeName": "不存在的門市"})
+    assert missing.status_code == 404
+    assert missing.json()["code"] == "STORE_NOT_FOUND"
+
+    # 管理員沒選門市也可以指定門市。
+    fresh_admin = _auth(_login(client, google_jwks, ADMIN_EMAIL)["token"])
+    admin_rows = get({"storeName": POPUP}, headers=fresh_admin).json()["items"]
+    assert _skus(admin_rows) == ["A", "B", "D"]
+    assert {row["sku"]: row["loginStoreQuantity"] for row in admin_rows}["A"] == 1
+    # 只影響 GET /products 這次查詢，不改登入門市。
+    assert client.get(f"/api/v1/products/{ids['C']}", headers=staff).json()["soldInLoginStore"] is True

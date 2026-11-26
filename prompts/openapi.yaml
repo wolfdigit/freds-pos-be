@@ -166,6 +166,8 @@ paths:
         Login store with `productScope: list`: only products in that store's list (`store_product`) are returned,
         including `barcode` lookups. Any business user may pass `allProducts=true` to skip the list (each row still has `soldInLoginStore`).
         Admin with no selected store sees every product. `productScope: all` stores are unchanged.
+        `storeName` looks at another store for this request only: its list, the `loginStore*` quantities,
+        `soldInLoginStore` and `loginStoreQuantityMin/Max` all describe that store. `allProducts=true` still skips the list.
         Fuzzy search by barcode, SKU without dashes (normalized), product name, or brand.
         The `barcode` query parameter is an exact match.
         Maps to `IProductService.searchProductPage`.
@@ -231,7 +233,14 @@ paths:
           schema:
             type: boolean
             default: false
-          description: Ignore the login store's product list. Any business user (staff included).
+          description: Ignore the store's product list. Any business user (staff included). Wins over `storeName`'s list.
+        - name: storeName
+          in: query
+          schema:
+            type: string
+          description: |
+            Use this store instead of the login store (list filter, `loginStore*` fields, `soldInLoginStore`,
+            `loginStoreQuantityMin/Max`). Blank = login store. Any business user. Unknown store → `404` `STORE_NOT_FOUND`.
         - name: page
           in: query
           schema:
@@ -254,8 +263,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ProductPage'
+        '404':
+          description: '`storeName` is not a store (`STORE_NOT_FOUND`), or `locationId` is not a location (`LOCATION_NOT_FOUND`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BusinessError'
         '422':
-          description: `page` < 1 or `pageSize` outside 1–200
+          description: '`page` < 1 or `pageSize` outside 1–200'
     post:
       tags: [products]
       operationId: createProduct
@@ -1412,6 +1427,7 @@ components:
         - PRODUCT_NOT_FOUND
         - PRODUCT_SKU_DUPLICATE
         - PRODUCT_NOT_IN_STORE
+        - STORE_NOT_FOUND
         - ORDER_NOT_FOUND
         - LOCATION_NOT_FOUND
         - INVALID_LOCATION_TRANSFER

@@ -11,6 +11,7 @@ Mirror FE mock [`mockProductService.searchProductPage`](../../../freds-pos-fe/sr
 | `brand` | query | Brand string or `ALL` |
 | `inInventoryOnly` | query boolean | Default `false` |
 | `allProducts` | query boolean | Any business user. Default `false` |
+| `storeName` | query string | Any business user. Look at this store instead of the session store. Blank = session store |
 
 Filters are **AND**-combined. Within the keyword filter, match conditions are **OR**.
 
@@ -119,7 +120,8 @@ Keyword brand matching is substring/case-insensitive; the **`brand` query param*
 
 ## Store product list filter
 
-When the session store has `productScope: list` and `allProducts` is not set, add
+The store is `storeName` when given (must exist, else `404 STORE_NOT_FOUND`), otherwise the session store.
+When that store has `productScope: list` and `allProducts` is not set, add
 `EXISTS (SELECT 1 FROM store_product WHERE store_name = :store AND product_id = product.id)`.
 It runs in SQL with the other filters, so paging and `total` only count listed products.
 `productScope: all` stores and an admin with no selected store get no extra filter.

@@ -21,7 +21,7 @@ Rows stay in `store_product` when the store is switched back to `all`, so switch
 
 | Area | `list` store behavior |
 |------|-----------------------|
-| `GET /products` (always paged, keyword, barcode, stock filters) | Only listed products. Any business user may pass `allProducts=true` to see every product. |
+| `GET /products` (always paged, keyword, barcode, stock filters) | Only listed products. Any business user may pass `allProducts=true` to see every product, or `storeName=<store>` to apply another store's list (and its `loginStore*` fields) instead. |
 | `GET /products/{productId}` | Not filtered. `soldInLoginStore` is `false` for unlisted products. |
 | `POST /products` | A product created while logged into a `list` store is added to that store's list. It is not added to other `list` stores. |
 | `POST /checkout/orders` | A positive line for an unlisted product → `409` `PRODUCT_NOT_IN_STORE`, no writes. Returns are allowed. |
@@ -45,7 +45,7 @@ Write responses are `{ storeName, productScope, changed, added, removed, listedT
 
 - Editing a list (batch save, copy) is open to any business user, staff included, for any store.
 - Switching `productScope` is open to any business user too. Creating, rebinding and deleting stores stay admin-only.
-- `allProducts=true` on `GET /products` is open to any business user.
+- `allProducts=true` and `storeName` on `GET /products` are open to any business user.
 
 ## Not included
 

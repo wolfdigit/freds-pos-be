@@ -38,7 +38,14 @@ def search_products(
     totalInventoryMin: Optional[int] = Query(None, description="totalInventory >= N"),
     totalInventoryMax: Optional[int] = Query(None, description="totalInventory <= N"),
     allProducts: bool = Query(
-        False, description="Ignore the login store's product list (list-scope stores); any business user"
+        False, description="Ignore the store's product list (list-scope stores); any business user. Wins over storeName's list"
+    ),
+    storeName: Optional[str] = Query(
+        None,
+        description=(
+            "Look at this store instead of the login store: its product list (list scope), "
+            "loginStore* fields, soldInLoginStore and loginStoreQuantityMin/Max. Unknown store = 404 STORE_NOT_FOUND"
+        ),
     ),
     page: int = Query(1, ge=1, description="1-based page"),
     pageSize: int = Query(
@@ -56,9 +63,14 @@ def search_products(
     store's list are returned (any business user may pass allProducts=true). Admin without
     a store sees every product.
 
+    `storeName` swaps the login store for another store for this request only: the list
+    filter, `loginStore*` quantities, `soldInLoginStore` and the `loginStoreQuantity*`
+    filters all describe that store. `allProducts=true` still skips the list.
+
     Always returns `{items, page, pageSize, total}`. Defaults: page=1, pageSize=50.
     """
     service = ProductService(db)
+    context_store = service.context_store_name(user.store_name, storeName)
     stock = StockFilters(
         login_store_min=loginStoreQuantityMin,
         login_store_max=loginStoreQuantityMax,
@@ -75,7 +87,7 @@ def search_products(
         barcode=barcode,
         in_inventory_only=inInventoryOnly,
         stock=stock if stock != StockFilters() else None,
-        store_name=user.store_name,
+        store_name=context_store,
         all_products=allProducts,
     )
     return service.search_page(
