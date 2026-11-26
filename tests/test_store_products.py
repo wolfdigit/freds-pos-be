@@ -395,3 +395,39 @@ def test_store_name_param_looks_at_another_store(client, google_jwks):
     assert {row["sku"]: row["loginStoreQuantity"] for row in admin_rows}["A"] == 1
     # 只影響 GET /products 這次查詢，不改登入門市。
     assert client.get(f"/api/v1/products/{ids['C']}", headers=staff).json()["soldInLoginStore"] is True
+
+
+def test_missing_store_is_store_not_found_not_location_not_found(client, google_jwks):
+    """門市跟庫存地點是不同東西：找不到門市一律 404 STORE_NOT_FOUND；找不到地點才是 LOCATION_NOT_FOUND。"""
+    admin, staff, _token, ids, main_shelf, _popup = _setup(client, google_jwks)
+    admin_token = admin["Authorization"].split()[1]
+    _select(client, admin_token, MAIN)
+    ghost = "/api/v1/system/stores/沒有這間"
+    responses = {
+        "list products": client.get(f"{ghost}/products", headers=staff),
+        "batch": client.post(f"{ghost}/products/batch", json={"add": [ids["A"]]}, headers=staff),
+        "copy target": client.post(f"{ghost}/products/copy", json={"sourceStoreName": MAIN}, headers=staff),
+        "copy source": client.post(
+            f"/api/v1/system/stores/{POPUP}/products/copy", json={"sourceStoreName": "沒有這間"}, headers=staff
+        ),
+        "scope": client.put(f"{ghost}/product-scope", json={"productScope": "all"}, headers=staff),
+        "rebind": client.put(
+            ghost,
+            json={"inventoryLocationId": main_shelf, "returnedInventoryLocationId": main_shelf},
+            headers=admin,
+        ),
+        "delete": client.delete(ghost, headers=admin),
+        "products storeName": client.get("/api/v1/products", params={"storeName": "沒有這間"}, headers=staff),
+    }
+    for name, response in responses.items():
+        assert response.status_code == 404, (name, response.text)
+        assert response.json()["code"] == "STORE_NOT_FOUND", name
+
+    # 門市存在、地點不存在：仍是 LOCATION_NOT_FOUND。
+    bad_location = client.put(
+        f"/api/v1/system/stores/{MAIN}",
+        json={"inventoryLocationId": "loc-missing", "returnedInventoryLocationId": main_shelf},
+        headers=admin,
+    )
+    assert bad_location.status_code == 404, bad_location.text
+    assert bad_location.json()["code"] == "LOCATION_NOT_FOUND"

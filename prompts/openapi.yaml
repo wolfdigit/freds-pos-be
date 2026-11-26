@@ -1020,6 +1020,7 @@ paths:
       summary: Update a store's inventory locations
       description: |
         Admin only. Sets both the normal and returned locations. They may be the same location. Quantity stays where it is.
+        Missing store is `404` `STORE_NOT_FOUND`; a missing location id is `404` `LOCATION_NOT_FOUND`.
       parameters:
         - name: storeName
           in: path
@@ -1047,7 +1048,7 @@ paths:
       summary: Delete a store branch
       description: |
         Admin only. The last remaining store cannot be deleted (`409` `LAST_STORE`).
-        Staff receive `403` `AUTH_FORBIDDEN`. A missing name is `404` `LOCATION_NOT_FOUND`.
+        Staff receive `403` `AUTH_FORBIDDEN`. A missing name is `404` `STORE_NOT_FOUND`.
       parameters:
         - name: storeName
           in: path
@@ -1089,7 +1090,7 @@ paths:
       description: |
         Any business user (staff included). Other store management stays admin-only.
         Switching back to `all` keeps the list rows, so switching to `list` again reuses them.
-        Missing store is `404` `LOCATION_NOT_FOUND`.
+        Missing store is `404` `STORE_NOT_FOUND`.
       parameters:
         - name: storeName
           in: path
@@ -1121,6 +1122,7 @@ paths:
         Any business user (staff included). Searches the whole catalog (deleted products omitted) with the same
         `keyword` rules as `GET /products`, and marks each row `inList`. Sort `sku ASC, id ASC`.
         Deleted products stay in `store_product` but are hidden here and in `listedTotal`.
+        Missing store is `404` `STORE_NOT_FOUND`.
       parameters:
         - name: storeName
           in: path
@@ -1167,6 +1169,7 @@ paths:
       summary: Save list edits (add and remove in one request)
       description: |
         Any business user. The editor stages checkbox changes and sends them here once on 存檔.
+        Missing store is `404` `STORE_NOT_FOUND`.
         `add` and `remove` are applied in one transaction: if any `add` id is unknown or deleted the whole request is
         `404` `PRODUCT_NOT_FOUND` and nothing changes. Ids already in the list (add) or not in it (remove) are skipped
         and not counted. `remove` accepts deleted products. An id in both lists, both lists empty, or more than 2000 ids
@@ -1203,7 +1206,7 @@ paths:
       summary: Copy another store's list
       description: |
         Any business user. Copies the source store's `store_product` rows (deleted products skipped), whatever the
-        source's `productScope` is. Missing source or target store is `404` `LOCATION_NOT_FOUND`.
+        source's `productScope` is. Missing source or target store is `404` `STORE_NOT_FOUND`.
       parameters:
         - name: storeName
           in: path

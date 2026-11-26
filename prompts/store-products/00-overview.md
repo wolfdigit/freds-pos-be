@@ -39,7 +39,7 @@ Rows stay in `store_product` when the store is switched back to `all`, so switch
 | `POST` | `/system/stores/{storeName}/products/batch` | Any business user | `{ add: [...], remove: [...] }`, sent once when the editor saves (存檔). One transaction. Ids already in the list (add) or not in it (remove) are skipped. An unknown or deleted `add` id → `404` `PRODUCT_NOT_FOUND`, nothing changes. `remove` accepts deleted products. Both empty, an id in both, or more than 2000 ids in total → `422`. |
 | `POST` | `/system/stores/{storeName}/products/copy` | Any business user | `{ sourceStoreName, replace? }`. Copies the source's listed, non-deleted products. `replace: true` also removes rows the source does not have. |
 
-Write responses are `{ storeName, productScope, changed, added, removed, listedTotal }` (`changed = added + removed`). A missing store is `404` `LOCATION_NOT_FOUND`, the same as the other store routes. `StoreDto` (`GET /auth/stores`, `GET /system/stores`) includes `productScope`. `POST /system/stores` accepts an optional `productScope`.
+Write responses are `{ storeName, productScope, changed, added, removed, listedTotal }` (`changed = added + removed`). A missing store (target or copy source) is `404` `STORE_NOT_FOUND`, the same as the other store routes. `LOCATION_NOT_FOUND` is only for a missing inventory location. `StoreDto` (`GET /auth/stores`, `GET /system/stores`) includes `productScope`. `POST /system/stores` accepts an optional `productScope`.
 
 ## Permissions
 

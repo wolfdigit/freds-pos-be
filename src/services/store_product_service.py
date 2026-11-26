@@ -46,7 +46,7 @@ class StoreProductService:
     def _store(self, store_name: str) -> StoreBranch:
         store = self.db.get(StoreBranch, store_name)
         if store is None:
-            _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市")
+            _raise(404, BusinessErrorCode.STORE_NOT_FOUND, "找不到門市")
         return store
 
     def _listed_total(self, store_name: str) -> int:

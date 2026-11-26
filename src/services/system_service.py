@@ -82,7 +82,7 @@ class SystemService:
         )
         row = self.db.scalar(select(StoreBranch).where(StoreBranch.name == name).with_for_update())
         if row is None:
-            _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市")
+            _raise(404, BusinessErrorCode.STORE_NOT_FOUND, "找不到門市")
         if preorder is None:
             # 沒送時維持目前的預購保留綁定。
             preorder = self.db.get(InventoryLocation, row.preorder_inventory_location_id)
@@ -102,7 +102,7 @@ class SystemService:
         )
         row = next((item for item in rows if item.name == name), None)
         if row is None:
-            _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市")
+            _raise(404, BusinessErrorCode.STORE_NOT_FOUND, "找不到門市")
         if len(rows) <= 1:
             _raise(409, BusinessErrorCode.LAST_STORE, "至少要保留一間門市")
         # Postgres 的 FK 會 CASCADE；SQLite 測試庫沒開 FK，這裡明確刪掉門市商品清單。
@@ -115,7 +115,7 @@ class SystemService:
         """切換門市販售範圍（任何業務帳號）。切回 'all' 時保留清單，之後再切回 'list' 會沿用。"""
         row = self.db.scalar(select(StoreBranch).where(StoreBranch.name == name).with_for_update())
         if row is None:
-            _raise(404, BusinessErrorCode.LOCATION_NOT_FOUND, "找不到門市")
+            _raise(404, BusinessErrorCode.STORE_NOT_FOUND, "找不到門市")
         row.product_scope = data.product_scope
         self.db.commit()
         normal = self.db.get(InventoryLocation, row.inventory_location_id)
